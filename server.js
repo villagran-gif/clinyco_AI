@@ -23,7 +23,7 @@ app.post("/zendesk-ai", async (req, res) => {
             content: `
 Eres asistente de Clinyco.
 
-Clinyco es un hub de cirugías en Chile.
+Clinyco es un hub de cirugías en Antofagasta, Calama y Santiago.
 
 Servicios principales:
 - cirugía bariátrica
