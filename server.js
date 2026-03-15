@@ -1,24 +1,68 @@
 import express from "express";
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/", (req, res) => {
   res.send("Clinyco Conversations AI OK");
 });
 
-function extractUserText(payload) {
-  const message = payload?.messages?.[0];
-  if (!message) return "";
+function safeJson(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "[unserializable]";
+  }
+}
 
-  if (message.role !== "appUser") return "";
-  if (message.type !== "text") return "";
+function extractConversationInfo(payload) {
+  // Variantes defensivas para distintos formatos
+  const appId =
+    payload?.app?._id ||
+    payload?.app?.id ||
+    payload?.appId ||
+    process.env.SUNCO_APP_ID ||
+    null;
 
-  return String(message.text || "").trim();
+  const conversationId =
+    payload?.conversation?._id ||
+    payload?.conversation?.id ||
+    payload?.conversationId ||
+    null;
+
+  // Buscar mensaje de usuario final
+  let userText = "";
+
+  if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
+    const msg = payload.messages[0];
+    if (
+      (msg?.role === "appUser" || msg?.author?.type === "user") &&
+      (msg?.type === "text" || msg?.content?.type === "text")
+    ) {
+      userText = msg?.text || msg?.content?.text || "";
+    }
+  }
+
+  if (!userText && payload?.message) {
+    const msg = payload.message;
+    if (
+      (msg?.role === "appUser" || msg?.author?.type === "user") &&
+      (msg?.type === "text" || msg?.content?.type === "text")
+    ) {
+      userText = msg?.text || msg?.content?.text || "";
+    }
+  }
+
+  return {
+    appId,
+    conversationId,
+    userText: String(userText || "").trim()
+  };
 }
 
 async function askOpenAI(message) {
-  const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -54,7 +98,7 @@ Reglas:
 - máximo 2 frases
 - hacer 1 sola pregunta a la vez
 - si preguntan por cirugía, preguntar primero si es Fonasa o Isapre
-- si preguntan por bariátrica, luego pedir peso y estatura
+- si preguntan por bariátrica, después pedir peso y estatura
 - la endoscopía solo se realiza en Antofagasta
 - la agenda médica completa solo está disponible en Antofagasta
 - en Santiago, por ahora, solo hay telemedicina
@@ -74,10 +118,10 @@ Reglas:
     })
   });
 
-  const raw = await openaiResponse.text();
+  const raw = await response.text();
   console.log("OpenAI raw:", raw);
 
-  if (!openaiResponse.ok) {
+  if (!response.ok) {
     throw new Error(`OpenAI request failed: ${raw}`);
   }
 
@@ -89,6 +133,10 @@ async function sendConversationReply(appId, conversationId, reply) {
   const subdomain = process.env.ZENDESK_SUBDOMAIN;
   const keyId = process.env.SUNCO_KEY_ID;
   const keySecret = process.env.SUNCO_KEY_SECRET;
+
+  if (!subdomain || !keyId || !keySecret) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN or SUNCO credentials");
+  }
 
   const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
 
@@ -122,27 +170,25 @@ async function sendConversationReply(appId, conversationId, reply) {
 
 app.post("/messages", async (req, res) => {
   try {
-    console.log("Incoming conversations payload:", JSON.stringify(req.body));
+    console.log("===== /messages webhook =====");
+    console.log("Headers:", safeJson(req.headers));
+    console.log("Body:", safeJson(req.body));
 
-    const appId = req.body?.app?._id || req.body?.app?.id;
-    const conversationId = req.body?.conversation?._id || req.body?.conversation?.id;
-    const text = extractUserText(req.body);
+    const { appId, conversationId, userText } = extractConversationInfo(req.body);
 
-    if (!appId || !conversationId) {
-      return res.status(400).json({
-        ok: false,
-        error: "Missing appId or conversationId"
-      });
-    }
+    console.log("Extracted appId:", appId);
+    console.log("Extracted conversationId:", conversationId);
+    console.log("Extracted userText:", userText);
 
-    if (!text) {
+    // Si todavía no sabemos leer el payload real, no fallar.
+    if (!appId || !conversationId || !userText) {
       return res.json({
         ok: true,
-        skipped: "non_text_or_non_user_message"
+        skipped: "payload_not_parsed_yet"
       });
     }
 
-    const reply = await askOpenAI(text);
+    const reply = await askOpenAI(userText);
     await sendConversationReply(appId, conversationId, reply);
 
     return res.json({
@@ -151,6 +197,7 @@ app.post("/messages", async (req, res) => {
     });
   } catch (error) {
     console.error("ERROR /messages:", error.message);
+
     return res.status(500).json({
       ok: false,
       error: error.message
@@ -159,6 +206,7 @@ app.post("/messages", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
+
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);
 });
