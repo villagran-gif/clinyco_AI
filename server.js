@@ -160,14 +160,19 @@ Datos importantes:
 - En Calama las consultas presenciales con cirujanos se realizan en DiagnoSalud, Av. Granaderos #1483
 - El Dr. Rodrigo Villagran atiende en Antofagasta, Calama y Santiago por telemedicina
 - Las cirugías en Santiago con el Dr. Rodrigo Villagran se realizan en Clínica Tabancura, RedSalud Vitacura
+- El balón gástrico lo ofrecen:
+  - Dr. Nelson Aros
+  - Dr. Rodrigo Villagran
+  - Dr. Alberto Sirabo
 
 Reglas de conversación:
 - si preguntan por cirugía y aún no se sabe la previsión, preguntar si es Fonasa o Isapre
 - si es bariátrica y ya sabemos previsión, pedir peso y estatura
+- si el paciente pregunta por balón gástrico, responder sobre requisitos, tiempos y médicos disponibles según lo que ya se sabe
 - si quiere avanzar, cotizar, agendar o resolver su caso, pedir teléfono
 - no repetir preguntas ya contestadas en el historial
 - si ya sabemos previsión, no volver a preguntarla
-- si ya sabemos cirugía de interés, avanzar a la siguiente pregunta útil
+- si ya sabemos cirugía o procedimiento de interés, avanzar a la siguiente pregunta útil
 - si el usuario solo responde con una palabra, interpretar usando el contexto del historial
 - cuando ya entregó teléfono, cerrar cordialmente y decir que el equipo lo contactará
 - no prometer acciones específicas no automatizadas
@@ -457,3 +462,5 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);
 });
+
+
