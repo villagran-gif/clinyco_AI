@@ -138,6 +138,7 @@ Ejemplos de tono:
 }
 
 async function postReplyToZendesk(ticketId, reply) {
+
   const subdomain = process.env.ZENDESK_SUBDOMAIN;
   const email = process.env.ZENDESK_EMAIL;
   const apiToken = process.env.ZENDESK_API_TOKEN;
@@ -155,8 +156,8 @@ async function postReplyToZendesk(ticketId, reply) {
       body: JSON.stringify({
         ticket: {
           comment: {
-            public: true,
-            body: reply
+            public: false,
+            body: `🤖 Sugerencia IA:\n\n${reply.replace("⌘","")}`
           }
         }
       })
@@ -170,7 +171,6 @@ async function postReplyToZendesk(ticketId, reply) {
     throw new Error(`Zendesk update failed: ${raw}`);
   }
 }
-
 app.post("/zendesk-ai", async (req, res) => {
   try {
     const ticketId = req.body?.ticket_id;
