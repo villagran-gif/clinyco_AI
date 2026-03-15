@@ -1,4 +1,5 @@
 import express from "express";
+import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -580,7 +581,12 @@ function getConversationState(conversationId) {
         supportRaw: null,
         lastSupportSearchKey: null,
 
-        likelyClinicalRecordOnly: false
+        likelyClinicalRecordOnly: false,
+        caseType: null,
+        nextAction: null,
+        lastQuestionReason: null,
+        lastMissingFields: [],
+        lastResolvedContext: null
       },
       measurements: {
         weightKg: null,
@@ -873,6 +879,22 @@ function buildStateSummary(state) {
 
   if (state.identity.sellSummary) {
     parts.push(`[SELL_RESUMEN] ${state.identity.sellSummary}`);
+  }
+
+  if (state.identity.supportSummary) {
+    parts.push(`[SUPPORT_RESUMEN] ${state.identity.supportSummary}`);
+  }
+
+  if (state.identity.caseType || state.identity.nextAction) {
+    parts.push(`[RESOLVER] caseType=${state.identity.caseType || ""} nextAction=${state.identity.nextAction || ""}`);
+  }
+
+  if (Array.isArray(state.identity.lastMissingFields) && state.identity.lastMissingFields.length) {
+    parts.push(`[RESOLVER_FALTANTES] ${state.identity.lastMissingFields.join(",")}`);
+  }
+
+  if (state.identity.lastQuestionReason) {
+    parts.push(`[RESOLVER_MOTIVO] ${state.identity.lastQuestionReason}`);
   }
 
   return parts.join("\n");
@@ -1249,6 +1271,25 @@ function appendAntoniaIntroduction(state, reply) {
     return `Hola, hablas con Antonia 😊\n\n${reply}`;
   }
   return reply;
+}
+
+function buildResolverQuestionKey(decision) {
+  if (!decision?.question) return null;
+  const missing = Array.isArray(decision.missingFields) ? decision.missingFields.join(",") : "";
+  return [decision.caseType || "", decision.nextAction || "", missing, decision.question].join("|");
+}
+
+function shouldUseResolverQuestion(state, decision) {
+  if (!decision?.question) return false;
+  if (decision.shouldDerive) return true;
+  if (!Array.isArray(decision.missingFields) || !decision.missingFields.length) return false;
+
+  const key = buildResolverQuestionKey(decision);
+  if (!key) return false;
+  if (state.system.lastQuestionKey === key) return false;
+
+  state.system.lastQuestionKey = key;
+  return true;
 }
 
 async function askOpenAI(conversationId, state) {
@@ -1646,6 +1687,72 @@ app.post("/messages", async (req, res) => {
 
     if (state.contactDraft.c_modalidad === "Tramo A" && !/TRAMO A/i.test(state.dealDraft.dealValidacionPad || "")) {
       state.dealDraft.dealValidacionPad = "No aplica PAD Fonasa por Tramo A";
+    }
+
+    const resolverContext = resolveIdentityAndContext({
+      state,
+      supportResult: state.identity.supportRaw,
+      sellResult: state.identity.sellRaw,
+      latestUserText: userText
+    });
+    const resolverDecision = getNextBestQuestion(
+      state,
+      state.identity.supportRaw,
+      state.identity.sellRaw,
+      userText
+    );
+
+    applyResolverToState(state, resolverDecision);
+    console.log("Resolver context:", safeJson(resolverContext));
+    console.log("Resolver decision:", safeJson(resolverDecision));
+
+    if (resolverDecision.shouldDerive) {
+      state.system.aiEnabled = false;
+      state.system.handoffReason = resolverDecision.caseType === "E"
+        ? "clinical_record_only"
+        : (state.system.handoffReason || "resolver_derive");
+
+      const reply = resolverDecision.question;
+      addToHistory(conversationId, "assistant", reply);
+      const delayMs = calculateHumanDelay(reply);
+      await sleep(delayMs);
+      await sendConversationReply(appId, conversationId, appendAntoniaIntroduction(state, reply));
+      state.system.botMessagesSent += 1;
+      return res.json({
+        ok: true,
+        reply,
+        delayMs,
+        botMessagesSent: state.system.botMessagesSent,
+        handoffReason: state.system.handoffReason,
+        resolverDecision
+      });
+    }
+
+    if (shouldUseResolverQuestion(state, resolverDecision)) {
+      const reply = resolverDecision.question;
+      addToHistory(conversationId, "assistant", reply);
+      const delayMs = calculateHumanDelay(reply);
+      await sleep(delayMs);
+
+      const latestState = getConversationState(conversationId);
+      if (!latestState.system.aiEnabled) {
+        return res.json({ ok: true, skipped: "ai_disabled_after_delay" });
+      }
+
+      const finalReply = appendAntoniaIntroduction(latestState, reply);
+      await sendConversationReply(appId, conversationId, finalReply);
+      latestState.system.botMessagesSent += 1;
+      if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
+        latestState.system.aiEnabled = false;
+      }
+
+      return res.json({
+        ok: true,
+        reply: finalReply,
+        delayMs,
+        botMessagesSent: latestState.system.botMessagesSent,
+        resolverDecision
+      });
     }
 
     console.log("Conversation history:", safeJson(getHistory(conversationId)));
