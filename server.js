@@ -566,17 +566,22 @@ function getConversationState(conversationId) {
         dealColab3: null
       },
       identity: {
-        saysExistingPatient: false,
-        lastSellSearchRut: null,
-        sellSearchCompleted: false,
-        sellContactFound: false,
-        sellDealFound: false,
-        sellSummary: null,
-        supportSearchCompleted: false,
-        foundInSupport: false,
-        supportSummary: null,
-        likelyClinicalRecordOnly: false
-      },
+  saysExistingPatient: false,
+  lastSellSearchRut: null,
+  sellSearchCompleted: false,
+  sellContactFound: false,
+  sellDealFound: false,
+  sellSummary: null,
+  sellRaw: null,
+
+  supportSearchCompleted: false,
+  foundInSupport: false,
+  supportSummary: null,
+  supportRaw: null,
+  lastSupportSearchKey: null,
+
+  likelyClinicalRecordOnly: false
+}
       measurements: {
         weightKg: null,
         heightM: null,
@@ -1110,63 +1115,104 @@ function updateStateFromSellSearch(state, sellData) {
 }
 
 async function maybeRunIdentitySearch(state, info) {
-  const rut = state.contactDraft.c_rut;
+  const rut = state.contactDraft.c_rut || null;
+  const supportEmail = state.contactDraft.c_email || null;
+  const supportPhone = state.contactDraft.c_tel1 || null;
+  const supportName =
+    [state.contactDraft.c_nombres, state.contactDraft.c_apellidos]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || null;
+  const channelDisplayName = info?.authorDisplayName || null;
+  const sourceProfileName = info?.sourceProfileName || null;
 
-  if (!rut || !ENABLE_SELL_SEARCH) {
+  // 1) SELL: solo si hay RUT
+  if (ENABLE_SELL_SEARCH && rut) {
+    const sameRut =
+      state.identity.lastSellSearchRut === rut &&
+      state.identity.sellSearchCompleted;
+
+    if (!sameRut) {
+      state.identity.lastSellSearchRut = rut;
+      try {
+        const sellData = await searchSellByRut(rut);
+        state.identity.sellRaw = sellData || null;
+        updateStateFromSellSearch(state, sellData);
+      } catch (error) {
+        console.error("SELL SEARCH ERROR:", error.message);
+        state.identity.sellSearchCompleted = false;
+        state.identity.sellSummary = `error_busqueda_sell: ${error.message}`;
+      }
+    }
+  }
+
+  // 2) SUPPORT: independiente del RUT
+  if (!ENABLE_SUPPORT_SEARCH) {
     return;
   }
 
-  if (state.identity.lastSellSearchRut === rut && state.identity.sellSearchCompleted) {
+  const supportCandidates = {
+    email: supportEmail,
+    phone: supportPhone,
+    name: supportName,
+    channelDisplayName,
+    sourceProfileName
+  };
+
+  const hasSupportInput = Object.values(supportCandidates).some(Boolean);
+  if (!hasSupportInput) {
     return;
   }
 
-  state.identity.lastSellSearchRut = rut;
+  const supportSearchKey = JSON.stringify(supportCandidates);
+
+  // Rebuscar solo si cambió la identidad conocida
+  if (state.identity.lastSupportSearchKey === supportSearchKey) {
+    return;
+  }
+
+  state.identity.lastSupportSearchKey = supportSearchKey;
+
   try {
-    const sellData = await searchSellByRut(rut);
-    updateStateFromSellSearch(state, sellData);
-  } catch (error) {
-    console.error("SELL SEARCH ERROR:", error.message);
-    state.identity.sellSearchCompleted = false;
-    state.identity.sellSummary = `error_busqueda_sell: ${error.message}`;
-  }
+    const supportData = await searchSupportReal(supportCandidates);
 
-  if (ENABLE_SUPPORT_SEARCH && !state.identity.supportSearchCompleted) {
-    try {
-      const supportData = await searchSupportReal({
-        email: state.contactDraft.c_email,
-        phone: state.contactDraft.c_tel1,
-        name: [state.contactDraft.c_nombres, state.contactDraft.c_apellidos].filter(Boolean).join(" "),
-        channelDisplayName: info.authorDisplayName,
-        sourceProfileName: info.sourceProfileName
-      });
+    state.identity.supportRaw = supportData || null;
+    state.identity.supportSearchCompleted = true;
+    state.identity.foundInSupport = Boolean(supportData?.found);
+    state.identity.supportSummary = supportData?.found
+      ? `usuarios_support=${supportData.usersCount}, tickets_support=${supportData.ticketsCount}, ultimo_ticket=${supportData.latestTicketId || ""}`
+      : "sin coincidencias en Support";
 
-      state.identity.supportSearchCompleted = true;
-      state.identity.foundInSupport = Boolean(supportData?.found);
-      state.identity.supportSummary = supportData?.found
-        ? `usuarios_support=${supportData.usersCount}, tickets_support=${supportData.ticketsCount}, ultimo_ticket=${supportData.latestTicketId || ""}`
-        : "sin coincidencias en Support";
-
-      const firstUser = supportData?.users?.[0] || null;
-      if (firstUser) {
-        if (!state.contactDraft.c_nombres || !state.contactDraft.c_apellidos) {
-          const split = splitNames(firstUser.name || "");
-          if (!state.contactDraft.c_nombres && split.nombres) state.contactDraft.c_nombres = split.nombres;
-          if (!state.contactDraft.c_apellidos && split.apellidos) state.contactDraft.c_apellidos = split.apellidos;
+    const firstUser = supportData?.users?.[0] || null;
+    if (firstUser) {
+      if (!state.contactDraft.c_nombres || !state.contactDraft.c_apellidos) {
+        const split = splitNames(firstUser.name || "");
+        if (!state.contactDraft.c_nombres && split.nombres) {
+          state.contactDraft.c_nombres = split.nombres;
         }
-        if (!state.contactDraft.c_email && firstUser.email) state.contactDraft.c_email = String(firstUser.email).toLowerCase();
-        if (!state.contactDraft.c_tel1 && firstUser.phone) {
-          const normalizedPhone = normalizePhone(firstUser.phone);
-          if (normalizedPhone) {
-            state.contactDraft.c_tel1 = normalizedPhone;
-            if (!state.contactDraft.c_tel2) state.contactDraft.c_tel2 = normalizedPhone;
+        if (!state.contactDraft.c_apellidos && split.apellidos) {
+          state.contactDraft.c_apellidos = split.apellidos;
+        }
+      }
+
+      if (!state.contactDraft.c_email && firstUser.email) {
+        state.contactDraft.c_email = String(firstUser.email).toLowerCase();
+      }
+
+      if (!state.contactDraft.c_tel1 && firstUser.phone) {
+        const normalizedPhone = normalizePhone(firstUser.phone);
+        if (normalizedPhone) {
+          state.contactDraft.c_tel1 = normalizedPhone;
+          if (!state.contactDraft.c_tel2) {
+            state.contactDraft.c_tel2 = normalizedPhone;
           }
         }
       }
-    } catch (error) {
-      console.error("SUPPORT SEARCH ERROR:", error.message);
-      state.identity.supportSearchCompleted = false;
-      state.identity.supportSummary = `error_busqueda_support: ${error.message}`;
     }
+  } catch (error) {
+    console.error("SUPPORT SEARCH ERROR:", error.message);
+    state.identity.supportSearchCompleted = false;
+    state.identity.supportSummary = `error_busqueda_support: ${error.message}`;
   }
 }
 
