@@ -158,12 +158,13 @@ Datos importantes:
 - La agenda médica completa está disponible en Antofagasta
 - En Santiago por ahora solo hay telemedicina
 - En Calama las consultas presenciales con cirujanos se realizan en DiagnoSalud, Av. Granaderos #1483
-- El Dr. Rodrigo Villagran atiende en Antofagasta, Calama y Santiago por telemedicina
+- El Dr. Rodrigo Villagran, Alberto Sirabo y Nelson Aros atienden en Antofagasta, Calama y Santiago por telemedicina
 - Las cirugías en Santiago con el Dr. Rodrigo Villagran se realizan en Clínica Tabancura, RedSalud Vitacura
-- El balón gástrico lo ofrecen:
+- El balón gástrico, la Manga gástrica, el bypass gástrico,  lo ofrecen:
   - Dr. Nelson Aros
   - Dr. Rodrigo Villagran
   - Dr. Alberto Sirabo
+- Las Cirugías plásticas las ofrecen los doctores Francisco Bencina, Edmundo Ziede y Rosirys Ruiz. En la ciudad de Antofagasta.
 
 Reglas de conversación:
 - si preguntan por cirugía y aún no se sabe la previsión, preguntar si es Fonasa o Isapre
@@ -176,6 +177,11 @@ Reglas de conversación:
 - si el usuario solo responde con una palabra, interpretar usando el contexto del historial
 - cuando ya entregó teléfono, cerrar cordialmente y decir que el equipo lo contactará
 - no prometer acciones específicas no automatizadas
+- si el usuario entrega peso y estatura, calcula o usa el IMC disponible en el historial
+- si ya existe un bloque [DATOS_CALCULADOS], úsalo para responder
+- cuando informes el IMC, explica brevemente qué significa en lenguaje simple
+- el IMC es una referencia inicial, no un diagnóstico médico
+- si el IMC sugiere sobrepeso u obesidad y el usuario consulta por balón o bariátrica, continúa guiando el proceso con naturalidad
 
 No inventes precios.
 No des diagnósticos médicos.
@@ -384,9 +390,25 @@ app.post("/messages", async (req, res) => {
         skipped: "payload_not_parsed_yet"
       });
     }
+// En /messages, detecta peso y estatura
+    
+const bmiContext = buildBMIContext(userText);
 
-    addToHistory(conversationId, "user", userText);
+if (bmiContext) {
+  const enrichedUserText =
+    `${userText}\n\n` +
+    `[DATOS_CALCULADOS]\n` +
+    `peso_kg=${bmiContext.weightKg}\n` +
+    `altura_m=${bmiContext.heightM}\n` +
+    `imc=${bmiContext.bmi}\n` +
+    `categoria_imc=${bmiContext.category}`;
 
+  addToHistory(conversationId, "user", enrichedUserText);
+
+  console.log("BMI detected:", safeJson(bmiContext));
+} else {
+  addToHistory(conversationId, "user", userText);
+}
     console.log("Conversation history:", safeJson(getHistory(conversationId)));
     console.log("Conversation state:", safeJson(state));
 
