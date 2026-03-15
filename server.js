@@ -1,14 +1,16 @@
 import express from "express";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
+import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 // =========================
-// In-memory state
+// Conversation cache (memory + Postgres persistence)
 // =========================
 const conversationHistory = new Map();
 const conversationStates = new Map();
+const hydratedConversations = new Set();
 
 // =========================
 // Config
@@ -531,87 +533,170 @@ function addToHistory(conversationId, role, content) {
   }
 }
 
+function buildInitialConversationState() {
+  return {
+    contactDraft: {
+      c_rut: null,
+      c_nombres: null,
+      c_apellidos: null,
+      c_fecha: null,
+      c_tel1: null,
+      c_tel2: null,
+      c_email: null,
+      c_aseguradora: null,
+      c_modalidad: null,
+      c_direccion: null,
+      c_comuna: null
+    },
+    dealDraft: {
+      dealPipelineId: null,
+      dealOwnerId: null,
+      dealSucursal: null,
+      dealPeso: null,
+      dealEstatura: null,
+      dealInteres: null,
+      dealUrlMedinet: null,
+      dealCirugiasPrevias: null,
+      dealCirujanoBariatrico: null,
+      dealCirujanoPlastico: null,
+      dealCirujanoBalon: null,
+      dealCirujanoGeneral: null,
+      dealValidacionPad: null,
+      dealNumeroFamilia: null,
+      dealColab1: null,
+      dealColab2: null,
+      dealColab3: null
+    },
+    identity: {
+      saysExistingPatient: false,
+      lastSellSearchRut: null,
+      sellSearchCompleted: false,
+      sellContactFound: false,
+      sellDealFound: false,
+      sellSummary: null,
+      sellRaw: null,
+      supportSearchCompleted: false,
+      foundInSupport: false,
+      supportSummary: null,
+      supportRaw: null,
+      lastSupportSearchKey: null,
+      likelyClinicalRecordOnly: false,
+      caseType: null,
+      nextAction: null,
+      lastQuestionReason: null,
+      lastMissingFields: [],
+      lastResolvedContext: null
+    },
+    measurements: {
+      weightKg: null,
+      heightM: null,
+      heightCm: null,
+      bmi: null,
+      bmiCategory: null,
+      pendingConfirmation: false,
+      proposedWeightKg: null,
+      proposedHeightM: null,
+      proposedHeightCm: null,
+      askedMeasurementInstructions: false
+    },
+    system: {
+      aiEnabled: true,
+      humanTakenOver: false,
+      assigneeId: null,
+      botMessagesSent: 0,
+      introducedAsAntonia: false,
+      handoffReason: null,
+      lastQuestionKey: null
+    }
+  };
+}
+
+function mergeConversationState(baseState, persistedState) {
+  const merged = buildInitialConversationState();
+  for (const key of Object.keys(merged)) {
+    if (persistedState && typeof persistedState[key] === "object" && persistedState[key] !== null) {
+      merged[key] = { ...merged[key], ...persistedState[key] };
+    } else if (persistedState && persistedState[key] !== undefined) {
+      merged[key] = persistedState[key];
+    } else if (baseState && baseState[key] !== undefined) {
+      if (typeof merged[key] === "object" && merged[key] !== null) {
+        merged[key] = { ...merged[key], ...baseState[key] };
+      } else {
+        merged[key] = baseState[key];
+      }
+    }
+  }
+  return merged;
+}
+
 function getConversationState(conversationId) {
   if (!conversationStates.has(conversationId)) {
-    conversationStates.set(conversationId, {
-      contactDraft: {
-        c_rut: null,
-        c_nombres: null,
-        c_apellidos: null,
-        c_fecha: null,
-        c_tel1: null,
-        c_tel2: null,
-        c_email: null,
-        c_aseguradora: null,
-        c_modalidad: null,
-        c_direccion: null,
-        c_comuna: null
-      },
-      dealDraft: {
-        dealPipelineId: null,
-        dealOwnerId: null,
-        dealSucursal: null,
-        dealPeso: null,
-        dealEstatura: null,
-        dealInteres: null,
-        dealUrlMedinet: null,
-        dealCirugiasPrevias: null,
-        dealCirujanoBariatrico: null,
-        dealCirujanoPlastico: null,
-        dealCirujanoBalon: null,
-        dealCirujanoGeneral: null,
-        dealValidacionPad: null,
-        dealNumeroFamilia: null,
-        dealColab1: null,
-        dealColab2: null,
-        dealColab3: null
-      },
-      identity: {
-        saysExistingPatient: false,
-        lastSellSearchRut: null,
-        sellSearchCompleted: false,
-        sellContactFound: false,
-        sellDealFound: false,
-        sellSummary: null,
-        sellRaw: null,
-
-        supportSearchCompleted: false,
-        foundInSupport: false,
-        supportSummary: null,
-        supportRaw: null,
-        lastSupportSearchKey: null,
-
-        likelyClinicalRecordOnly: false,
-        caseType: null,
-        nextAction: null,
-        lastQuestionReason: null,
-        lastMissingFields: [],
-        lastResolvedContext: null
-      },
-      measurements: {
-        weightKg: null,
-        heightM: null,
-        heightCm: null,
-        bmi: null,
-        bmiCategory: null,
-        pendingConfirmation: false,
-        proposedWeightKg: null,
-        proposedHeightM: null,
-        proposedHeightCm: null,
-        askedMeasurementInstructions: false
-      },
-      system: {
-        aiEnabled: true,
-        humanTakenOver: false,
-        assigneeId: null,
-        botMessagesSent: 0,
-        introducedAsAntonia: false,
-        handoffReason: null,
-        lastQuestionKey: null
-      }
-    });
+    conversationStates.set(conversationId, buildInitialConversationState());
   }
   return conversationStates.get(conversationId);
+}
+
+async function hydrateConversationCache(conversationId) {
+  if (hydratedConversations.has(conversationId)) {
+    return getConversationState(conversationId);
+  }
+
+  const baseState = getConversationState(conversationId);
+
+  if (!dbEnabled()) {
+    hydratedConversations.add(conversationId);
+    return baseState;
+  }
+
+  try {
+    const record = await getConversationRecord(conversationId);
+    if (record?.state_json) {
+      conversationStates.set(conversationId, mergeConversationState(baseState, record.state_json));
+    }
+
+    const recentMessages = await getRecentConversationMessages(conversationId, MAX_HISTORY_MESSAGES);
+    if (recentMessages.length > 0) {
+      conversationHistory.set(
+        conversationId,
+        recentMessages.map((row) => ({
+          role: row.role === "assistant" ? "assistant" : row.role === "system" ? "system" : "user",
+          content: String(row.content || "").trim()
+        }))
+      );
+    }
+  } catch (error) {
+    console.error("DB HYDRATION ERROR:", error.message);
+  }
+
+  hydratedConversations.add(conversationId);
+  return getConversationState(conversationId);
+}
+
+async function persistConversationSnapshot(conversationId, state, channel = null) {
+  if (!dbEnabled()) return;
+  try {
+    await upsertConversationState(conversationId, channel, state);
+    await upsertStructuredLead(conversationId, channel, state);
+  } catch (error) {
+    console.error("DB SNAPSHOT ERROR:", error.message);
+  }
+}
+
+async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null }) {
+  if (!dbEnabled()) return;
+  try {
+    await insertConversationMessage({
+      conversationId,
+      role,
+      messageId,
+      channel,
+      sourceType,
+      content,
+      rawJson
+    });
+  } catch (error) {
+    console.error("DB MESSAGE ERROR:", error.message);
+  }
 }
 
 function extractConversationInfo(payload) {
@@ -1434,7 +1519,7 @@ app.get("/support-search-test", async (req, res) => {
   }
 });
 
-app.post("/ticket-assigned", (req, res) => {
+app.post("/ticket-assigned", async (req, res) => {
   try {
     console.log("===== /ticket-assigned webhook =====");
     console.log("Body:", safeJson(req.body));
@@ -1445,6 +1530,7 @@ app.post("/ticket-assigned", (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing conversation_id" });
     }
 
+    await hydrateConversationCache(conversation_id);
     const state = getConversationState(conversation_id);
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
@@ -1453,6 +1539,8 @@ app.post("/ticket-assigned", (req, res) => {
 
     console.log("AI disabled for conversation:", conversation_id);
     console.log("Conversation state:", safeJson(state));
+
+    await persistConversationSnapshot(conversation_id, state, null);
 
     return res.json({
       ok: true,
@@ -1499,16 +1587,19 @@ app.post("/messages", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing conversationId" });
     }
 
+    await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
 
     if (!state.system.aiEnabled) {
       console.log("AI blocked: disabled for", conversationId);
+      await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
     if (state.system.botMessagesSent >= MAX_BOT_MESSAGES) {
       state.system.aiEnabled = false;
       console.log("AI disabled: max bot messages reached for", conversationId);
+      await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
       return res.json({ ok: true, skipped: "max_bot_messages_reached" });
     }
 
@@ -1518,6 +1609,7 @@ app.post("/messages", async (req, res) => {
       state.system.handoffReason = "human_business_message_detected";
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
+      await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -1530,6 +1622,18 @@ app.post("/messages", async (req, res) => {
     }
 
     updateDraftsFromText(state, userText, info);
+
+    const channelLabel = info.sourceType || info.entryPoint || null;
+    await persistConversationSnapshot(conversationId, state, channelLabel);
+    await persistConversationMessage({
+      conversationId,
+      role: "user",
+      messageId,
+      channel: channelLabel,
+      sourceType,
+      content: userText,
+      rawJson: info.rawMessage
+    });
 
     // Measurement confirmation flow first.
     if (state.measurements.pendingConfirmation) {
@@ -1562,6 +1666,8 @@ app.post("/messages", async (req, res) => {
         if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
           latestState.system.aiEnabled = false;
         }
+        await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: appendAntoniaIntroduction(latestState, reply), rawJson: { kind: "measurement_instruction" } });
+        await persistConversationSnapshot(conversationId, latestState, channelLabel);
         return res.json({ ok: true, reply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
       } else {
         const reply = "Para confirmar, responde 1 si está correcto o 2 si no.";
@@ -1578,6 +1684,8 @@ app.post("/messages", async (req, res) => {
         if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
           latestState.system.aiEnabled = false;
         }
+        await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: appendAntoniaIntroduction(latestState, reply), rawJson: { kind: "measurement_confirmation_prompt" } });
+        await persistConversationSnapshot(conversationId, latestState, channelLabel);
         return res.json({ ok: true, reply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
       }
     } else {
@@ -1604,6 +1712,8 @@ app.post("/messages", async (req, res) => {
           if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
             latestState.system.aiEnabled = false;
           }
+          await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: appendAntoniaIntroduction(latestState, reply), rawJson: { kind: "measurement_confirmation_request" } });
+          await persistConversationSnapshot(conversationId, latestState, channelLabel);
           return res.json({ ok: true, reply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
         }
 
@@ -1625,6 +1735,8 @@ app.post("/messages", async (req, res) => {
       await sleep(delayMs);
       await sendConversationReply(appId, conversationId, appendAntoniaIntroduction(state, reply));
       state.system.botMessagesSent += 1;
+      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: appendAntoniaIntroduction(state, reply), rawJson: { kind: "unknown_professional_schedule" } });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
       return res.json({
         ok: true,
         reply,
@@ -1646,6 +1758,8 @@ app.post("/messages", async (req, res) => {
       await sleep(delayMs);
       await sendConversationReply(appId, conversationId, appendAntoniaIntroduction(state, reply));
       state.system.botMessagesSent += 1;
+      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: appendAntoniaIntroduction(state, reply), rawJson: { kind: "case_e" } });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
       return res.json({ ok: true, reply, delayMs, botMessagesSent: state.system.botMessagesSent });
     }
 
@@ -1664,6 +1778,8 @@ app.post("/messages", async (req, res) => {
       if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
         latestState.system.aiEnabled = false;
       }
+      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "ask_fonasa_tramo" } });
+      await persistConversationSnapshot(conversationId, latestState, channelLabel);
       return res.json({ ok: true, reply: finalReply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
     }
 
@@ -1682,6 +1798,8 @@ app.post("/messages", async (req, res) => {
       if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
         latestState.system.aiEnabled = false;
       }
+      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "ask_specific_aseguradora" } });
+      await persistConversationSnapshot(conversationId, latestState, channelLabel);
       return res.json({ ok: true, reply: finalReply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
     }
 
@@ -1718,6 +1836,8 @@ app.post("/messages", async (req, res) => {
       await sleep(delayMs);
       await sendConversationReply(appId, conversationId, appendAntoniaIntroduction(state, reply));
       state.system.botMessagesSent += 1;
+      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: appendAntoniaIntroduction(state, reply), rawJson: { kind: "resolver_derive", resolverDecision } });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
       return res.json({
         ok: true,
         reply,
@@ -1745,6 +1865,9 @@ app.post("/messages", async (req, res) => {
       if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
         latestState.system.aiEnabled = false;
       }
+
+      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "resolver_question", resolverDecision } });
+      await persistConversationSnapshot(conversationId, latestState, channelLabel);
 
       return res.json({
         ok: true,
@@ -1790,11 +1913,15 @@ app.post("/messages", async (req, res) => {
     latestState.system.botMessagesSent += 1;
     console.log("Bot messages sent:", latestState.system.botMessagesSent, "for", conversationId);
 
+    await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: reply, rawJson: { kind: "openai_reply" } });
+
     if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
       latestState.system.aiEnabled = false;
       latestState.system.handoffReason = latestState.system.handoffReason || "max_bot_messages_reached";
       console.log("AI disabled after message #10:", conversationId);
     }
+
+    await persistConversationSnapshot(conversationId, latestState, channelLabel);
 
     return res.json({
       ok: true,
@@ -1811,6 +1938,8 @@ app.post("/messages", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
+await initDb();
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);
+  console.log(`Database persistence: ${dbEnabled() ? "enabled" : "disabled"}`);
 });
