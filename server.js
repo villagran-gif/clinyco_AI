@@ -11,6 +11,31 @@ app.get("/", (req, res) => {
 function cleanIncomingMessage(message = "", requesterName = "") {
   let text = String(message || "").trim();
 
+  // Zendesk Social/Messaging puede anteponer una línea automática antes del mensaje real.
+  // Ejemplo: "Conversation with Rodrivil\nquiero bariatrica".
+  text = text
+    .split("\n")
+    .filter((line, index) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+
+      if (
+        index === 0 &&
+        (trimmed.startsWith("Conversation with ") ||
+          trimmed.startsWith("Conversación con "))
+      ) {
+        return false;
+      }
+
+      if (trimmed.startsWith("Clínyco adjuntó un archivo")) {
+        return false;
+      }
+
+      return true;
+    })
+    .join("\n")
+    .trim();
+
   if (requesterName) {
     const escaped = requesterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`^${escaped}\\s*`, "i");
@@ -21,6 +46,20 @@ function cleanIncomingMessage(message = "", requesterName = "") {
   text = text.replace(/\[\[AI_SENT\]\]/g, "").trim();
 
   return text;
+}
+
+function isAutoSubjectOnly(rawMessage = "") {
+  const normalized = String(rawMessage || "").trim();
+
+  if (!normalized) return true;
+
+  const autoSubjectPatterns = [
+    /^Conversation with .+$/i,
+    /^Conversación con .+$/i,
+    /^Clínyco adjuntó un archivo\.?$/i
+  ];
+
+  return autoSubjectPatterns.some((pattern) => pattern.test(normalized));
 }
 
 async function askOpenAI(message) {
@@ -193,11 +232,9 @@ app.post("/zendesk-ai", async (req, res) => {
       return res.json({ ok: true, skipped: "ai_message" });
     }
 
-    // Ignorar texto automático de creación de ticket
-    if (
-      rawMessage.startsWith("Conversation with ") ||
-      rawMessage.startsWith("Conversación con ")
-    ) {
+    // Ignorar únicamente cuando TODO el payload es texto automático.
+    // Si viene "Conversation with ..." + mensaje real en nuevas líneas, se procesa igual.
+    if (isAutoSubjectOnly(rawMessage)) {
       console.log("Ignorado texto automático de creación de ticket");
       return res.json({ ok: true, skipped: "auto_subject" });
     }
