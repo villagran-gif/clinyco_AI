@@ -17,47 +17,39 @@ function safeJson(value) {
 }
 
 function extractConversationInfo(payload) {
-  // Variantes defensivas para distintos formatos
   const appId =
-    payload?.app?._id ||
     payload?.app?.id ||
+    payload?.app?._id ||
     payload?.appId ||
     process.env.SUNCO_APP_ID ||
     null;
 
+  const event = Array.isArray(payload?.events) ? payload.events[0] : null;
+  const eventPayload = event?.payload || {};
+
   const conversationId =
-    payload?.conversation?._id ||
+    eventPayload?.conversation?.id ||
+    eventPayload?.conversation?._id ||
     payload?.conversation?.id ||
-    payload?.conversationId ||
+    payload?.conversation?._id ||
     null;
 
-  // Buscar mensaje de usuario final
+  const message = eventPayload?.message || payload?.message || null;
+
   let userText = "";
 
-  if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
-    const msg = payload.messages[0];
-    if (
-      (msg?.role === "appUser" || msg?.author?.type === "user") &&
-      (msg?.type === "text" || msg?.content?.type === "text")
-    ) {
-      userText = msg?.text || msg?.content?.text || "";
-    }
-  }
-
-  if (!userText && payload?.message) {
-    const msg = payload.message;
-    if (
-      (msg?.role === "appUser" || msg?.author?.type === "user") &&
-      (msg?.type === "text" || msg?.content?.type === "text")
-    ) {
-      userText = msg?.text || msg?.content?.text || "";
-    }
+  if (
+    message?.author?.type === "user" &&
+    message?.content?.type === "text"
+  ) {
+    userText = message?.content?.text || "";
   }
 
   return {
     appId,
     conversationId,
-    userText: String(userText || "").trim()
+    userText: String(userText || "").trim(),
+    eventType: event?.type || null
   };
 }
 
@@ -174,19 +166,27 @@ app.post("/messages", async (req, res) => {
     console.log("Headers:", safeJson(req.headers));
     console.log("Body:", safeJson(req.body));
 
-    const { appId, conversationId, userText } = extractConversationInfo(req.body);
+  const { appId, conversationId, userText, eventType } = extractConversationInfo(req.body);
 
-    console.log("Extracted appId:", appId);
-    console.log("Extracted conversationId:", conversationId);
-    console.log("Extracted userText:", userText);
+console.log("Extracted appId:", appId);
+console.log("Extracted conversationId:", conversationId);
+console.log("Extracted userText:", userText);
+console.log("Extracted eventType:", eventType);
 
-    // Si todavía no sabemos leer el payload real, no fallar.
-    if (!appId || !conversationId || !userText) {
-      return res.json({
-        ok: true,
-        skipped: "payload_not_parsed_yet"
-      });
-    }
+// Ignorar eventos que no sean mensaje real del usuario
+if (eventType !== "conversation:message") {
+  return res.json({
+    ok: true,
+    skipped: "non_message_event"
+  });
+}
+
+if (!appId || !conversationId || !userText) {
+  return res.json({
+    ok: true,
+    skipped: "payload_not_parsed_yet"
+  });
+}
 
     const reply = await askOpenAI(userText);
     await sendConversationReply(appId, conversationId, reply);
