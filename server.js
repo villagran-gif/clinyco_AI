@@ -130,8 +130,10 @@ app.post("/zendesk-ai", async (req, res) => {
       });
     }
 
-    const reply = await askOpenAI(message);
-    await postReplyToZendesk(ticketId, reply);
+    const rawReply = await askOpenAI(message);
+const reply = `${rawReply}\n\n[[AI_SENT]]`;
+
+await postReplyToZendesk(ticketId, reply);
 
     return res.json({
       ok: true,
