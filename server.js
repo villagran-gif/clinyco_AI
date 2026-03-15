@@ -130,10 +130,14 @@ app.post("/zendesk-ai", async (req, res) => {
       });
     }
 
-    const rawReply = await askOpenAI(message);
-const reply = `${rawReply}\n\n[[AI_SENT]]`;
+    if (message.includes("⌘")) {
+      return res.json({ ok: true });
+    }
 
-await postReplyToZendesk(ticketId, reply);
+    const rawReply = await askOpenAI(message);
+    const reply = `${rawReply} ⌘`;
+
+    await postReplyToZendesk(ticketId, reply);
 
     return res.json({
       ok: true,
