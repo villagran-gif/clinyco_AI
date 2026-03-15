@@ -1,8 +1,9 @@
 import express from "express";
 
 const app = express();
-
 app.use(express.json({ limit: "2mb" }));
+
+const conversationMemory = new Map();
 
 app.get("/", (req, res) => {
   res.send("Clinyco Conversations AI OK");
@@ -13,6 +14,31 @@ function safeJson(value) {
     return JSON.stringify(value);
   } catch {
     return "[unserializable]";
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getHistory(conversationId) {
+  if (!conversationMemory.has(conversationId)) {
+    conversationMemory.set(conversationId, []);
+  }
+  return conversationMemory.get(conversationId);
+}
+
+function addToHistory(conversationId, role, content) {
+  const history = getHistory(conversationId);
+
+  history.push({
+    role,
+    content: String(content || "").trim()
+  });
+
+  const MAX_MESSAGES = 12;
+  if (history.length > MAX_MESSAGES) {
+    history.splice(0, history.length - MAX_MESSAGES);
   }
 }
 
@@ -49,11 +75,35 @@ function extractConversationInfo(payload) {
     appId,
     conversationId,
     userText: String(userText || "").trim(),
-    eventType: event?.type || null
+    eventType: event?.type || null,
+    authorType: message?.author?.type || null
   };
 }
 
-async function askOpenAI(message) {
+function calculateHumanDelay(text) {
+  const cleanText = String(text || "").trim();
+
+  if (!cleanText) return 1200;
+
+  const chars = cleanText.length;
+
+  // base + tiempo por longitud + componente aleatorio
+  let delay = 900 + chars * 35 + Math.floor(Math.random() * 900);
+
+  // ajustes suaves según longitud
+  if (chars < 25) delay += 300;
+  if (chars > 120) delay += 700;
+
+  // límites razonables
+  delay = Math.max(1200, delay);
+  delay = Math.min(delay, 6500);
+
+  return delay;
+}
+
+async function askOpenAI(conversationId) {
+  const history = getHistory(conversationId);
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -68,44 +118,48 @@ async function askOpenAI(message) {
           content: `
 Eres Antonia, asistente de Clinyco.
 
-Clinyco es un hub de cirugías en Chile con presencia en:
-- Antofagasta
-- Calama
-- Santiago
-
-Servicios principales:
-- cirugía bariátrica
-- colecistectomía
-- balón gástrico
-- cirugía plástica
-- endoscopía
-- agenda médica
-- resultados de examen
-- telemedicina
-
-Reglas:
-- responde corto
-- tono humano y cercano
-- no sonar como robot
+Objetivo:
+- guiar al paciente para calificarlo y acercarlo a evaluación o agendamiento
+- no repetir preguntas ya respondidas
+- avanzar paso a paso
 - máximo 2 frases
-- hacer 1 sola pregunta a la vez
-- si preguntan por cirugía, preguntar primero si es Fonasa o Isapre
-- si preguntan por bariátrica, después pedir peso y estatura
-- la endoscopía solo se realiza en Antofagasta
-- la agenda médica completa solo está disponible en Antofagasta
-- en Santiago, por ahora, solo hay telemedicina
-- en Calama las consultas presenciales con cirujanos se realizan en DiagnoSalud, Av. Granaderos #1483
-- el Dr. Rodrigo Villagran atiende en Antofagasta, Calama y en Santiago por telemedicina
-- las cirugías en Santiago con el Dr. Rodrigo Villagran se realizan en Clínica Tabancura, RedSalud Vitacura
-- si el paciente quiere avanzar, agendar, cotizar o resolver su caso, pedir teléfono
-- no inventes precios
-- no des diagnósticos médicos
+- hacer solo 1 pregunta a la vez
+- sonar humana, cercana y natural
+- responder en español chileno neutral, profesional y cálido
+
+Datos importantes:
+- Clinyco tiene presencia en Antofagasta, Calama y Santiago
+- Servicios principales:
+  - cirugía bariátrica
+  - colecistectomía
+  - balón gástrico
+  - cirugía plástica
+  - endoscopía
+  - agenda médica
+  - resultados de examen
+  - telemedicina
+- Endoscopía solo en Antofagasta
+- La agenda médica completa está disponible en Antofagasta
+- En Santiago por ahora solo hay telemedicina
+- En Calama las consultas presenciales con cirujanos se realizan en DiagnoSalud, Av. Granaderos #1483
+- El Dr. Rodrigo Villagran atiende en Antofagasta, Calama y Santiago por telemedicina
+- Las cirugías en Santiago con el Dr. Rodrigo Villagran se realizan en Clínica Tabancura, RedSalud Vitacura
+
+Reglas de conversación:
+- si preguntan por cirugía y aún no se sabe la previsión, preguntar si es Fonasa o Isapre
+- si es bariátrica y ya sabemos previsión, pedir peso y estatura
+- si quiere avanzar, cotizar, agendar o resolver su caso, pedir teléfono
+- no repetir preguntas ya contestadas en el historial
+- si ya sabemos previsión, no volver a preguntarla
+- si ya sabemos cirugía de interés, avanzar a la siguiente pregunta útil
+- si el usuario solo responde con una palabra, interpretar usando el contexto del historial
+
+No inventes precios.
+No des diagnósticos médicos.
+No digas que eres una IA.
 `
         },
-        {
-          role: "user",
-          content: message
-        }
+        ...history
       ]
     })
   });
@@ -118,7 +172,7 @@ Reglas:
   }
 
   const data = JSON.parse(raw);
-  return data?.choices?.[0]?.message?.content || "Gracias por escribirnos.";
+  return data?.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
 }
 
 async function sendConversationReply(appId, conversationId, reply) {
@@ -166,34 +220,59 @@ app.post("/messages", async (req, res) => {
     console.log("Headers:", safeJson(req.headers));
     console.log("Body:", safeJson(req.body));
 
-  const { appId, conversationId, userText, eventType } = extractConversationInfo(req.body);
+    const { appId, conversationId, userText, eventType, authorType } =
+      extractConversationInfo(req.body);
 
-console.log("Extracted appId:", appId);
-console.log("Extracted conversationId:", conversationId);
-console.log("Extracted userText:", userText);
-console.log("Extracted eventType:", eventType);
+    console.log("Extracted appId:", appId);
+    console.log("Extracted conversationId:", conversationId);
+    console.log("Extracted userText:", userText);
+    console.log("Extracted eventType:", eventType);
+    console.log("Extracted authorType:", authorType);
 
-// Ignorar eventos que no sean mensaje real del usuario
-if (eventType !== "conversation:message") {
-  return res.json({
-    ok: true,
-    skipped: "non_message_event"
-  });
-}
+    if (eventType !== "conversation:message") {
+      return res.json({
+        ok: true,
+        skipped: "non_message_event"
+      });
+    }
 
-if (!appId || !conversationId || !userText) {
-  return res.json({
-    ok: true,
-    skipped: "payload_not_parsed_yet"
-  });
-}
+    // Ignora mensajes enviados por el propio bot / business
+    if (authorType !== "user") {
+      return res.json({
+        ok: true,
+        skipped: "non_user_message"
+      });
+    }
 
-    const reply = await askOpenAI(userText);
+    if (!appId || !conversationId || !userText) {
+      return res.json({
+        ok: true,
+        skipped: "payload_not_parsed_yet"
+      });
+    }
+
+    addToHistory(conversationId, "user", userText);
+
+    console.log(
+      "Conversation history:",
+      safeJson(getHistory(conversationId))
+    );
+
+    const reply = await askOpenAI(conversationId);
+
+    addToHistory(conversationId, "assistant", reply);
+
+    const delayMs = calculateHumanDelay(reply);
+    console.log("Human delay ms:", delayMs);
+
+    await sleep(delayMs);
+
     await sendConversationReply(appId, conversationId, reply);
 
     return res.json({
       ok: true,
-      reply
+      reply,
+      delayMs
     });
   } catch (error) {
     console.error("ERROR /messages:", error.message);
