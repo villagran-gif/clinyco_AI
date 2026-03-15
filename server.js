@@ -50,7 +50,8 @@ function getConversationState(conversationId) {
     aiStateByConversation.set(conversationId, {
       aiEnabled: true,
       humanTakenOver: false,
-      assigneeId: null
+      assigneeId: null,
+      botMessagesSent: 0
     });
   }
   return aiStateByConversation.get(conversationId);
@@ -168,8 +169,8 @@ Reglas de conversación:
 - si ya sabemos previsión, no volver a preguntarla
 - si ya sabemos cirugía de interés, avanzar a la siguiente pregunta útil
 - si el usuario solo responde con una palabra, interpretar usando el contexto del historial
-- cuando ya entregó teléfono, cerrar cordialmente y decir que cuando ya entregó teléfono, cerrar cordialmente y decir que el equipo lo contactará
-- no prometer acciones que no estén automatizadas, salvo que el equipo lo contactará
+- cuando ya entregó teléfono, cerrar cordialmente y decir que el equipo lo contactará
+- no prometer acciones específicas no automatizadas
 
 No inventes precios.
 No des diagnósticos médicos.
@@ -244,7 +245,7 @@ app.get("/", (req, res) => {
 });
 
 // =========================
-// Human takeover webhook
+// Optional human takeover webhook
 // =========================
 app.post("/ticket-assigned", (req, res) => {
   try {
@@ -325,20 +326,46 @@ app.post("/messages", async (req, res) => {
       });
     }
 
-    // Inicializa estado de conversación
     const state = getConversationState(conversationId);
 
-    // Si ya la tomó un humano, bloquear IA para cualquier mensaje nuevo
+    // Si ya fue tomada por humano o se deshabilitó, bloquear
     if (!state.aiEnabled) {
-      console.log("AI blocked: human takeover active for", conversationId);
+      console.log("AI blocked: disabled for", conversationId);
 
       return res.json({
         ok: true,
-        skipped: "human_takeover_active"
+        skipped: "ai_disabled"
       });
     }
 
-    // Ignorar mensajes business del bot o de Zendesk
+    // Límite máximo de respuestas del bot por conversación
+    if (state.botMessagesSent >= 10) {
+      state.aiEnabled = false;
+
+      console.log("AI disabled: max bot messages reached for", conversationId);
+
+      return res.json({
+        ok: true,
+        skipped: "max_bot_messages_reached"
+      });
+    }
+
+    // Si un humano responde desde Zendesk y NO es nuestro bot por API,
+    // apagamos la IA automáticamente
+    if (authorType === "business" && sourceType !== "api:conversations") {
+      state.aiEnabled = false;
+      state.humanTakenOver = true;
+
+      console.log("AI disabled due to human business message:", conversationId);
+      console.log("Business sourceType:", sourceType);
+
+      return res.json({
+        ok: true,
+        skipped: "human_business_message_detected"
+      });
+    }
+
+    // Ignorar mensajes no-user, incluido el espejo del propio bot
     if (authorType !== "user") {
       return res.json({
         ok: true,
@@ -367,23 +394,50 @@ app.post("/messages", async (req, res) => {
 
     await sleep(delayMs);
 
-    // Re-chequea por si un humano tomó la conversación durante el delay
+    // Re-chequeo por si hubo takeover durante el delay
     const latestState = getConversationState(conversationId);
+
     if (!latestState.aiEnabled) {
-      console.log("AI send cancelled after delay due to human takeover:", conversationId);
+      console.log("AI send cancelled after delay due to disabled state:", conversationId);
 
       return res.json({
         ok: true,
-        skipped: "human_takeover_after_delay"
+        skipped: "ai_disabled_after_delay"
+      });
+    }
+
+    if (latestState.botMessagesSent >= 10) {
+      latestState.aiEnabled = false;
+
+      console.log("AI send cancelled after delay due to max bot messages:", conversationId);
+
+      return res.json({
+        ok: true,
+        skipped: "max_bot_messages_reached_after_delay"
       });
     }
 
     await sendConversationReply(appId, conversationId, reply);
 
+    latestState.botMessagesSent += 1;
+
+    console.log(
+      "Bot messages sent:",
+      latestState.botMessagesSent,
+      "for",
+      conversationId
+    );
+
+    if (latestState.botMessagesSent >= 10) {
+      latestState.aiEnabled = false;
+      console.log("AI disabled after message #10:", conversationId);
+    }
+
     return res.json({
       ok: true,
       reply,
-      delayMs
+      delayMs,
+      botMessagesSent: latestState.botMessagesSent
     });
   } catch (error) {
     console.error("ERROR /messages:", error.message);
