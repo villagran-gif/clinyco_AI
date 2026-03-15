@@ -195,8 +195,8 @@ async function postReplyToZendesk(ticketId, reply) {
       body: JSON.stringify({
         ticket: {
           comment: {
-            public: false,
-            body: `🤖 Sugerencia IA:\n\n${reply.replace("⌘","")}`
+            public: true,
+            body: reply
           }
         }
       })
