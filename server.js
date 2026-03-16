@@ -2046,6 +2046,25 @@ app.post("/ticket-assigned", async (req, res) => {
 
     await hydrateConversationCache(conversation_id);
     const state = getConversationState(conversation_id);
+    if (
+  state.system?.handoffReason === "max_bot_messages_reached" &&
+  state.system?.aiEnabled === false &&
+  !state.system?.humanTakenOver
+) {
+  console.log("AI re-enabled after previous max_bot_messages_reached for", conversationId);
+
+  state.system.aiEnabled = true;
+  state.system.botMessagesSent = 0;
+  state.system.handoffReason = null;
+  state.system.lastQuestionKey = null;
+  state.system.lastInboundMessageId = null;
+
+  await persistConversationSnapshot(
+    conversationId,
+    state,
+    info.sourceType || info.entryPoint || null
+  );
+}
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
