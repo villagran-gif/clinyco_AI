@@ -726,6 +726,27 @@ function isStillLatestUserMessage(conversationId, expectedMessageId) {
   return latestState?.system?.lastInboundMessageId === expectedMessageId;
 }
 
+function isRealHumanBusinessTakeover(info) {
+  const sourceType = info?.sourceType || "";
+  const name = normalizeKey(info?.authorDisplayName || info?.channelDisplayName || "");
+
+  if (sourceType !== "zd:agentWorkspace") return false;
+
+  if (!name) return true;
+
+  const nonHumanNames = new Set([
+    "ANSWER BOT",
+    "CHAT BOT",
+    "BOT",
+    "ANTONIA",
+    "CHAT APP",
+    "SUPPORT APP",
+    "CLINYCO"
+  ]);
+
+  return !nonHumanNames.has(name);
+}
+
 function extractDate(text) {
   const match = String(text || "").match(/\b(\d{2})[\/-](\d{2})[\/-](\d{4})\b/);
   return match ? `${match[1]}/${match[2]}/${match[3]}` : null;
@@ -785,7 +806,7 @@ function parseAseguradora(text) {
     if (normalized.includes(alias)) {
       return {
         aseguradora: canonical,
-        modalidad: MODALIDAD_FROM_ASEGURADORA[canonical] || null,
+        modalidad: canonical === "FONASA" ? null : (MODALIDAD_FROM_ASEGURADORA[canonical] || null),
         isFonasa: canonical === "FONASA" || canonical === "PAD Fonasa PAD",
         isIsapreGeneric: false
       };
@@ -847,19 +868,26 @@ function parseMeasurements(text) {
   let ambiguous = false;
   let reason = null;
 
-  const explicitWeight = normalized.match(/(?:peso\s*:?\s*)?(\d{2,3})(?:\s*(?:kg|kilo|kilos))\b/i);
+  const explicitWeight =
+    normalized.match(/(?:peso\s*:?\s*)?(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg|kgs|kl|kls|kilo|kilos|kilogramos?)\b/i) ||
+    normalized.match(/\b(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg|kgs|kl|kls|kilo|kilos|kilogramos?)\b/i);
+
   if (explicitWeight) {
     weightKg = normalizeMeasurementNumber(explicitWeight[1]);
   }
 
-  const explicitHeightMeters = normalized.match(/(?:altura|estatura|mido)\s*:?\s*(1[.,]\d{1,2}|2[.,]0{1,2})\s*(?:m|metro|metros)?\b/i)
-    || normalized.match(/\b(1[.,]\d{1,2}|2[.,]0{1,2})\s*(?:m|metro|metros)\b/i);
+  const explicitHeightMeters =
+    normalized.match(/(?:altura|estatura|mido)\s*:?\s*(1[.,]\d{1,2}|2[.,]0{1,2})\s*(?:m|mt|mts|metro|metros)?\b/i) ||
+    normalized.match(/\b(1[.,]\d{1,2}|2[.,]0{1,2})\s*(?:m|mt|mts|metro|metros)\b/i);
+
   if (explicitHeightMeters) {
     heightM = normalizeMeasurementNumber(explicitHeightMeters[1]);
   }
 
-  const explicitHeightCm = normalized.match(/(?:altura|estatura|mido)\s*:?\s*(\d{3})\s*cm\b/i)
-    || normalized.match(/\b(\d{3})\s*cm\b/i);
+  const explicitHeightCm =
+    normalized.match(/(?:altura|estatura|mido)\s*:?\s*(\d{3})\s*cm\b/i) ||
+    normalized.match(/\b(\d{3})\s*cm\b/i);
+
   if (!heightM && explicitHeightCm) {
     const cm = normalizeMeasurementNumber(explicitHeightCm[1]);
     if (cm) {
@@ -868,7 +896,6 @@ function parseMeasurements(text) {
     }
   }
 
-  // Clear explicit data: no need to confirm unless values look unrealistic.
   if (weightKg && heightM) {
     if (weightKg < 25 || weightKg > 350 || heightM < 1.2 || heightM > 2.2) {
       return null;
@@ -883,55 +910,35 @@ function parseMeasurements(text) {
     };
   }
 
-  // If one explicit value is missing, try to infer from plain numeric pairs.
+  // Solo inferir por pares si NO hubo dato explícito de peso/altura.
   const pairMatches = Array.from(normalized.matchAll(/\b(\d{2,3}(?:[.,]\d{1,2})?)\b/g)).map((m) => m[1]);
-  if (pairMatches.length >= 2) {
+  if (!explicitWeight && !explicitHeightMeters && !explicitHeightCm && pairMatches.length >= 2) {
     const numbers = pairMatches.slice(0, 3).map((v) => normalizeMeasurementNumber(v)).filter(Boolean);
     if (numbers.length >= 2) {
       const [a, b] = numbers;
 
-      if (!weightKg && !heightM) {
-        // 120 178 or 178 120 or 66 154
-        if (a >= 40 && a <= 250 && b >= 120 && b <= 220) {
-          weightKg = a;
-          heightM = Math.round((b / 100) * 100) / 100;
-          fromCm = true;
-          ambiguous = true;
-          reason = "pair_weight_cm";
-        } else if (a >= 120 && a <= 220 && b >= 40 && b <= 250) {
-          weightKg = b;
-          heightM = Math.round((a / 100) * 100) / 100;
-          fromCm = true;
-          ambiguous = true;
-          reason = "pair_cm_weight";
-        } else if (a >= 40 && a <= 250 && b >= 1.2 && b <= 2.2) {
-          weightKg = a;
-          heightM = b;
-          ambiguous = true;
-          reason = "pair_weight_m";
-        } else if (a >= 1.2 && a <= 2.2 && b >= 40 && b <= 250) {
-          weightKg = b;
-          heightM = a;
-          ambiguous = true;
-          reason = "pair_m_weight";
-        }
-      } else if (weightKg && !heightM) {
-        if (b >= 120 && b <= 220) {
-          heightM = Math.round((b / 100) * 100) / 100;
-          fromCm = true;
-          ambiguous = true;
-          reason = "missing_height_cm";
-        } else if (b >= 1.2 && b <= 2.2) {
-          heightM = b;
-          ambiguous = true;
-          reason = "missing_height_m";
-        }
-      } else if (!weightKg && heightM) {
-        if (a >= 40 && a <= 250) {
-          weightKg = a;
-          ambiguous = true;
-          reason = "missing_weight";
-        }
+      if (a >= 40 && a <= 250 && b >= 120 && b <= 220) {
+        weightKg = a;
+        heightM = Math.round((b / 100) * 100) / 100;
+        fromCm = true;
+        ambiguous = true;
+        reason = "pair_weight_cm";
+      } else if (a >= 120 && a <= 220 && b >= 40 && b <= 250) {
+        weightKg = b;
+        heightM = Math.round((a / 100) * 100) / 100;
+        fromCm = true;
+        ambiguous = true;
+        reason = "pair_cm_weight";
+      } else if (a >= 40 && a <= 250 && b >= 1.2 && b <= 2.2) {
+        weightKg = a;
+        heightM = b;
+        ambiguous = true;
+        reason = "pair_weight_m";
+      } else if (a >= 1.2 && a <= 2.2 && b >= 40 && b <= 250) {
+        weightKg = b;
+        heightM = a;
+        ambiguous = true;
+        reason = "pair_m_weight";
       }
     }
   }
@@ -1351,6 +1358,9 @@ function updateDraftsFromText(state, text, info) {
     if (insuranceInfo.aseguradora !== "FONASA" && insuranceInfo.modalidad) {
       state.contactDraft.c_modalidad = insuranceInfo.modalidad;
     }
+    if (insuranceInfo.aseguradora === "FONASA" && !parseFonasaTramo(cleanText)) {
+      state.contactDraft.c_modalidad = null;
+    }
   }
 
   const tramo = parseFonasaTramo(cleanText);
@@ -1360,6 +1370,19 @@ function updateDraftsFromText(state, text, info) {
     state.dealDraft.dealValidacionPad = tramo.isPadEligible
       ? "Posible evaluación PAD Fonasa"
       : "No aplica PAD Fonasa por Tramo A";
+  }
+
+  const structuredMeasurementText = structuredLeadToMeasurementText(structured);
+  const bmiContext = buildBMIContext(structuredMeasurementText) || buildBMIContext(cleanText);
+  if (bmiContext) {
+    if (bmiContext.ambiguous) {
+      state.measurements.pendingConfirmation = true;
+      state.measurements.proposedWeightKg = bmiContext.weightKg;
+      state.measurements.proposedHeightM = bmiContext.heightM;
+      state.measurements.proposedHeightCm = bmiContext.heightCm;
+    } else {
+      applyConfirmedMeasurements(state, bmiContext);
+    }
   }
 
   const procedure = detectProcedure(cleanText);
@@ -2210,7 +2233,7 @@ app.post("/messages", async (req, res) => {
       return res.json({ ok: true, skipped: "max_bot_messages_reached" });
     }
 
-    if (authorType === "business" && sourceType !== "api:conversations") {
+    if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
       state.system.aiEnabled = false;
       state.system.humanTakenOver = true;
       state.system.handoffReason = "human_business_message_detected";
@@ -2526,7 +2549,19 @@ app.post("/messages", async (req, res) => {
     console.log("Resolver context:", safeJson(resolverContext));
     console.log("Resolver decision:", safeJson(resolverDecision));
 
-    if (resolverDecision.shouldDerive) {
+    const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);
+    const hardDerive =
+      resolverDecision.shouldDerive && (
+        resolverDecision.caseType === "E" ||
+        /clinical_record_only|ficha clinica|ficha clínica/i.test(String(resolverDecision.reason || "")) ||
+        unknownScheduleRequest.shouldDerive
+      );
+
+    if (resolverDecision.shouldDerive && !hardDerive) {
+      resolverDecision.shouldDerive = false;
+    }
+
+    if (hardDerive) {
       state.system.aiEnabled = false;
       state.system.handoffReason = resolverDecision.caseType === "E"
         ? "clinical_record_only"
