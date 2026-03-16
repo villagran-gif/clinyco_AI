@@ -2073,6 +2073,27 @@ app.post("/ticket-assigned", async (req, res) => {
     console.log("AI disabled for conversation:", conversation_id);
     console.log("Conversation state:", safeJson(state));
 
+    await saveConversationEvent({
+      conversationId: conversation_id,
+      info: {
+        sourceType: "system",
+        entryPoint: "ticket_assigned",
+        authorDisplayName: null,
+        channelDisplayName: null,
+        sourceProfileName: null
+      },
+      channelLabel: "ticket_assigned",
+      userText: null,
+      botReply: null,
+      state,
+      resolverDecision: {
+        nextAction: "blocked",
+        caseType: state?.identity?.caseType || null,
+        reason: "ticket_assigned",
+        missingFields: state?.identity?.lastMissingFields || []
+      }
+    });
+
     await persistConversationSnapshot(conversation_id, state, null);
 
     return res.json({
@@ -2123,15 +2144,68 @@ app.post("/messages", async (req, res) => {
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
 
+    if (
+      state.system?.handoffReason === "max_bot_messages_reached" &&
+      state.system?.aiEnabled === false &&
+      !state.system?.humanTakenOver
+    ) {
+      console.log("AI re-enabled after previous max_bot_messages_reached for", conversationId);
+
+      state.system.aiEnabled = true;
+      state.system.botMessagesSent = 0;
+      state.system.handoffReason = null;
+      state.system.lastQuestionKey = null;
+      state.system.lastInboundMessageId = null;
+
+      await persistConversationSnapshot(
+        conversationId,
+        state,
+        info.sourceType || info.entryPoint || null
+      );
+    }
+
     if (!state.system.aiEnabled) {
       console.log("AI blocked: disabled for", conversationId);
+
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel: info.sourceType || info.entryPoint || null,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: {
+          nextAction: "blocked",
+          caseType: state?.identity?.caseType || null,
+          reason: state?.system?.handoffReason || "ai_disabled",
+          missingFields: state?.identity?.lastMissingFields || []
+        }
+      });
+
       await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
     if (state.system.botMessagesSent >= MAX_BOT_MESSAGES) {
       state.system.aiEnabled = false;
+      state.system.handoffReason = state.system.handoffReason || "max_bot_messages_reached";
       console.log("AI disabled: max bot messages reached for", conversationId);
+
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel: info.sourceType || info.entryPoint || null,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: {
+          nextAction: "blocked",
+          caseType: state?.identity?.caseType || null,
+          reason: "max_bot_messages_reached",
+          missingFields: state?.identity?.lastMissingFields || []
+        }
+      });
+
       await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
       return res.json({ ok: true, skipped: "max_bot_messages_reached" });
     }
@@ -2142,6 +2216,22 @@ app.post("/messages", async (req, res) => {
       state.system.handoffReason = "human_business_message_detected";
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
+
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel: info.sourceType || info.entryPoint || null,
+        userText: null,
+        botReply: null,
+        state,
+        resolverDecision: {
+          nextAction: "blocked",
+          caseType: state?.identity?.caseType || null,
+          reason: "human_business_message_detected",
+          missingFields: state?.identity?.lastMissingFields || []
+        }
+      });
+
       await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
