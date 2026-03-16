@@ -88,8 +88,7 @@ export async function initDb() {
       );
 
       create unique index if not exists conversation_messages_unique_message
-      on conversation_messages (conversation_id, message_id, role)
-      where message_id is not null;
+      on conversation_messages (conversation_id, message_id, role);
 
       create index if not exists conversation_messages_conversation_created_idx
       on conversation_messages (conversation_id, created_at desc);
