@@ -83,7 +83,7 @@ function extractSupportHintsFromText(text) {
     saysPatient: key.includes("SOY PACIENTE") || key.includes("YA SOY PACIENTE") || key.includes("YA ME ATENDI") || key.includes("YA ME OPERE"),
     email: normalizeEmail(raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || null),
     phone: normalizePhone(raw.match(/(?:\+?56\s*)?9\s*\d(?:[\s.-]*\d){7,8}/i)?.[0] || null),
-    rut: normalizeRut(raw.match(/\d{1,2}[.]?\d{3}[.]?\d{3}-?[\dkK]/)?.[0] || null)
+    rut: normalizeRut(raw.match(/\b\d{1,2}[.]?\d{3}[.]?\d{3}-?[\dkK]\b/)?.[0] || null)
   };
 }
 
@@ -91,12 +91,17 @@ function summarizeSupport(supportResult = {}) {
   const users = Array.isArray(supportResult.users) ? supportResult.users : [];
   const tickets = Array.isArray(supportResult.tickets) ? supportResult.tickets : [];
   const latestTicket = tickets[0] || {};
+  const firstUser = users[0] || {};
   const hints = extractSupportHintsFromText(
     [
       latestTicket.subject,
       latestTicket.description,
       latestTicket.raw_subject,
-      latestTicket.via?.source?.from?.name
+      latestTicket.via?.source?.from?.name,
+      firstUser.notes,
+      firstUser.user_fields?.user_prevision_salud,
+      firstUser.user_fields?.user_direccion,
+      firstUser.user_fields?.social_messaging_user_info
     ].filter(Boolean).join(" ")
   );
 
@@ -106,9 +111,9 @@ function summarizeSupport(supportResult = {}) {
     latestTicketId: latestTicket.id || null,
     usersCount: users.length,
     knownData: {
-      c_nombres: clean(firstTruthy(users[0]?.name, supportResult.name)) || null,
-      c_email: normalizeEmail(firstTruthy(users[0]?.email, hints.email)),
-      c_tel1: normalizePhone(firstTruthy(users[0]?.phone, hints.phone)),
+      c_nombres: clean(firstTruthy(firstUser?.name, supportResult.name)) || null,
+      c_email: normalizeEmail(firstTruthy(firstUser?.email, hints.email)),
+      c_tel1: normalizePhone(firstTruthy(firstUser?.phone, hints.phone)),
       c_rut: normalizeRut(hints.rut),
       c_aseguradora: hints.insurance,
       c_modalidad: hints.modality,

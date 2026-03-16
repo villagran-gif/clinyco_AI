@@ -2,6 +2,14 @@ import express from "express";
 import { Pool } from "pg";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
 import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
+import {
+  MEDINET_AGENDA_WEB_URL,
+  buildBusinessFactsPrompt,
+  buildPadEligibilityReply,
+  buildPadProceduresReply,
+  buildProviderAvailabilityReply,
+  isPadEligibleModality
+} from "./business-rules.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -47,7 +55,6 @@ const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 10;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
-const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
 const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
@@ -1029,7 +1036,7 @@ function parseFonasaTramo(text) {
   return {
     tramo,
     modalidad,
-    isPadEligible: tramo !== "A"
+    isPadEligible: isPadEligibleModality(modalidad)
   };
 }
 
@@ -1644,6 +1651,31 @@ function detectUnknownProfessionalScheduleRequest(text) {
     shouldDerive: true,
     professionalName
   };
+}
+
+function detectPadIntent(text) {
+  const normalized = normalizeKey(text);
+  if (!/\bPAD\b/.test(normalized)) return null;
+
+  if (["PRESTACION", "PRESTACIONES", "PROCEDIMIENTO", "PROCEDIMIENTOS", "QUE OFRECEN", "QUE CIRUGIAS", "COBERTURAS"].some((phrase) => normalized.includes(phrase))) {
+    return { kind: "procedures" };
+  }
+
+  if (["CUANDO", "APLICA", "TRAMO", "BONO", "FONASA"].some((phrase) => normalized.includes(phrase))) {
+    return { kind: "eligibility" };
+  }
+
+  return { kind: "eligibility" };
+}
+
+function detectProviderAvailabilityIntent(text) {
+  const normalized = normalizeKey(text);
+  if (!/\bVILLAGRAN\b|\bVILLAGRA\b/.test(normalized)) return null;
+  if (!(hasScheduleIntent(text) || ["ONLINE", "TELEMEDICINA", "PRESENCIAL", "ATIENDE"].some((phrase) => normalized.includes(phrase)))) {
+    return null;
+  }
+
+  return { providerKey: "RODRIGO VILLAGRAN" };
 }
 
 function getUnknownProfessionalScheduleMessage(professionalName) {
@@ -2311,14 +2343,7 @@ Reglas operativas:
 - si preguntan por la agenda u hora de un profesional que no esté en la lista disponible, no inventes disponibilidad; indica que derivarás con una agente porque no tienes acceso a esa agenda en esta franja horaria y sugiere la agenda web ${MEDINET_AGENDA_WEB_URL}
 
 Datos importantes:
-- Clinyco tiene presencia en Antofagasta, Calama y Santiago
-- Endoscopía solo en Antofagasta
-- La agenda médica completa está disponible en Antofagasta
-- En Santiago por ahora solo hay telemedicina
-- En Calama las consultas presenciales con cirujanos se realizan en DiagnoSalud, Av. Granaderos #1483
-- Las cirugías en Santiago con el Dr. Rodrigo Villagran se realizan en Clínica Tabancura, RedSalud Vitacura
-- El balón gástrico, la manga gástrica y el bypass gástrico lo ofrecen Dr. Nelson Aros, Dr. Rodrigo Villagran y Dr. Alberto Sirabo
-- Las cirugías plásticas en Antofagasta las ofrecen Francisco Bencina, Edmundo Ziede y Rosirys Ruiz
+${buildBusinessFactsPrompt()}
 - si quiere avanzar, cotizar, agendar o resolver su caso y ya tenemos teléfono, no vuelvas a pedirlo
 - si ya tenemos teléfono, previsión, interés y los datos clínicos mínimos, prioriza una derivación clara con una agente en vez de seguir explorando
 - no ofrezcas llamada telefónica por defecto si la persona no la pidió
@@ -2708,6 +2733,45 @@ app.post("/messages", async (req, res) => {
       } else {
         addToHistory(conversationId, "user", userText);
       }
+    }
+
+    const providerAvailabilityIntent = detectProviderAvailabilityIntent(userText);
+    if (providerAvailabilityIntent) {
+      const providerReply = buildProviderAvailabilityReply(providerAvailabilityIntent.providerKey);
+      if (providerReply) {
+        return res.json(await sendManagedReply({
+          appId,
+          conversationId,
+          messageId,
+          userText,
+          reply: providerReply,
+          kind: "provider_availability",
+          state,
+          info,
+          channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "provider_availability")
+        }));
+      }
+    }
+
+    const padIntent = detectPadIntent(userText);
+    if (padIntent) {
+      const padReply = padIntent.kind === "procedures"
+        ? buildPadProceduresReply()
+        : buildPadEligibilityReply(state.contactDraft.c_modalidad);
+
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: padReply,
+        kind: `pad_${padIntent.kind}`,
+        state,
+        info,
+        channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, `pad_${padIntent.kind}`)
+      }));
     }
 
     const unknownProfessionalSchedule = detectUnknownProfessionalScheduleRequest(userText);
