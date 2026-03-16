@@ -168,7 +168,7 @@ export async function upsertConversationState(conversationId, channel, state) {
 }
 
 export async function insertConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null }) {
-  await getPool().query(
+  const result = await getPool().query(
     `
     insert into conversation_messages (
       conversation_id,
@@ -182,6 +182,7 @@ export async function insertConversationMessage({ conversationId, role, messageI
     values ($1, $2, $3, $4, $5, $6, $7::jsonb)
     on conflict (conversation_id, message_id, role)
     do nothing
+    returning id
     `,
     [
       conversationId,
@@ -193,6 +194,8 @@ export async function insertConversationMessage({ conversationId, role, messageI
       JSON.stringify(rawJson || {})
     ]
   );
+
+  return result.rowCount > 0;
 }
 
 export async function upsertStructuredLead(conversationId, channel, state) {
