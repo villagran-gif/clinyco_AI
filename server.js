@@ -25,6 +25,7 @@ app.use((req, res, next) => {
 const conversationHistory = new Map();
 const conversationStates = new Map();
 const hydratedConversations = new Set();
+const recentInboundMessageClaims = new Map();
 
 // =========================
 // Config
@@ -44,6 +45,9 @@ const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.Z
 
 const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 10;
+const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
+const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
+const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
 const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
@@ -153,7 +157,6 @@ const MODALIDAD_FROM_ASEGURADORA = {
   "VIDA TRES": "Vida Tres"
 };
 
-const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const KNOWN_AGENDA_PROFESSIONALS = new Set([
   "RODRIGO VILLAGRAN",
   "NELSON AROS",
@@ -162,6 +165,8 @@ const KNOWN_AGENDA_PROFESSIONALS = new Set([
   "EDMUNDO ZIEDE",
   "ROSIRYS RUIZ"
 ]);
+
+const SORTED_ASEGURADORA_ALIASES = Object.entries(ASEGURADORA_ALIASES).sort((a, b) => b[0].length - a[0].length);
 
 const KNOWN_COMUNAS = [
   "ANTOFAGASTA", "CALAMA", "SANTIAGO", "ARICA", "IQUIQUE", "VIÑA DEL MAR", "VALPARAISO", "VALPARAÍSO",
@@ -498,6 +503,79 @@ function titleCaseWords(value) {
     .replace(/(^|\s)([a-záéíóúñ])/g, (m, p1, p2) => `${p1}${p2.toUpperCase()}`);
 }
 
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanupRecentMap(map, ttlMs) {
+  const now = Date.now();
+  for (const [key, timestamp] of map.entries()) {
+    if (now - timestamp > ttlMs) {
+      map.delete(key);
+    }
+  }
+}
+
+function fingerprintReplyText(value) {
+  return normalizeKey(value).replace(/\s+/g, " ").trim();
+}
+
+function clearFonasaDerivedState(state) {
+  if (/^TRAMO [ABCD]$/i.test(String(state.contactDraft.c_modalidad || ""))) {
+    state.contactDraft.c_modalidad = null;
+  }
+  if (/PAD FONASA|TRAMO A/i.test(String(state.dealDraft.dealValidacionPad || ""))) {
+    state.dealDraft.dealValidacionPad = null;
+  }
+}
+
+function rememberOutboundReply(state, reply, reason) {
+  state.system.lastOutboundFingerprint = fingerprintReplyText(reply);
+  state.system.lastOutboundText = reply;
+  state.system.lastOutboundReason = reason || null;
+  state.system.lastOutboundAt = new Date().toISOString();
+}
+
+function shouldSuppressOutboundReply(state, reply, reason) {
+  const fingerprint = fingerprintReplyText(reply);
+  const lastFingerprint = state.system.lastOutboundFingerprint || null;
+  const lastReason = state.system.lastOutboundReason || null;
+  const lastAt = state.system.lastOutboundAt ? Date.parse(state.system.lastOutboundAt) : NaN;
+
+  if (!fingerprint || !lastFingerprint || fingerprint !== lastFingerprint) {
+    return false;
+  }
+
+  if (Number.isFinite(lastAt) && Date.now() - lastAt > OUTBOUND_DEDUPE_WINDOW_MS) {
+    return false;
+  }
+
+  return !reason || !lastReason || reason === lastReason;
+}
+
+function markMaxMessagesReached(state) {
+  state.system.aiEnabled = false;
+  state.system.handoffReason = "max_bot_messages_reached";
+}
+
+function buildBlockedDecision(state, reason, nextAction = "blocked") {
+  return {
+    nextAction,
+    caseType: state?.identity?.caseType || null,
+    reason,
+    missingFields: state?.identity?.lastMissingFields || []
+  };
+}
+
+function buildResolverQuestionDecision(state, reason) {
+  return {
+    nextAction: state?.identity?.nextAction || "respond",
+    caseType: state?.identity?.caseType || null,
+    reason,
+    missingFields: state?.identity?.lastMissingFields || []
+  };
+}
+
 function isTruthyText(value) {
   const t = normalizeKey(value);
   return ["1", "SI", "S", "CORRECTO", "OK", "YES"].includes(t);
@@ -729,10 +807,13 @@ function isStillLatestUserMessage(conversationId, expectedMessageId) {
 function isRealHumanBusinessTakeover(info) {
   const sourceType = info?.sourceType || "";
   const name = normalizeKey(info?.authorDisplayName || info?.channelDisplayName || "");
+  const contentType = info?.rawMessage?.content?.type || "";
+  const businessText = normalizeSpaces(info?.rawMessage?.content?.text || "");
 
   if (sourceType !== "zd:agentWorkspace") return false;
+  if (contentType !== "text" || !businessText) return false;
 
-  if (!name) return true;
+  if (!name) return false;
 
   const nonHumanNames = new Set([
     "ANSWER BOT",
@@ -745,6 +826,34 @@ function isRealHumanBusinessTakeover(info) {
   ]);
 
   return !nonHumanNames.has(name);
+}
+
+function clearSoftHandoffState(state) {
+  state.system.aiEnabled = true;
+  if (state.system.handoffReason === "max_bot_messages_reached") {
+    state.system.botMessagesSent = 0;
+  }
+  state.system.handoffReason = null;
+  state.system.lastQuestionKey = null;
+}
+
+function resumeSoftHandoffIfAllowed(state, latestUserText) {
+  if (state.system.aiEnabled || state.system.humanTakenOver) return false;
+
+  if (state.system.handoffReason === "max_bot_messages_reached") {
+    clearSoftHandoffState(state);
+    return true;
+  }
+
+  if (
+    state.system.handoffReason === "unknown_professional_schedule" &&
+    !detectUnknownProfessionalScheduleRequest(latestUserText).shouldDerive
+  ) {
+    clearSoftHandoffState(state);
+    return true;
+  }
+
+  return false;
 }
 
 function extractDate(text) {
@@ -793,24 +902,119 @@ function detectProcedure(text) {
   return null;
 }
 
+function isCoverageInsuranceQuestion(normalizedText) {
+  return [
+    "COBERTURA",
+    "CUBRE",
+    "CUBRIR",
+    "ACEPTAN",
+    "CONVENIO",
+    "SE PUEDE CON",
+    "TRABAJAN CON",
+    "ATIENDEN CON",
+    "SERVIRA",
+    "SIRVE",
+    "APLICA"
+  ].some((phrase) => normalizedText.includes(phrase));
+}
+
+function hasInsuranceAnswerContext(normalizedText) {
+  return [
+    "MI PREVISION",
+    "PREVISION",
+    "ASEGURADORA",
+    "ISAPRE",
+    "SOY",
+    "TENGO",
+    "CUENTO CON",
+    "USO",
+    "PARTICULAR"
+  ].some((phrase) => normalizedText.includes(phrase));
+}
+
+function detectNegatedAseguradora(normalizedText) {
+  for (const [alias, canonical] of SORTED_ASEGURADORA_ALIASES) {
+    const negationPattern = new RegExp(`\\bNO\\s+(?:SOY|TENGO|CUENTO CON|USO|ES)\\s+${escapeRegex(alias)}\\b`);
+    if (negationPattern.test(normalizedText)) {
+      return canonical;
+    }
+  }
+  return null;
+}
+
+function findExplicitAseguradora(normalizedText) {
+  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => normalizedText.includes(alias)) || null;
+}
+
 function parseAseguradora(text) {
   const normalized = normalizeKey(text);
 
   if (!normalized) return null;
 
-  if (normalized.includes("ISAPRE") && !normalized.includes("FONASA")) {
-    return { aseguradora: null, modalidad: null, isFonasa: false, isIsapreGeneric: true };
+  const negatedAseguradora = detectNegatedAseguradora(normalized);
+  const aliasEntry = findExplicitAseguradora(normalized);
+  const looksLikeInsuranceAnswer =
+    aliasEntry &&
+    (
+      normalized === aliasEntry[0] ||
+      normalized === `ISAPRE ${aliasEntry[0]}` ||
+      (
+        !isCoverageInsuranceQuestion(normalized) &&
+        (
+          normalized.split(" ").length <= 4 ||
+          hasInsuranceAnswerContext(normalized)
+        )
+      )
+    );
+
+  if (
+    negatedAseguradora === "FONASA" &&
+    normalized.includes("ISAPRE") &&
+    !isCoverageInsuranceQuestion(normalized) &&
+    (!aliasEntry || aliasEntry[1] === "FONASA")
+  ) {
+    return {
+      aseguradora: null,
+      modalidad: null,
+      isFonasa: false,
+      isIsapreGeneric: true,
+      negatedAseguradora: "FONASA"
+    };
   }
 
-  for (const [alias, canonical] of Object.entries(ASEGURADORA_ALIASES)) {
-    if (normalized.includes(alias)) {
-      return {
-        aseguradora: canonical,
-        modalidad: canonical === "FONASA" ? null : (MODALIDAD_FROM_ASEGURADORA[canonical] || null),
-        isFonasa: canonical === "FONASA" || canonical === "PAD Fonasa PAD",
-        isIsapreGeneric: false
-      };
-    }
+  if (negatedAseguradora && (!aliasEntry || aliasEntry[1] === negatedAseguradora)) {
+    return {
+      aseguradora: null,
+      modalidad: null,
+      isFonasa: false,
+      isIsapreGeneric: false,
+      negatedAseguradora
+    };
+  }
+
+  if (aliasEntry && (!isCoverageInsuranceQuestion(normalized) || looksLikeInsuranceAnswer)) {
+    const [, canonical] = aliasEntry;
+    return {
+      aseguradora: canonical,
+      modalidad: canonical === "FONASA" ? null : (MODALIDAD_FROM_ASEGURADORA[canonical] || null),
+      isFonasa: canonical === "FONASA" || canonical === "PAD Fonasa PAD",
+      isIsapreGeneric: false,
+      negatedAseguradora: null
+    };
+  }
+
+  if (
+    normalized.includes("ISAPRE") &&
+    !normalized.includes("FONASA") &&
+    !isCoverageInsuranceQuestion(normalized)
+  ) {
+    return {
+      aseguradora: null,
+      modalidad: null,
+      isFonasa: false,
+      isIsapreGeneric: true,
+      negatedAseguradora: null
+    };
   }
 
   return null;
@@ -821,10 +1025,11 @@ function parseFonasaTramo(text) {
   const match = normalized.match(/\bTRAMO\s+([ABCD])\b/) || normalized.match(/^([ABCD])$/);
   if (!match) return null;
   const tramo = match[1].toUpperCase();
+  const modalidad = `Tramo ${tramo}`;
   return {
     tramo,
-    modalidad: `Tramo ${tramo}`,
-    isPadEligible: tramo === "A" ? false : true
+    modalidad,
+    isPadEligible: tramo !== "A"
   };
 }
 
@@ -1087,7 +1292,11 @@ function buildInitialConversationState() {
       introducedAsAntonia: false,
       handoffReason: null,
       lastQuestionKey: null,
-      lastInboundMessageId: null
+      lastInboundMessageId: null,
+      lastOutboundFingerprint: null,
+      lastOutboundText: null,
+      lastOutboundReason: null,
+      lastOutboundAt: null
     }
   };
 }
@@ -1164,9 +1373,9 @@ async function persistConversationSnapshot(conversationId, state, channel = null
 }
 
 async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null }) {
-  if (!dbEnabled()) return;
+  if (!dbEnabled()) return true;
   try {
-    await insertConversationMessage({
+    return await insertConversationMessage({
       conversationId,
       role,
       messageId,
@@ -1177,7 +1386,143 @@ async function persistConversationMessage({ conversationId, role, messageId = nu
     });
   } catch (error) {
     console.error("DB MESSAGE ERROR:", error.message);
+    return false;
   }
+}
+
+function claimInboundMessageFallback(conversationId, messageId) {
+  if (!messageId) return true;
+  cleanupRecentMap(recentInboundMessageClaims, INBOUND_DEDUPE_TTL_MS);
+  const key = `${conversationId}:${messageId}`;
+  if (recentInboundMessageClaims.has(key)) {
+    return false;
+  }
+  recentInboundMessageClaims.set(key, Date.now());
+  return true;
+}
+
+async function claimInboundUserMessage({ conversationId, messageId, channel, sourceType, content, rawJson }) {
+  if (!messageId) {
+    const claimed = claimInboundMessageFallback(conversationId, `${normalizeKey(content).slice(0, 80)}:${sourceType || ""}`);
+    if (!claimed) return false;
+    await persistConversationMessage({
+      conversationId,
+      role: "user",
+      messageId: null,
+      channel,
+      sourceType,
+      content,
+      rawJson
+    });
+    return true;
+  }
+
+  if (!dbEnabled()) {
+    return claimInboundMessageFallback(conversationId, messageId);
+  }
+
+  try {
+    return await insertConversationMessage({
+      conversationId,
+      role: "user",
+      messageId,
+      channel,
+      sourceType,
+      content,
+      rawJson
+    });
+  } catch (error) {
+    console.error("DB MESSAGE CLAIM ERROR:", error.message);
+    return claimInboundMessageFallback(conversationId, messageId);
+  }
+}
+
+async function sendManagedReply({
+  appId,
+  conversationId,
+  messageId,
+  userText,
+  reply,
+  kind,
+  state,
+  info,
+  channelLabel,
+  resolverDecision = null,
+  disableAiAfterSend = false,
+  handoffReasonAfterSend = null,
+  allowDuplicateText = false
+}) {
+  const delayMs = calculateHumanDelay(reply);
+  await sleep(delayMs);
+
+  const latestState = getConversationState(conversationId);
+  if (!latestState.system.aiEnabled) {
+    return resJsonSkip("ai_disabled_after_delay");
+  }
+
+  if (!isStillLatestUserMessage(conversationId, messageId)) {
+    return resJsonSkip("stale_message_after_delay");
+  }
+
+  const finalReply = appendAntoniaIntroduction(latestState, reply);
+  if (!allowDuplicateText && shouldSuppressOutboundReply(latestState, finalReply, kind)) {
+    await saveConversationEvent({
+      conversationId,
+      info,
+      channelLabel,
+      userText,
+      botReply: null,
+      state: latestState,
+      resolverDecision: buildBlockedDecision(latestState, "duplicate_reply_suppressed")
+    });
+    await persistConversationSnapshot(conversationId, latestState, channelLabel);
+    return resJsonSkip("duplicate_reply_suppressed");
+  }
+
+  await sendConversationReply(appId, conversationId, finalReply);
+  addToHistory(conversationId, "assistant", finalReply);
+
+  latestState.system.botMessagesSent += 1;
+  rememberOutboundReply(latestState, finalReply, kind);
+
+  if (disableAiAfterSend) {
+    latestState.system.aiEnabled = false;
+    latestState.system.handoffReason = handoffReasonAfterSend || latestState.system.handoffReason || null;
+  } else if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
+    markMaxMessagesReached(latestState);
+  }
+
+  await persistConversationMessage({
+    conversationId,
+    role: "assistant",
+    channel: channelLabel,
+    sourceType: "api:conversations",
+    content: finalReply,
+    rawJson: { kind, resolverDecision }
+  });
+  await saveConversationEvent({
+    conversationId,
+    info,
+    channelLabel,
+    userText,
+    botReply: finalReply,
+    state: latestState,
+    resolverDecision
+  });
+  await persistConversationSnapshot(conversationId, latestState, channelLabel);
+
+  return {
+    ok: true,
+    reply: finalReply,
+    delayMs,
+    botMessagesSent: latestState.system.botMessagesSent,
+    handoffReason: latestState.system.handoffReason || null,
+    resolverDecision: resolverDecision || null
+  };
+}
+
+function resJsonSkip(reason) {
+  return { ok: true, skipped: reason };
 }
 
 function extractConversationInfo(payload) {
@@ -1235,20 +1580,41 @@ function hasScheduleIntent(text) {
   ].some((phrase) => normalized.includes(phrase));
 }
 
-function extractProfessionalName(text) {
+function hasExplicitScheduleIntent(text) {
+  const normalized = normalizeKey(text);
+  return [
+    "HORA CON",
+    "HORA PARA",
+    "AGENDAR CON",
+    "AGENDAR PARA",
+    "DISPONIBILIDAD CON",
+    "AGENDA CON",
+    "RESERVAR HORA CON",
+    "ONLINE",
+    "TELEMEDICINA",
+    "PRESENCIAL"
+  ].some((phrase) => normalized.includes(phrase));
+}
+
+function extractProfessionalReference(text) {
   const source = normalizeSpaces(String(text || ""));
+  const normalized = normalizeKey(source);
+
+  if (/\bRODRIGO\s+VILLAGRAN\b|\bRODRIGO\s+VILLAGRA\b|\bDR\s+VILLAGRAN\b|\bDR\s+VILLAGRA\b|\bDOCTOR\s+VILLAGRAN\b|\bDOCTOR\s+VILLAGRA\b/.test(normalized)) {
+    return { professionalName: "Rodrigo Villagran", matchType: "known" };
+  }
 
   const titledMatch = source.match(/\b(?:dr|dra|doctor|doctora)\.?\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
   if (titledMatch) {
-    return titleCaseWords(titledMatch[1]);
+    return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
 
   const withConMatch = source.match(/\b(?:con|para)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})\b/);
   if (withConMatch) {
-    return titleCaseWords(withConMatch[1]);
+    return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
   }
 
-  return null;
+  return { professionalName: null, matchType: null };
 }
 
 function isKnownAgendaProfessional(name) {
@@ -1257,16 +1623,20 @@ function isKnownAgendaProfessional(name) {
 }
 
 function detectUnknownProfessionalScheduleRequest(text) {
-  const professionalName = extractProfessionalName(text);
+  const { professionalName, matchType } = extractProfessionalReference(text);
   if (!professionalName) {
     return { shouldDerive: false, professionalName: null };
   }
 
-  if (!hasScheduleIntent(text)) {
+  if (!hasScheduleIntent(text) || !hasExplicitScheduleIntent(text)) {
     return { shouldDerive: false, professionalName };
   }
 
   if (isKnownAgendaProfessional(professionalName)) {
+    return { shouldDerive: false, professionalName };
+  }
+
+  if (matchType !== "titled") {
     return { shouldDerive: false, professionalName };
   }
 
@@ -1353,9 +1723,18 @@ function updateDraftsFromText(state, text, info) {
   }
 
   const insuranceInfo = parseAseguradora(structured.insurance || cleanText);
+  if (insuranceInfo?.negatedAseguradora === "FONASA" && state.contactDraft.c_aseguradora === "FONASA") {
+    state.contactDraft.c_aseguradora = null;
+    clearFonasaDerivedState(state);
+  }
+  if (insuranceInfo?.isIsapreGeneric && state.contactDraft.c_aseguradora === "FONASA") {
+    state.contactDraft.c_aseguradora = null;
+    clearFonasaDerivedState(state);
+  }
   if (insuranceInfo?.aseguradora) {
     state.contactDraft.c_aseguradora = insuranceInfo.aseguradora;
     if (insuranceInfo.aseguradora !== "FONASA" && insuranceInfo.modalidad) {
+      clearFonasaDerivedState(state);
       state.contactDraft.c_modalidad = insuranceInfo.modalidad;
     }
     if (insuranceInfo.aseguradora === "FONASA" && !parseFonasaTramo(cleanText)) {
@@ -1370,6 +1749,8 @@ function updateDraftsFromText(state, text, info) {
     state.dealDraft.dealValidacionPad = tramo.isPadEligible
       ? "Posible evaluación PAD Fonasa"
       : "No aplica PAD Fonasa por Tramo A";
+  } else if (state.contactDraft.c_aseguradora && state.contactDraft.c_aseguradora !== "FONASA") {
+    clearFonasaDerivedState(state);
   }
 
   const structuredMeasurementText = structuredLeadToMeasurementText(structured);
@@ -1833,13 +2214,17 @@ function shouldTriggerCaseE(state) {
   );
 }
 
-function shouldAskForFonasaTramo(state) {
+function shouldAskForFonasaTramo(state, latestUserText) {
+  const parsed = parseAseguradora(latestUserText || "");
+  if (parsed?.negatedAseguradora === "FONASA") return false;
+  if (parsed?.aseguradora && parsed.aseguradora !== "FONASA") return false;
+  if (parsed?.isIsapreGeneric) return false;
   return state.contactDraft.c_aseguradora === "FONASA" && !state.contactDraft.c_modalidad;
 }
 
 function shouldAskForSpecificAseguradora(state, latestUserText) {
   const parsed = parseAseguradora(latestUserText || "");
-  return parsed?.isIsapreGeneric && !state.contactDraft.c_aseguradora;
+  return Boolean(parsed?.isIsapreGeneric) && !normalizeAseguradoraValue(state.contactDraft.c_aseguradora);
 }
 
 function isMeasurementQuestionNeeded(state) {
@@ -1914,7 +2299,7 @@ Reglas operativas:
 - si el usuario ya entregó peso y estatura confirmados, usa el IMC disponible en el historial
 - si el usuario pregunta por cirugía y aún no sabemos previsión, puedes preguntar si es Fonasa, Isapre o Particular
 - si el usuario es Fonasa y aún no sabemos el tramo, debes pedir Tramo A, B, C o D
-- si el usuario es Fonasa Tramo A, debes mencionar que no aplica bono PAD Fonasa y seguir orientando con alternativas
+- si el usuario es Fonasa Tramo A, debes mencionar que el bono PAD no aplica; para tramos B, C o D sí puede aplicar según la prestación
 - si el usuario dice Isapre pero no especifica cuál, debes preguntar la aseguradora exacta
 - para peso y estatura, si necesitas pedirlos, usa esta pauta exacta:
   Para orientarte mejor, indícame por favor:\n• Peso en kilos, sin decimales\n• Estatura en metros, usando punto o coma\nEjemplo: 120 kg y 1.78 m
@@ -1923,7 +2308,7 @@ Reglas operativas:
 - si el IMC sugiere sobrepeso u obesidad y el usuario consulta por balón o bariátrica, continúa guiando el proceso con naturalidad
 - no pidas RUT de forma proactiva salvo que el usuario diga que ya es paciente o entregue el RUT por su cuenta
 - si ya fue identificado un caso de derivación clínica, no sigas preguntando datos
-- si preguntan por la agenda u hora de un profesional que no esté en la lista disponible, no inventes disponibilidad; indica que derivarás con una agente porque no tienes acceso a esa agenda en esta franja horaria y sugiere la agenda web https://clinyco.medinetapp.com/agendaweb/planned/
+- si preguntan por la agenda u hora de un profesional que no esté en la lista disponible, no inventes disponibilidad; indica que derivarás con una agente porque no tienes acceso a esa agenda en esta franja horaria y sugiere la agenda web ${MEDINET_AGENDA_WEB_URL}
 
 Datos importantes:
 - Clinyco tiene presencia en Antofagasta, Calama y Santiago
@@ -2069,25 +2454,6 @@ app.post("/ticket-assigned", async (req, res) => {
 
     await hydrateConversationCache(conversation_id);
     const state = getConversationState(conversation_id);
-    if (
-  state.system?.handoffReason === "max_bot_messages_reached" &&
-  state.system?.aiEnabled === false &&
-  !state.system?.humanTakenOver
-) {
-  console.log("AI re-enabled after previous max_bot_messages_reached for", conversationId);
-
-  state.system.aiEnabled = true;
-  state.system.botMessagesSent = 0;
-  state.system.handoffReason = null;
-  state.system.lastQuestionKey = null;
-  state.system.lastInboundMessageId = null;
-
-  await persistConversationSnapshot(
-    conversationId,
-    state,
-    info.sourceType || info.entryPoint || null
-  );
-}
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
@@ -2166,72 +2532,7 @@ app.post("/messages", async (req, res) => {
 
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
-
-    if (
-      state.system?.handoffReason === "max_bot_messages_reached" &&
-      state.system?.aiEnabled === false &&
-      !state.system?.humanTakenOver
-    ) {
-      console.log("AI re-enabled after previous max_bot_messages_reached for", conversationId);
-
-      state.system.aiEnabled = true;
-      state.system.botMessagesSent = 0;
-      state.system.handoffReason = null;
-      state.system.lastQuestionKey = null;
-      state.system.lastInboundMessageId = null;
-
-      await persistConversationSnapshot(
-        conversationId,
-        state,
-        info.sourceType || info.entryPoint || null
-      );
-    }
-
-    if (!state.system.aiEnabled) {
-      console.log("AI blocked: disabled for", conversationId);
-
-      await saveConversationEvent({
-        conversationId,
-        info,
-        channelLabel: info.sourceType || info.entryPoint || null,
-        userText,
-        botReply: null,
-        state,
-        resolverDecision: {
-          nextAction: "blocked",
-          caseType: state?.identity?.caseType || null,
-          reason: state?.system?.handoffReason || "ai_disabled",
-          missingFields: state?.identity?.lastMissingFields || []
-        }
-      });
-
-      await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
-      return res.json({ ok: true, skipped: "ai_disabled" });
-    }
-
-    if (state.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-      state.system.aiEnabled = false;
-      state.system.handoffReason = state.system.handoffReason || "max_bot_messages_reached";
-      console.log("AI disabled: max bot messages reached for", conversationId);
-
-      await saveConversationEvent({
-        conversationId,
-        info,
-        channelLabel: info.sourceType || info.entryPoint || null,
-        userText,
-        botReply: null,
-        state,
-        resolverDecision: {
-          nextAction: "blocked",
-          caseType: state?.identity?.caseType || null,
-          reason: "max_bot_messages_reached",
-          missingFields: state?.identity?.lastMissingFields || []
-        }
-      });
-
-      await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
-      return res.json({ ok: true, skipped: "max_bot_messages_reached" });
-    }
+    const channelLabel = info.sourceType || info.entryPoint || null;
 
     if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
       state.system.aiEnabled = false;
@@ -2255,7 +2556,7 @@ app.post("/messages", async (req, res) => {
         }
       });
 
-      await persistConversationSnapshot(conversationId, state, info.sourceType || info.entryPoint || null);
+      await persistConversationSnapshot(conversationId, state, channelLabel);
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -2267,21 +2568,69 @@ app.post("/messages", async (req, res) => {
       return res.json({ ok: true, skipped: "payload_not_parsed_yet" });
     }
 
-    state.system.lastInboundMessageId = messageId || state.system.lastInboundMessageId || null;
-
-    updateDraftsFromText(state, userText, info);
-
-    const channelLabel = info.sourceType || info.entryPoint || null;
     await persistConversationSnapshot(conversationId, state, channelLabel);
-    await persistConversationMessage({
+
+    if (resumeSoftHandoffIfAllowed(state, userText)) {
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+    }
+
+    if (!state.system.aiEnabled) {
+      console.log("AI blocked: disabled for", conversationId);
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
+      });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json({ ok: true, skipped: "ai_disabled" });
+    }
+
+    if (state.system.botMessagesSent >= MAX_BOT_MESSAGES) {
+      markMaxMessagesReached(state);
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: buildBlockedDecision(state, "max_bot_messages_reached")
+      });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json({ ok: true, skipped: "max_bot_messages_reached" });
+    }
+
+    const inboundClaimed = await claimInboundUserMessage({
       conversationId,
-      role: "user",
       messageId,
       channel: channelLabel,
       sourceType,
       content: userText,
       rawJson: info.rawMessage
     });
+
+    if (!inboundClaimed) {
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: buildBlockedDecision(state, "duplicate_message")
+      });
+      return res.json({ ok: true, skipped: "duplicate_message" });
+    }
+
+    state.system.lastInboundMessageId = messageId || state.system.lastInboundMessageId || null;
+    state.system.lastQuestionKey = null;
+
+    updateDraftsFromText(state, userText, info);
+    await persistConversationSnapshot(conversationId, state, channelLabel);
 
     // Measurement confirmation flow first.
     if (state.measurements.pendingConfirmation) {
@@ -2300,61 +2649,33 @@ app.post("/messages", async (req, res) => {
         state.measurements.proposedWeightKg = null;
         state.measurements.proposedHeightM = null;
         state.measurements.proposedHeightCm = null;
-        const reply = getMeasurementInstructionMessage();
         addToHistory(conversationId, "user", userText);
-        addToHistory(conversationId, "assistant", reply);
-        const delayMs = calculateHumanDelay(reply);
-        await sleep(delayMs);
-        const latestState = getConversationState(conversationId);
-        if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-          return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-        }
-        const finalReply = appendAntoniaIntroduction(latestState, reply);
-        await sendConversationReply(appId, conversationId, finalReply);
-        latestState.system.botMessagesSent += 1;
-        if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-          latestState.system.aiEnabled = false;
-        }
-        await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "measurement_instruction" } });
-        await saveConversationEvent({
+        return res.json(await sendManagedReply({
+          appId,
           conversationId,
+          messageId,
+          userText,
+          reply: getMeasurementInstructionMessage(),
+          kind: "measurement_instruction",
+          state,
           info,
           channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-        await persistConversationSnapshot(conversationId, latestState, channelLabel);
-        return res.json({ ok: true, reply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
+          resolverDecision: buildResolverQuestionDecision(state, "measurement_instruction")
+        }));
       } else {
-        const reply = "Para confirmar, responde 1 si está correcto o 2 si no.";
         addToHistory(conversationId, "user", userText);
-        addToHistory(conversationId, "assistant", reply);
-        const delayMs = calculateHumanDelay(reply);
-        await sleep(delayMs);
-        const latestState = getConversationState(conversationId);
-        if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-          return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-        }
-        const finalReply = appendAntoniaIntroduction(latestState, reply);
-        await sendConversationReply(appId, conversationId, finalReply);
-        latestState.system.botMessagesSent += 1;
-        if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-          latestState.system.aiEnabled = false;
-        }
-        await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "measurement_confirmation_prompt" } });
-        await saveConversationEvent({
+        return res.json(await sendManagedReply({
+          appId,
           conversationId,
+          messageId,
+          userText,
+          reply: "Para confirmar, responde 1 si está correcto o 2 si no.",
+          kind: "measurement_confirmation_prompt",
+          state,
           info,
           channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-        await persistConversationSnapshot(conversationId, latestState, channelLabel);
-        return res.json({ ok: true, reply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
+          resolverDecision: buildResolverQuestionDecision(state, "measurement_confirmation_prompt")
+        }));
       }
     } else {
       const bmiSourceText = [userText, structuredLeadToMeasurementText(parseStructuredLeadText(userText))].filter(Boolean).join("\n");
@@ -2366,34 +2687,19 @@ app.post("/messages", async (req, res) => {
           state.measurements.proposedHeightM = bmiContext.heightM;
           state.measurements.proposedHeightCm = bmiContext.heightCm;
 
-          const reply = getMeasurementConfirmationMessage(bmiContext.weightKg, bmiContext.heightM);
           addToHistory(conversationId, "user", userText);
-          addToHistory(conversationId, "assistant", reply);
-
-          const delayMs = calculateHumanDelay(reply);
-          await sleep(delayMs);
-          const latestState = getConversationState(conversationId);
-          if (!latestState.system.aiEnabled) {
-            return res.json({ ok: true, skipped: "ai_disabled_after_delay" });
-          }
-          const finalReply = appendAntoniaIntroduction(latestState, reply);
-        await sendConversationReply(appId, conversationId, finalReply);
-          latestState.system.botMessagesSent += 1;
-          if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-            latestState.system.aiEnabled = false;
-          }
-          await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "measurement_confirmation_request" } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-          await persistConversationSnapshot(conversationId, latestState, channelLabel);
-          return res.json({ ok: true, reply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
+          return res.json(await sendManagedReply({
+            appId,
+            conversationId,
+            messageId,
+            userText,
+            reply: getMeasurementConfirmationMessage(bmiContext.weightKg, bmiContext.heightM),
+            kind: "measurement_confirmation_request",
+            state,
+            info,
+            channelLabel,
+            resolverDecision: buildResolverQuestionDecision(state, "measurement_confirmation_request")
+          }));
         }
 
         applyConfirmedMeasurements(state, bmiContext);
@@ -2406,126 +2712,70 @@ app.post("/messages", async (req, res) => {
 
     const unknownProfessionalSchedule = detectUnknownProfessionalScheduleRequest(userText);
     if (unknownProfessionalSchedule.shouldDerive) {
-      state.system.aiEnabled = false;
-      state.system.handoffReason = "unknown_professional_schedule";
-      const reply = getUnknownProfessionalScheduleMessage(unknownProfessionalSchedule.professionalName);
-      addToHistory(conversationId, "assistant", reply);
-      const delayMs = calculateHumanDelay(reply);
-      await sleep(delayMs);
-      const latestState = getConversationState(conversationId);
-      if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-        return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-      }
-      const finalReply = appendAntoniaIntroduction(latestState, reply);
-      await sendConversationReply(appId, conversationId, finalReply);
-      latestState.system.botMessagesSent += 1;
-      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "unknown_professional_schedule" } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-      await persistConversationSnapshot(conversationId, latestState, channelLabel);
-      return res.json({
-        ok: true,
-        reply,
-        delayMs,
-        botMessagesSent: state.system.botMessagesSent,
-        handoffReason: state.system.handoffReason
-      });
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: getUnknownProfessionalScheduleMessage(unknownProfessionalSchedule.professionalName),
+        kind: "unknown_professional_schedule",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: buildBlockedDecision(state, "unknown_professional_schedule", "derive"),
+        disableAiAfterSend: true,
+        handoffReasonAfterSend: "unknown_professional_schedule"
+      }));
     }
 
     await maybeRunIdentitySearch(state, info);
 
     if (shouldTriggerCaseE(state)) {
       state.identity.likelyClinicalRecordOnly = true;
-      state.system.aiEnabled = false;
-      state.system.handoffReason = "clinical_record_only";
-      const reply = getCaseEMessage();
-      addToHistory(conversationId, "assistant", reply);
-      const delayMs = calculateHumanDelay(reply);
-      await sleep(delayMs);
-      const latestState = getConversationState(conversationId);
-      if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-        return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-      }
-      const finalReply = appendAntoniaIntroduction(latestState, reply);
-      await sendConversationReply(appId, conversationId, finalReply);
-      latestState.system.botMessagesSent += 1;
-      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "case_e" } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-      await persistConversationSnapshot(conversationId, latestState, channelLabel);
-      return res.json({ ok: true, reply: finalReply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: getCaseEMessage(),
+        kind: "case_e",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: buildBlockedDecision(state, "clinical_record_only", "derive"),
+        disableAiAfterSend: true,
+        handoffReasonAfterSend: "clinical_record_only"
+      }));
     }
 
-    if (shouldAskForFonasaTramo(state)) {
-      const reply = "Perfecto. ¿Me indicas tu tramo de Fonasa? Puede ser A, B, C o D.";
-      addToHistory(conversationId, "assistant", reply);
-      const delayMs = calculateHumanDelay(reply);
-      await sleep(delayMs);
-      const latestState = getConversationState(conversationId);
-      if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-        return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-      }
-      const finalReply = appendAntoniaIntroduction(latestState, reply);
-      await sendConversationReply(appId, conversationId, finalReply);
-      latestState.system.botMessagesSent += 1;
-      if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-        latestState.system.aiEnabled = false;
-      }
-      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "ask_fonasa_tramo" } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-      await persistConversationSnapshot(conversationId, latestState, channelLabel);
-      return res.json({ ok: true, reply: finalReply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
+    if (shouldAskForFonasaTramo(state, userText)) {
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: "Perfecto. ¿Me indicas tu tramo de Fonasa? Puede ser A, B, C o D.",
+        kind: "ask_fonasa_tramo",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "missing_fonasa_tramo")
+      }));
     }
 
     if (shouldAskForSpecificAseguradora(state, userText)) {
-      const reply = "Perfecto. ¿Qué aseguradora tienes? Por ejemplo Banmédica, Colmena, Consalud o Cruz Blanca.";
-      addToHistory(conversationId, "assistant", reply);
-      const delayMs = calculateHumanDelay(reply);
-      await sleep(delayMs);
-      const latestState = getConversationState(conversationId);
-      if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-        return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-      }
-      const finalReply = appendAntoniaIntroduction(latestState, reply);
-      await sendConversationReply(appId, conversationId, finalReply);
-      latestState.system.botMessagesSent += 1;
-      if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-        latestState.system.aiEnabled = false;
-      }
-      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "ask_specific_aseguradora" } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-      await persistConversationSnapshot(conversationId, latestState, channelLabel);
-      return res.json({ ok: true, reply: finalReply, delayMs, botMessagesSent: latestState.system.botMessagesSent });
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: "Perfecto. ¿Qué aseguradora tienes? Por ejemplo Banmédica, Colmena, Consalud o Cruz Blanca.",
+        kind: "ask_specific_aseguradora",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "missing_specific_aseguradora")
+      }));
     }
 
     if (state.contactDraft.c_modalidad === "Tramo A" && !/TRAMO A/i.test(state.dealDraft.dealValidacionPad || "")) {
@@ -2562,87 +2812,41 @@ app.post("/messages", async (req, res) => {
     }
 
     if (hardDerive) {
-      state.system.aiEnabled = false;
-      state.system.handoffReason = resolverDecision.caseType === "E"
-        ? "clinical_record_only"
-        : (state.system.handoffReason || "resolver_derive");
-
-      const reply = resolverDecision.question;
-      addToHistory(conversationId, "assistant", reply);
-      const delayMs = calculateHumanDelay(reply);
-      await sleep(delayMs);
-      const latestState = getConversationState(conversationId);
-      if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-        return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-      }
-      const finalReply = appendAntoniaIntroduction(latestState, reply);
-      await sendConversationReply(appId, conversationId, finalReply);
-      latestState.system.botMessagesSent += 1;
-      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "resolver_derive", resolverDecision } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-      await persistConversationSnapshot(conversationId, latestState, channelLabel);
-      return res.json({
-        ok: true,
-        reply: finalReply,
-        delayMs,
-        botMessagesSent: latestState.system.botMessagesSent,
-        handoffReason: latestState.system.handoffReason,
-        resolverDecision
-      });
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: resolverDecision.question,
+        kind: "resolver_derive",
+        state,
+        info,
+        channelLabel,
+        resolverDecision,
+        disableAiAfterSend: true,
+        handoffReasonAfterSend: resolverDecision.caseType === "E" ? "clinical_record_only" : "resolver_derive"
+      }));
     }
 
     if (shouldUseResolverQuestion(state, resolverDecision)) {
-      const reply = resolverDecision.question;
-      addToHistory(conversationId, "assistant", reply);
-      const delayMs = calculateHumanDelay(reply);
-      await sleep(delayMs);
-
-      const latestState = getConversationState(conversationId);
-      if (!latestState.system.aiEnabled || !isStillLatestUserMessage(conversationId, messageId)) {
-        return res.json({ ok: true, skipped: !latestState.system.aiEnabled ? "ai_disabled_after_delay" : "stale_message_after_delay" });
-      }
-
-      const finalReply = appendAntoniaIntroduction(latestState, reply);
-      await sendConversationReply(appId, conversationId, finalReply);
-      latestState.system.botMessagesSent += 1;
-      if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-        latestState.system.aiEnabled = false;
-      }
-
-      await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: finalReply, rawJson: { kind: "resolver_question", resolverDecision } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-      await persistConversationSnapshot(conversationId, latestState, channelLabel);
-
-      return res.json({
-        ok: true,
-        reply: finalReply,
-        delayMs,
-        botMessagesSent: latestState.system.botMessagesSent,
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: resolverDecision.question,
+        kind: "resolver_question",
+        state,
+        info,
+        channelLabel,
         resolverDecision
-      });
+      }));
     }
 
     console.log("Conversation history:", safeJson(getHistory(conversationId)));
     console.log("Conversation state:", safeJson(state));
 
     let reply = await askOpenAI(conversationId, state);
-    reply = appendAntoniaIntroduction(state, reply);
 
     const isTenthMessage = state.system.botMessagesSent + 1 >= MAX_BOT_MESSAGES;
     if (isTenthMessage) {
@@ -2650,56 +2854,25 @@ app.post("/messages", async (req, res) => {
       reply = `${reply}\n\n${closure}`;
     }
 
-    addToHistory(conversationId, "assistant", reply);
-
-    const delayMs = calculateHumanDelay(reply);
-    console.log("Human delay ms:", delayMs);
-    await sleep(delayMs);
-
-    const latestState = getConversationState(conversationId);
-    if (!latestState.system.aiEnabled) {
-      console.log("AI send cancelled after delay due to disabled state:", conversationId);
-      return res.json({ ok: true, skipped: "ai_disabled_after_delay" });
-    }
-
-    if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-      latestState.system.aiEnabled = false;
-      console.log("AI send cancelled after delay due to max bot messages:", conversationId);
-      return res.json({ ok: true, skipped: "max_bot_messages_reached_after_delay" });
-    }
-
-    await sendConversationReply(appId, conversationId, reply);
-
-    latestState.system.botMessagesSent += 1;
-    console.log("Bot messages sent:", latestState.system.botMessagesSent, "for", conversationId);
-
-    await persistConversationMessage({ conversationId, role: "assistant", channel: channelLabel, sourceType: "api:conversations", content: reply, rawJson: { kind: "openai_reply" } });
-        await saveConversationEvent({
-          conversationId,
-          info,
-          channelLabel,
-          userText,
-          botReply: typeof finalReply !== "undefined" ? finalReply : reply,
-          state: typeof latestState !== "undefined" ? latestState : state,
-          resolverDecision: typeof resolverDecision !== "undefined" ? resolverDecision : null
-        });
-
-    if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-      latestState.system.aiEnabled = false;
-      latestState.system.handoffReason = latestState.system.handoffReason || "max_bot_messages_reached";
-      console.log("AI disabled after message #10:", conversationId);
-    }
-
-    await persistConversationSnapshot(conversationId, latestState, channelLabel);
-
-    return res.json({
-      ok: true,
+    const openAiResult = await sendManagedReply({
+      appId,
+      conversationId,
+      messageId,
+      userText,
       reply,
-      delayMs,
-      botMessagesSent: latestState.system.botMessagesSent,
-      contactDraft: latestState.contactDraft,
-      dealDraft: latestState.dealDraft
+      kind: "openai_reply",
+      state,
+      info,
+      channelLabel,
+      resolverDecision: buildResolverQuestionDecision(state, "openai_reply")
     });
+
+    if (openAiResult.ok && !openAiResult.skipped) {
+      openAiResult.contactDraft = getConversationState(conversationId).contactDraft;
+      openAiResult.dealDraft = getConversationState(conversationId).dealDraft;
+    }
+
+    return res.json(openAiResult);
   } catch (error) {
     console.error("ERROR /messages:", error.message);
     return res.status(500).json({ ok: false, error: error.message });
