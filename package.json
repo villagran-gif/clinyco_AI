@@ -4,7 +4,9 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
+    "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv"
   },
   "dependencies": {
     "express": "^4.18.2",
