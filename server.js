@@ -1,5 +1,7 @@
 import express from "express";
+import OpenAI from "openai";
 import { Pool } from "pg";
+import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
 import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
 
@@ -30,8 +32,10 @@ const recentInboundMessageClaims = new Map();
 // =========================
 // Config
 // =========================
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const BRAINTRUST_API_KEY = process.env.BRAINTRUST_API_KEY || null;
+const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";
 const ZENDESK_SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN;
 const SUNCO_APP_ID = process.env.SUNCO_APP_ID;
 const SUNCO_KEY_ID = process.env.SUNCO_KEY_ID;
@@ -60,6 +64,23 @@ const DEBUG_DATABASE_URL =
 
 const debugEventsMemory = [];
 let debugPool = null;
+
+const btLogger = BRAINTRUST_API_KEY
+  ? initLogger({
+      projectName: BRAINTRUST_PROJECT_NAME,
+      apiKey: BRAINTRUST_API_KEY
+    })
+  : null;
+
+const baseOpenAI = OPENAI_API_KEY
+  ? new OpenAI({
+      apiKey: OPENAI_API_KEY
+    })
+  : null;
+
+const openai = baseOpenAI && BRAINTRUST_API_KEY
+  ? wrapOpenAI(baseOpenAI)
+  : baseOpenAI;
 
 
 const ASEGURADORA_OPTIONS = [
@@ -2263,15 +2284,8 @@ function shouldUseResolverQuestion(state, decision) {
   return true;
 }
 
-async function askOpenAI(conversationId, state) {
-  if (!OPENAI_API_KEY) {
-    throw new Error("Missing OPENAI_API_KEY");
-  }
-
-  const history = getHistory(conversationId);
-  const stateSummary = buildStateSummary(state);
-
-  const systemPrompt = `
+function buildOpenAISystemPrompt() {
+  return `
 Eres Antonia, asistente de Clinyco.
 
 Objetivo:
@@ -2326,32 +2340,26 @@ Datos importantes:
 - si la persona quiere avanzar y ya tenemos los datos principales, indica que dejarás su solicitud lista para coordinación con una agente y, como alternativa, comparte la agenda web
 - si ya entregó teléfono y ya tenemos lo esencial, cierra cordialmente o deriva de forma clara
 `.trim();
+}
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "system", content: stateSummary },
-        ...history
-      ]
-    })
-  });
-
-  const raw = await response.text();
-  console.log("OpenAI raw:", raw);
-
-  if (!response.ok) {
-    throw new Error(`OpenAI request failed: ${raw}`);
+async function askOpenAI({ systemPrompt, stateSummary, history }) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+  if (!openai) {
+    throw new Error("OpenAI client not initialized");
   }
 
-  const data = JSON.parse(raw);
-  return data?.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  const response = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "system", content: stateSummary },
+      ...history
+    ]
+  });
+
+  return response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
 }
 
 async function sendConversationReply(appId, conversationId, reply) {
@@ -2846,7 +2854,15 @@ app.post("/messages", async (req, res) => {
     console.log("Conversation history:", safeJson(getHistory(conversationId)));
     console.log("Conversation state:", safeJson(state));
 
-    let reply = await askOpenAI(conversationId, state);
+    const history = getHistory(conversationId);
+    const stateSummary = buildStateSummary(state);
+    const systemPrompt = buildOpenAISystemPrompt();
+
+    let reply = await askOpenAI({
+      systemPrompt,
+      stateSummary,
+      history
+    });
 
     const isTenthMessage = state.system.botMessagesSent + 1 >= MAX_BOT_MESSAGES;
     if (isTenthMessage) {
