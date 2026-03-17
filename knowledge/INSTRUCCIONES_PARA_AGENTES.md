@@ -18,9 +18,9 @@ Pestanas sugeridas:
 
 - `sedes`
 - `profesionales`
-- `procedimientos`
+- `examenes`
 - `reglas_de_cobertura`
-- `preguntas_frecuentes_seguras`
+- `preguntas frecuentes`
 
 Texto simple para poner en una pestana `LEEME` del Google Sheet:
 

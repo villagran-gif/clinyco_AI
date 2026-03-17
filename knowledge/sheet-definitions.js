@@ -36,6 +36,8 @@ export const knowledgeSheetDefinitions = [
       { header: "Previo pago", key: "previo_pago", type: "string", description: "Escribir SI o NO.", example: "SI" },
       { header: "Duracion", key: "duracion", type: "string", description: "Escribir minutos. Ejemplo: 30 min.", example: "30 min" },
       { header: "Telemedicina", key: "telemedicina", type: "string", description: "Usar: SI, NO, SOLO TELEMEDICINA o PRESENCIAL Y TELEMEDICINA.", example: "SI" },
+      { header: "Motivo inactividad", key: "motivo_inactividad", type: "string", description: "Si esta inactivo, explicar el motivo en lenguaje simple.", example: "Licencia medica por 60 dias aprox." },
+      { header: "Mensaje para el cliente", key: "mensaje_cliente_inactivo", type: "string", description: "Mensaje sugerido para responderle al paciente si el profesional esta inactivo.", example: "El doctor esta temporalmente sin agenda por licencia medica. Si quieres, te ayudo con otra alternativa." },
       { header: "Observaciones", key: "observaciones", type: "string", description: "Dato corto y real.", example: "Las cirugias en Santiago se realizan en Clinica Tabancura." },
       { header: "Notas para el bot", key: "notas_para_bot", type: "string", description: "Regla corta de uso.", example: "No prometer hora exacta si no hay acceso real a agenda." }
     ]
@@ -43,12 +45,12 @@ export const knowledgeSheetDefinitions = [
   {
     key: "procedures",
     fileName: "procedures.json",
-    tabName: "procedimientos",
-    description: "Procedimientos y reglas de orientacion segura.",
-    agentHelp: "Una fila por procedimiento o evaluacion. No poner diagnosticos ni promesas medicas.",
+    tabName: "examenes",
+    description: "Examenes, procedimientos y evaluaciones con orientacion segura.",
+    agentHelp: "Una fila por examen, procedimiento o evaluacion. No poner diagnosticos ni promesas medicas.",
     columns: [
       { header: "Activo", key: "activo", type: "boolean", description: "Escribir SI o NO.", example: "SI" },
-      { header: "Procedimiento", key: "procedimiento", type: "string", description: "Nombre simple.", example: "Balon gastrico" },
+      { header: "Examen o evaluacion", key: "procedimiento", type: "string", description: "Nombre simple.", example: "Test de aire espirado para Helicobacter" },
       { header: "Categoria", key: "categoria", type: "string", description: "Categoria simple.", example: "Bariatrica" },
       { header: "Requiere peso y estatura", key: "requiere_peso_estatura", type: "boolean", description: "SI cuando el bot debe pedir estos datos.", example: "SI" },
       { header: "Se puede orientar sin RUT", key: "se_puede_orientar_sin_rut", type: "boolean", description: "SI cuando no hace falta pedir RUT al inicio.", example: "SI" },
@@ -76,7 +78,7 @@ export const knowledgeSheetDefinitions = [
   {
     key: "faq_medical_safe",
     fileName: "faq_medical_safe.json",
-    tabName: "preguntas_frecuentes_seguras",
+    tabName: "preguntas frecuentes",
     description: "Respuestas seguras y aprobadas para preguntas frecuentes.",
     agentHelp: "Una fila por pregunta frecuente. No incluir diagnosticos ni promesas no confirmadas.",
     columns: [
