@@ -54,7 +54,7 @@ export function normalizeCurrencyClp(value) {
   }
 
   const notes = [];
-  const hasMilWord = /\bMIL\b/i.test(key);
+  const hasMilWord = key.includes("MIL");
   const matches = String(raw).match(/\d[\d.,]*/g) || [];
 
   if (!matches.length) {
