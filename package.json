@@ -7,7 +7,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "braintrust": "^0.0.225",
+    "braintrust": "0.3.7",
     "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "openai": "^5.12.2",
