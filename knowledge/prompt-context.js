@@ -5,6 +5,11 @@ function listActiveRecords(payload) {
   return payload.records.filter((record) => record && record.activo !== false);
 }
 
+function listInactiveRecords(payload) {
+  if (!payload || !Array.isArray(payload.records)) return [];
+  return payload.records.filter((record) => record && record.activo === false);
+}
+
 function formatList(values = []) {
   return (Array.isArray(values) ? values : [])
     .filter(Boolean)
@@ -41,6 +46,20 @@ export function buildKnowledgePromptContext() {
         formatList(doctor.procedimientos),
         formatList(doctor.sedes),
         doctor.observaciones
+      ].filter(Boolean);
+      lines.push(`  - ${bits.join(" | ")}`);
+    }
+  }
+
+  const inactiveDoctors = listInactiveRecords(snapshot.doctors).slice(0, 6);
+  if (inactiveDoctors.length) {
+    lines.push("- Profesionales inactivos:");
+    for (const doctor of inactiveDoctors) {
+      const bits = [
+        doctor.profesional,
+        doctor.especialidad,
+        doctor.motivo_inactividad ? `Motivo: ${doctor.motivo_inactividad}` : null,
+        doctor.mensaje_cliente_inactivo ? `Mensaje cliente: ${doctor.mensaje_cliente_inactivo}` : null
       ].filter(Boolean);
       lines.push(`  - ${bits.join(" | ")}`);
     }

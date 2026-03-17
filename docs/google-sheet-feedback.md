@@ -38,9 +38,9 @@ Usar este archivo en Google Apps Script:
 
 - `sedes`
 - `profesionales`
-- `procedimientos`
+- `examenes`
 - `reglas_de_cobertura`
-- `preguntas_frecuentes_seguras`
+- `preguntas frecuentes`
 
 ## Flujo recomendado
 

@@ -4,18 +4,18 @@ const CLINYCO_TABS = {
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
   },
   "profesionales": {
-    columnasBase: ["Activo", "Profesional", "Especialidad", "Sedes", "Modalidad", "Procedimientos", "Agenda directa disponible", "Observaciones", "Notas para el bot", "Horario", "Valor", "Previo pago", "Duracion", "Telemedicina"],
+    columnasBase: ["Activo", "Profesional", "Especialidad", "Sedes", "Modalidad", "Procedimientos", "Agenda directa disponible", "Observaciones", "Notas para el bot", "Horario", "Valor", "Previo pago", "Duracion", "Telemedicina", "Motivo inactividad", "Mensaje para el cliente"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
   },
-  "procedimientos": {
-    columnasBase: ["Activo", "Procedimiento", "Categoria", "Requiere peso y estatura", "Se puede orientar sin RUT", "Profesionales sugeridos", "Sedes sugeridas", "Observaciones", "Notas para el bot"],
+  "examenes": {
+    columnasBase: ["Activo", "Examen o evaluacion", "Categoria", "Requiere peso y estatura", "Se puede orientar sin RUT", "Profesionales sugeridos", "Sedes sugeridas", "Observaciones", "Notas para el bot"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
   },
   "reglas_de_cobertura": {
     columnasBase: ["Activo", "Cobertura o prevision", "Modalidad", "Regla simple para el bot", "Que dato pedir despues", "Observaciones internas"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
   },
-  "preguntas_frecuentes_seguras": {
+  "preguntas frecuentes": {
     columnasBase: ["Activo", "Pregunta frecuente", "Respuesta aprobada", "Cuando derivar a persona", "No prometer", "Notas para el bot"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
   }
@@ -311,4 +311,17 @@ function escribirFeedback_(sheet, headers, rowNumber, values) {
       }
     }
   });
+
+  const activoIndex = headers.indexOf("Activo");
+  if (activoIndex >= 0) {
+    const activoCell = sheet.getRange(rowNumber, activoIndex + 1);
+    const activo = normalizarBooleano_(sheet.getRange(rowNumber, activoIndex + 1).getValue()).label;
+    if (activo === "Si") {
+      activoCell.setBackground("#C6EFCE");
+    } else if (activo === "No") {
+      activoCell.setBackground("#F4CCCC");
+    } else {
+      activoCell.setBackground(null);
+    }
+  }
 }
