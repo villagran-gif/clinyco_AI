@@ -1,25 +1,60 @@
 const CLINYCO_TABS = {
+  "Equipo medico": {
+    columnasBase: [
+      "Orden web",
+      "Nombre profesional",
+      "Nombre en validacion",
+      "Categoria operativa",
+      "Especialidad web",
+      "Descripcion web",
+      "Estado validacion",
+      "Horario",
+      "Valor",
+      "Previo pago",
+      "Duracion",
+      "Edad",
+      "Telemedicina",
+      "Sobrecupo",
+      "Revision de examenes",
+      "Observaciones"
+    ],
+    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
+    columnasRequeridas: ["Nombre profesional"],
+    columnasPrincipal: ["Nombre profesional", "Nombre en validacion"]
+  },
   "sedes": {
     columnasBase: ["Activo", "Sede", "Ciudad", "Modalidad", "Direccion", "Agenda web", "Solo telemedicina", "Observaciones", "Notas para el bot"],
-    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
+    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
+    columnasRequeridas: ["Activo", "Sede"],
+    columnasPrincipal: ["Sede"]
   },
   "profesionales": {
     columnasBase: ["Activo", "Profesional", "Especialidad", "Sedes", "Modalidad", "Procedimientos", "Agenda directa disponible", "Observaciones", "Notas para el bot", "Horario", "Valor", "Previo pago", "Duracion", "Telemedicina", "Motivo inactividad", "Mensaje para el cliente"],
-    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
+    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
+    columnasRequeridas: ["Activo", "Profesional"],
+    columnasPrincipal: ["Profesional"]
   },
   "examenes": {
     columnasBase: ["Activo", "Examen o evaluacion", "Categoria", "Requiere peso y estatura", "Se puede orientar sin RUT", "Profesionales sugeridos", "Sedes sugeridas", "Observaciones", "Notas para el bot"],
-    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
+    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
+    columnasRequeridas: ["Activo", "Examen o evaluacion"],
+    columnasPrincipal: ["Examen o evaluacion"]
   },
   "reglas_de_cobertura": {
     columnasBase: ["Activo", "Cobertura o prevision", "Modalidad", "Regla simple para el bot", "Que dato pedir despues", "Observaciones internas"],
-    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
+    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
+    columnasRequeridas: ["Activo", "Cobertura o prevision", "Regla simple para el bot"],
+    columnasPrincipal: ["Cobertura o prevision"]
   },
   "preguntas frecuentes": {
     columnasBase: ["Activo", "Pregunta frecuente", "Respuesta aprobada", "Cuando derivar a persona", "No prometer", "Notas para el bot"],
-    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"]
+    columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
+    columnasRequeridas: ["Activo", "Pregunta frecuente", "Respuesta aprobada"],
+    columnasPrincipal: ["Pregunta frecuente"]
   }
 };
+
+const LOG_SHEET_NAME = "Bitacora IA";
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -30,41 +65,93 @@ function onOpen() {
 }
 
 function onEdit(e) {
-  if (!e || !e.range) return;
-  const sheet = e.range.getSheet();
-  const tabName = sheet.getName();
-  if (!CLINYCO_TABS[tabName]) return;
-  if (e.range.getRow() < 2) return;
-  asegurarColumnasFeedback_(sheet, tabName);
-  validarFila_(sheet, tabName, e.range.getRow());
+  try {
+    if (!e || !e.range) return;
+    const sheet = e.range.getSheet();
+    const tabName = sheet.getName();
+    if (!CLINYCO_TABS[tabName]) return;
+    if (e.range.getRow() < 2) return;
+    asegurarColumnasFeedback_(sheet, tabName);
+    const resultado = validarFila_(sheet, tabName, e.range.getRow());
+    registrarBitacora_({
+      action: "edicion",
+      sheet,
+      tabName,
+      rowNumber: e.range.getRow(),
+      columnNumber: e.range.getColumn(),
+      oldValue: e.oldValue || "",
+      newValue: e.value || "",
+      resultado
+    });
+  } catch (error) {
+    SpreadsheetApp.getActiveSpreadsheet().toast(`Error onEdit: ${error.message}`, "Clinyco IA", 8);
+  }
 }
 
 function prepararHojaActual() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  const tabName = sheet.getName();
-  if (!CLINYCO_TABS[tabName]) {
-    SpreadsheetApp.getUi().alert("Esta pestaña no está configurada para Clinyco IA.");
-    return;
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const tabName = sheet.getName();
+    if (!CLINYCO_TABS[tabName]) {
+      SpreadsheetApp.getUi().alert("Esta pestaña no está configurada para Clinyco IA.");
+      return;
+    }
+    asegurarColumnasFeedback_(sheet, tabName);
+    aplicarFormatoBase_(sheet);
+    aplicarValidaciones_(sheet, tabName);
+    registrarBitacora_({
+      action: "preparar_hoja",
+      sheet,
+      tabName,
+      rowNumber: null,
+      columnNumber: null,
+      oldValue: "",
+      newValue: "",
+      resultado: {
+        interpretacion: "Hoja preparada con validaciones.",
+        estado: "OK",
+        feedback: "Preparación completada."
+      }
+    });
+    SpreadsheetApp.getUi().alert("Se agregaron columnas de feedback y validaciones guiadas para esta pestaña.");
+  } catch (error) {
+    SpreadsheetApp.getUi().alert(`Error al preparar la hoja: ${error.message}`);
   }
-  asegurarColumnasFeedback_(sheet, tabName);
-  aplicarFormatoBase_(sheet);
-  aplicarValidaciones_(sheet, tabName);
-  SpreadsheetApp.getUi().alert("Se agregaron columnas de feedback y validaciones guiadas para esta pestaña.");
 }
 
 function validarHojaActual() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  const tabName = sheet.getName();
-  if (!CLINYCO_TABS[tabName]) {
-    SpreadsheetApp.getUi().alert("Esta pestaña no está configurada para Clinyco IA.");
-    return;
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const tabName = sheet.getName();
+    if (!CLINYCO_TABS[tabName]) {
+      SpreadsheetApp.getUi().alert("Esta pestaña no está configurada para Clinyco IA.");
+      return;
+    }
+    asegurarColumnasFeedback_(sheet, tabName);
+    const lastRow = sheet.getLastRow();
+    let filasRevisar = 0;
+    for (let row = 2; row <= lastRow; row += 1) {
+      const resultado = validarFila_(sheet, tabName, row);
+      if (resultado && resultado.estado === "Revisar") filasRevisar += 1;
+    }
+    registrarBitacora_({
+      action: "validar_hoja",
+      sheet,
+      tabName,
+      rowNumber: null,
+      columnNumber: null,
+      oldValue: "",
+      newValue: "",
+      resultado: {
+        interpretacion: `Validación masiva en ${tabName}`,
+        estado: filasRevisar ? "Revisar" : "OK",
+        feedback: filasRevisar ? `Quedaron ${filasRevisar} filas para revisar.` : "Todas las filas quedaron OK."
+      }
+    });
+    SpreadsheetApp.getUi().alert("Validación terminada.");
+  } catch (error) {
+    SpreadsheetApp.getUi().alert(`Error al validar la hoja: ${error.message}`);
   }
-  asegurarColumnasFeedback_(sheet, tabName);
-  const lastRow = sheet.getLastRow();
-  for (let row = 2; row <= lastRow; row += 1) {
-    validarFila_(sheet, tabName, row);
-  }
-  SpreadsheetApp.getUi().alert("Validación terminada.");
 }
 
 function asegurarColumnasFeedback_(sheet, tabName) {
@@ -88,14 +175,22 @@ function asegurarColumnasFeedback_(sheet, tabName) {
 
 function aplicarFormatoBase_(sheet) {
   sheet.setFrozenRows(1);
-  if (sheet.getLastColumn() > 0 && sheet.getLastRow() > 0) {
-    const existingFilter = sheet.getFilter();
-    if (existingFilter) {
-      existingFilter.remove();
+  try {
+    if (sheet.getLastColumn() > 0 && sheet.getLastRow() > 0) {
+      const existingFilter = sheet.getFilter();
+      if (existingFilter) {
+        existingFilter.remove();
+      }
+      sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 2), sheet.getLastColumn()).createFilter();
     }
-    sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 2), sheet.getLastColumn()).createFilter();
+  } catch (error) {
+    // Algunos archivos importados desde Excel fallan al recrear filtros.
   }
-  sheet.autoResizeColumns(1, Math.max(sheet.getLastColumn(), 1));
+  try {
+    sheet.autoResizeColumns(1, Math.max(sheet.getLastColumn(), 1));
+  } catch (error) {
+    // Si falla el auto resize, no bloqueamos el resto.
+  }
 }
 
 function aplicarValidaciones_(sheet, tabName) {
@@ -148,7 +243,7 @@ function aplicarValidaciones_(sheet, tabName) {
     }
 
     if (header === "Valor") {
-      range.setNote("Ejemplos recomendados: 70000 o 70 mil. Evitar frases largas.");
+      sheet.getRange(1, column).setNote("Ejemplos recomendados: 70000 o 70 mil. Evitar frases largas.");
       return;
     }
   });
@@ -167,6 +262,40 @@ function leerFilaComoObjeto_(sheet, rowNumber) {
     record[header] = values[index];
   });
   return { headers, record };
+}
+
+function textoCelda_(value) {
+  return String(value || "").trim();
+}
+
+function filaTieneContenido_(record, headers) {
+  return headers.some((header) => {
+    if (["Interpretacion IA", "Estado IA", "Observaciones IA"].indexOf(header) >= 0) return false;
+    return textoCelda_(record[header]) !== "";
+  });
+}
+
+function obtenerColumnasRequeridas_(tabName) {
+  return CLINYCO_TABS[tabName]?.columnasRequeridas || [];
+}
+
+function obtenerPrincipal_(record, tabName) {
+  const preferred = CLINYCO_TABS[tabName]?.columnasPrincipal || [];
+  for (let i = 0; i < preferred.length; i += 1) {
+    const value = textoCelda_(record[preferred[i]]);
+    if (value) return value;
+  }
+
+  return (
+    textoCelda_(record["Nombre profesional"]) ||
+    textoCelda_(record["Profesional"]) ||
+    textoCelda_(record["Examen o evaluacion"]) ||
+    textoCelda_(record["Procedimiento"]) ||
+    textoCelda_(record["Sede"]) ||
+    textoCelda_(record["Cobertura o prevision"]) ||
+    textoCelda_(record["Pregunta frecuente"]) ||
+    tabName
+  );
 }
 
 function normalizarBooleano_(value) {
@@ -245,8 +374,27 @@ function validarFila_(sheet, tabName, rowNumber) {
   const row = leerFilaComoObjeto_(sheet, rowNumber);
   const headers = row.headers;
   const record = row.record;
+  if (!filaTieneContenido_(record, headers)) {
+    escribirFeedback_(sheet, headers, rowNumber, {
+      "Interpretacion IA": "",
+      "Estado IA": "",
+      "Observaciones IA": ""
+    });
+    return {
+      interpretacion: "",
+      estado: "",
+      feedback: ""
+    };
+  }
+
   const notes = [];
   const chunks = [];
+  const requiredHeaders = obtenerColumnasRequeridas_(tabName);
+  const missingRequired = requiredHeaders.filter((header) => textoCelda_(record[header]) === "");
+
+  if (missingRequired.length) {
+    notes.push("Faltan campos obligatorios: " + missingRequired.join(", ") + ".");
+  }
 
   if (record["Valor"]) {
     const monto = normalizarMonto_(record["Valor"]);
@@ -276,15 +424,18 @@ function validarFila_(sheet, tabName, rowNumber) {
     const activo = normalizarBooleano_(record["Activo"]);
     if (activo.label) chunks.push("activo=" + activo.label);
     notes.push.apply(notes, activo.notes);
+
+    if (activo.label === "No") {
+      if (!textoCelda_(record["Motivo inactividad"])) {
+        notes.push("Si está inactivo, falta completar Motivo inactividad.");
+      }
+      if (!textoCelda_(record["Mensaje para el cliente"])) {
+        notes.push("Si está inactivo, falta completar Mensaje para el cliente.");
+      }
+    }
   }
 
-  const principal =
-    record["Profesional"] ||
-    record["Procedimiento"] ||
-    record["Sede"] ||
-    record["Cobertura o prevision"] ||
-    record["Pregunta frecuente"] ||
-    tabName;
+  const principal = obtenerPrincipal_(record, tabName);
 
   const interpretacion = chunks.length ? principal + ": " + chunks.join(" | ") : principal;
   const estado = notes.length ? "Revisar" : "OK";
@@ -295,6 +446,12 @@ function validarFila_(sheet, tabName, rowNumber) {
     "Estado IA": estado,
     "Observaciones IA": feedback
   });
+
+  return {
+    interpretacion,
+    estado,
+    feedback
+  };
 }
 
 function escribirFeedback_(sheet, headers, rowNumber, values) {
@@ -324,4 +481,60 @@ function escribirFeedback_(sheet, headers, rowNumber, values) {
       activoCell.setBackground(null);
     }
   }
+}
+
+function obtenerCorreoVisible_() {
+  try {
+    return Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || "correo_no_visible";
+  } catch (error) {
+    return "correo_no_visible";
+  }
+}
+
+function obtenerNombreColumna_(sheet, columnNumber) {
+  if (!columnNumber) return "";
+  return textoCelda_(sheet.getRange(1, columnNumber).getValue());
+}
+
+function obtenerBitacoraSheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName(LOG_SHEET_NAME);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(LOG_SHEET_NAME);
+    sheet.appendRow([
+      "Fecha",
+      "Responsable visible",
+      "Accion",
+      "Pestaña",
+      "Fila",
+      "Columna",
+      "Encabezado",
+      "Valor anterior",
+      "Valor nuevo",
+      "Interpretacion IA",
+      "Estado IA",
+      "Observaciones IA"
+    ]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function registrarBitacora_({ action, sheet, tabName, rowNumber, columnNumber, oldValue, newValue, resultado }) {
+  const spreadsheet = sheet.getParent();
+  const logSheet = obtenerBitacoraSheet_(spreadsheet);
+  const actor = obtenerCorreoVisible_();
+  logSheet.appendRow([
+    new Date(),
+    actor,
+    action || "",
+    tabName || "",
+    rowNumber || "",
+    columnNumber || "",
+    obtenerNombreColumna_(sheet, columnNumber),
+    oldValue || "",
+    newValue || "",
+    resultado?.interpretacion || "",
+    resultado?.estado || "",
+    resultado?.feedback || ""
+  ]);
 }
