@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "source": "repo_seed",
+  "sheet_tab": "coverage_rules",
+  "descripcion": "Reglas simples de previsiones, Fonasa e Isapre.",
+  "mensaje_para_equipo": "Una fila por regla. Escribir la regla en lenguaje simple.",
+  "columns": [
+    { "header": "Activo", "key": "activo", "type": "boolean" },
+    { "header": "Cobertura o prevision", "key": "cobertura", "type": "string" },
+    { "header": "Modalidad", "key": "modalidad", "type": "string" },
+    { "header": "Regla simple para el bot", "key": "regla_simple", "type": "string" },
+    { "header": "Que dato pedir despues", "key": "siguiente_dato", "type": "string" },
+    { "header": "Observaciones internas", "key": "observaciones", "type": "string" }
+  ],
+  "records": [
+    {
+      "activo": true,
+      "cobertura": "FONASA",
+      "modalidad": "Tramo A",
+      "regla_simple": "En Tramo A el PAD no aplica.",
+      "siguiente_dato": "Interes o procedimiento",
+      "observaciones": "Explicarlo con calma y sin sonar cerrando la puerta."
+    },
+    {
+      "activo": true,
+      "cobertura": "FONASA",
+      "modalidad": "Tramo B",
+      "regla_simple": "Para Tramo B el PAD puede aplicar segun la prestacion.",
+      "siguiente_dato": "Interes o procedimiento",
+      "observaciones": "Si falta el tramo, pedirlo antes."
+    },
+    {
+      "activo": true,
+      "cobertura": "FONASA",
+      "modalidad": "Tramo C",
+      "regla_simple": "Para Tramo C el PAD puede aplicar segun la prestacion.",
+      "siguiente_dato": "Interes o procedimiento",
+      "observaciones": "Si falta el tramo, pedirlo antes."
+    },
+    {
+      "activo": true,
+      "cobertura": "FONASA",
+      "modalidad": "Tramo D",
+      "regla_simple": "Para Tramo D el PAD puede aplicar segun la prestacion.",
+      "siguiente_dato": "Interes o procedimiento",
+      "observaciones": "Si falta el tramo, pedirlo antes."
+    },
+    {
+      "activo": true,
+      "cobertura": "Isapre",
+      "modalidad": null,
+      "regla_simple": "Si dice Isapre pero no cual, pedir la aseguradora exacta.",
+      "siguiente_dato": "Aseguradora exacta",
+      "observaciones": "Ejemplos: Banmedica, Colmena, Consalud, Cruz Blanca."
+    },
+    {
+      "activo": true,
+      "cobertura": "Particular",
+      "modalidad": null,
+      "regla_simple": "Se puede orientar sin tramo.",
+      "siguiente_dato": "Interes o procedimiento",
+      "observaciones": "No inventar valores."
+    }
+  ]
+}

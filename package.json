@@ -4,7 +4,9 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "monitor:ai": "bash scripts/run-ai-observability.sh",
+    "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js"
   },
   "dependencies": {
     "braintrust": "0.3.7",

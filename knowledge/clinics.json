@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "source": "repo_seed",
+  "sheet_tab": "clinics",
+  "descripcion": "Sedes y datos operativos simples para orientar al paciente.",
+  "mensaje_para_equipo": "Una fila por sede. Escribir solo informacion vigente. Si no aplica, dejar vacio.",
+  "columns": [
+    { "header": "Activo", "key": "activo", "type": "boolean" },
+    { "header": "Sede", "key": "sede", "type": "string" },
+    { "header": "Ciudad", "key": "ciudad", "type": "string" },
+    { "header": "Modalidad", "key": "modalidad", "type": "string" },
+    { "header": "Direccion", "key": "direccion", "type": "string" },
+    { "header": "Agenda web", "key": "agenda_web", "type": "string" },
+    { "header": "Solo telemedicina", "key": "solo_telemedicina", "type": "boolean" },
+    { "header": "Observaciones", "key": "observaciones", "type": "string" },
+    { "header": "Notas para el bot", "key": "notas_para_bot", "type": "string" }
+  ],
+  "records": [
+    {
+      "activo": true,
+      "sede": "Antofagasta",
+      "ciudad": "Antofagasta",
+      "modalidad": "Presencial y telemedicina",
+      "direccion": null,
+      "agenda_web": "https://clinyco.medinetapp.com/agendaweb/planned/",
+      "solo_telemedicina": false,
+      "observaciones": "Agenda medica completa disponible. Endoscopia solo en esta sede.",
+      "notas_para_bot": "Si preguntan por endoscopia, orientar a Antofagasta."
+    },
+    {
+      "activo": true,
+      "sede": "Calama",
+      "ciudad": "Calama",
+      "modalidad": "Presencial",
+      "direccion": "DiagnoSalud, Av. Granaderos #1483",
+      "agenda_web": "https://clinyco.medinetapp.com/agendaweb/planned/",
+      "solo_telemedicina": false,
+      "observaciones": "Consultas presenciales con cirujanos en DiagnoSalud.",
+      "notas_para_bot": "No inventar horarios. Derivar o compartir agenda web."
+    },
+    {
+      "activo": true,
+      "sede": "Santiago",
+      "ciudad": "Santiago",
+      "modalidad": "Telemedicina y cirugia",
+      "direccion": "Clinica Tabancura, RedSalud Vitacura",
+      "agenda_web": "https://clinyco.medinetapp.com/agendaweb/planned/",
+      "solo_telemedicina": true,
+      "observaciones": "Por ahora la consulta es solo por telemedicina.",
+      "notas_para_bot": "No prometer consulta presencial general en Santiago."
+    }
+  ]
+}
