@@ -8,6 +8,9 @@
     "monitor:ai": "bash scripts/run-ai-observability.sh",
     "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js",
     "preview:knowledge": "node scripts/preview-knowledge-row.js"
+    "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js"
+    "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
+    "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv"
   },
   "dependencies": {
     "braintrust": "0.3.7",
