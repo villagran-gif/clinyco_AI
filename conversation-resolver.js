@@ -59,21 +59,21 @@ function normalizeInsurance(value) {
   return clean(value).toUpperCase() || null;
 }
 
-function normalizeProcedure(value) {
+function normalizeProcedure(value, { preserveUnknown = true } = {}) {
   const key = normalizeKey(value);
   if (!key) return null;
   if (key.includes("BALON")) return "Balón gástrico";
   if (key.includes("BARIATR") || key.includes("MANGA") || key.includes("BYPASS")) return "Cirugía bariátrica";
   if (key.includes("PLASTICA") || key.includes("ABDOMINOPLASTIA") || key.includes("LIPO") || key.includes("MAMOPLASTIA")) return "Cirugía plástica";
   if (key.includes("HERNIA") || key.includes("VESICULA") || key.includes("ENDOSCOP")) return "Cirugía general";
-  return clean(value) || null;
+  return preserveUnknown ? clean(value) || null : null;
 }
 
 function extractSupportHintsFromText(text) {
   const raw = String(text || "");
   const key = normalizeKey(raw);
   return {
-    procedure: normalizeProcedure(raw),
+    procedure: normalizeProcedure(raw, { preserveUnknown: false }),
     insurance: normalizeInsurance(raw),
     modality: key.includes("TRAMO A") ? "Tramo A"
       : key.includes("TRAMO B") ? "Tramo B"

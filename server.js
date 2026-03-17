@@ -791,7 +791,7 @@ function filterSupportUsers(users, candidates = {}) {
     if (exactPhone.length) list = exactPhone;
   }
 
-  if (expectedNames.length && !expectedEmail && !expectedPhone) {
+  if (expectedNames.length && list.length > 1) {
     const exactName = list.filter((user) => expectedNames.includes(normalizeKey(user?.name)));
     if (exactName.length) {
       list = exactName;
@@ -805,6 +805,40 @@ function filterSupportUsers(users, candidates = {}) {
   }
 
   return list.slice(0, 5);
+}
+
+function extractSupportIdentityHints(supportData = {}) {
+  const users = Array.isArray(supportData?.users) ? supportData.users : [];
+  const tickets = Array.isArray(supportData?.tickets) ? supportData.tickets : [];
+
+  const ticketTexts = tickets.flatMap((ticket) => [
+    ticket?.subject,
+    ticket?.raw_subject,
+    ticket?.description,
+    ticket?.via?.source?.from?.name
+  ].filter(Boolean));
+
+  const email =
+    users
+      .map((user) => String(user?.email || "").trim().toLowerCase())
+      .find(Boolean) ||
+    ticketTexts.map((text) => extractEmail(text)).find(Boolean) ||
+    null;
+
+  const phone =
+    users
+      .map((user) => normalizePhone(user?.phone))
+      .find(Boolean) ||
+    ticketTexts.map((text) => extractPhone(text)).find(Boolean) ||
+    null;
+
+  const rutRaw = ticketTexts.map((text) => extractRut(text)).find(Boolean) || null;
+
+  return {
+    email,
+    phone,
+    rut: rutRaw ? formatRutHuman(rutRaw) || rutRaw : null
+  };
 }
 
 function filterSupportTickets(tickets) {
@@ -2191,7 +2225,9 @@ async function maybeRunIdentitySearch(state, info) {
       : "sin coincidencias en Support";
 
     const firstUser = supportData?.users?.[0] || null;
-    if (firstUser) {
+    const supportHints = extractSupportIdentityHints(supportData);
+
+    if (firstUser && supportData?.usersCount === 1) {
       if (!state.contactDraft.c_nombres || !state.contactDraft.c_apellidos) {
         const split = splitNames(firstUser.name || "");
         if (!state.contactDraft.c_nombres && split.nombres) {
@@ -2201,20 +2237,21 @@ async function maybeRunIdentitySearch(state, info) {
           state.contactDraft.c_apellidos = split.apellidos;
         }
       }
+    }
 
-      if (!state.contactDraft.c_email && firstUser.email) {
-        state.contactDraft.c_email = String(firstUser.email).toLowerCase();
-      }
+    if (!state.contactDraft.c_email && supportHints.email) {
+      state.contactDraft.c_email = supportHints.email;
+    }
 
-      if (!state.contactDraft.c_tel1 && firstUser.phone) {
-        const normalizedPhone = normalizePhone(firstUser.phone);
-        if (normalizedPhone) {
-          state.contactDraft.c_tel1 = normalizedPhone;
-          if (!state.contactDraft.c_tel2) {
-            state.contactDraft.c_tel2 = normalizedPhone;
-          }
-        }
+    if (!state.contactDraft.c_tel1 && supportHints.phone) {
+      state.contactDraft.c_tel1 = supportHints.phone;
+      if (!state.contactDraft.c_tel2) {
+        state.contactDraft.c_tel2 = supportHints.phone;
       }
+    }
+
+    if (!state.contactDraft.c_rut && supportHints.rut) {
+      state.contactDraft.c_rut = supportHints.rut;
     }
   } catch (error) {
     console.error("SUPPORT SEARCH ERROR:", error.message);
