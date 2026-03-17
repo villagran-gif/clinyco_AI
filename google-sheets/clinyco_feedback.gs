@@ -19,42 +19,52 @@ const CLINYCO_TABS = {
       "Observaciones"
     ],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
-    columnasRequeridas: ["Nombre profesional"],
-    columnasPrincipal: ["Nombre profesional", "Nombre en validacion"]
+    columnasRequeridas: ["Nombre profesional", "Estado validacion"],
+    columnasPrincipal: ["Nombre profesional", "Nombre en validacion"],
+    columnasMinimasParaInterpretar: ["Categoria operativa", "Especialidad web", "Descripcion web", "Horario", "Valor", "Telemedicina", "Observaciones"]
   },
   "sedes": {
     columnasBase: ["Activo", "Sede", "Ciudad", "Modalidad", "Direccion", "Agenda web", "Solo telemedicina", "Observaciones", "Notas para el bot"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
     columnasRequeridas: ["Activo", "Sede"],
-    columnasPrincipal: ["Sede"]
+    columnasPrincipal: ["Sede"],
+    columnasMinimasParaInterpretar: ["Ciudad", "Modalidad", "Direccion", "Agenda web", "Observaciones", "Notas para el bot"]
   },
   "profesionales": {
     columnasBase: ["Activo", "Profesional", "Especialidad", "Sedes", "Modalidad", "Procedimientos", "Agenda directa disponible", "Observaciones", "Notas para el bot", "Horario", "Valor", "Previo pago", "Duracion", "Telemedicina", "Motivo inactividad", "Mensaje para el cliente"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
     columnasRequeridas: ["Activo", "Profesional"],
-    columnasPrincipal: ["Profesional"]
+    columnasPrincipal: ["Profesional"],
+    columnasMinimasParaInterpretar: ["Especialidad", "Sedes", "Modalidad", "Procedimientos", "Horario", "Valor", "Telemedicina", "Observaciones", "Notas para el bot"]
   },
   "examenes": {
     columnasBase: ["Activo", "Examen o evaluacion", "Categoria", "Requiere peso y estatura", "Se puede orientar sin RUT", "Profesionales sugeridos", "Sedes sugeridas", "Observaciones", "Notas para el bot"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
     columnasRequeridas: ["Activo", "Examen o evaluacion"],
-    columnasPrincipal: ["Examen o evaluacion"]
+    columnasPrincipal: ["Examen o evaluacion"],
+    columnasMinimasParaInterpretar: ["Categoria", "Profesionales sugeridos", "Sedes sugeridas", "Observaciones", "Notas para el bot"]
   },
   "reglas_de_cobertura": {
     columnasBase: ["Activo", "Cobertura o prevision", "Modalidad", "Regla simple para el bot", "Que dato pedir despues", "Observaciones internas"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
     columnasRequeridas: ["Activo", "Cobertura o prevision", "Regla simple para el bot"],
-    columnasPrincipal: ["Cobertura o prevision"]
+    columnasPrincipal: ["Cobertura o prevision"],
+    columnasMinimasParaInterpretar: ["Modalidad", "Que dato pedir despues", "Observaciones internas"]
   },
   "preguntas frecuentes": {
     columnasBase: ["Activo", "Pregunta frecuente", "Respuesta aprobada", "Cuando derivar a persona", "No prometer", "Notas para el bot"],
     columnasFeedback: ["Interpretacion IA", "Estado IA", "Observaciones IA"],
     columnasRequeridas: ["Activo", "Pregunta frecuente", "Respuesta aprobada"],
-    columnasPrincipal: ["Pregunta frecuente"]
+    columnasPrincipal: ["Pregunta frecuente"],
+    columnasMinimasParaInterpretar: ["Cuando derivar a persona", "No prometer", "Notas para el bot"]
   }
 };
 
 const LOG_SHEET_NAME = "Bitacora IA";
+
+function onInstall(e) {
+  onOpen(e);
+}
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -84,7 +94,10 @@ function onEdit(e) {
       resultado
     });
   } catch (error) {
-    SpreadsheetApp.getActiveSpreadsheet().toast(`Error onEdit: ${error.message}`, "Clinyco IA", 8);
+    const spreadsheet = e && e.source ? e.source : null;
+    if (spreadsheet) {
+      spreadsheet.toast(mensajeErrorConAyuda_(error), "Clinyco IA", 10);
+    }
   }
 }
 
@@ -115,7 +128,7 @@ function prepararHojaActual() {
     });
     SpreadsheetApp.getUi().alert("Se agregaron columnas de feedback y validaciones guiadas para esta pestaña.");
   } catch (error) {
-    SpreadsheetApp.getUi().alert(`Error al preparar la hoja: ${error.message}`);
+    SpreadsheetApp.getUi().alert(mensajeErrorConAyuda_(error));
   }
 }
 
@@ -150,7 +163,7 @@ function validarHojaActual() {
     });
     SpreadsheetApp.getUi().alert("Validación terminada.");
   } catch (error) {
-    SpreadsheetApp.getUi().alert(`Error al validar la hoja: ${error.message}`);
+    SpreadsheetApp.getUi().alert(mensajeErrorConAyuda_(error));
   }
 }
 
@@ -279,6 +292,10 @@ function obtenerColumnasRequeridas_(tabName) {
   return CLINYCO_TABS[tabName]?.columnasRequeridas || [];
 }
 
+function obtenerColumnasMinimasParaInterpretar_(tabName) {
+  return CLINYCO_TABS[tabName]?.columnasMinimasParaInterpretar || [];
+}
+
 function obtenerPrincipal_(record, tabName) {
   const preferred = CLINYCO_TABS[tabName]?.columnasPrincipal || [];
   for (let i = 0; i < preferred.length; i += 1) {
@@ -370,6 +387,38 @@ function formatearNumero_(value) {
   return Utilities.formatString("%s", value).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 }
 
+function agregarChunkTexto_(chunks, label, value) {
+  const text = textoCelda_(value);
+  if (!text) return;
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return;
+  chunks.push(`${label}=${compact}`);
+}
+
+function mensajeErrorConAyuda_(error) {
+  const raw = error && error.message ? String(error.message) : "Error desconocido.";
+  const lowered = raw.toLowerCase();
+
+  if (
+    lowered.indexOf("no tienes permiso") >= 0 ||
+    lowered.indexOf("authorization") >= 0 ||
+    lowered.indexOf("auth") >= 0
+  ) {
+    return (
+      "Error de permisos de Google.\n\n" +
+      "Para activarlo:\n" +
+      "1. Ve a Extensiones > Apps Script.\n" +
+      "2. Arriba, elige la función prepararHojaActual.\n" +
+      "3. Haz clic en Ejecutar.\n" +
+      "4. Acepta los permisos con tu cuenta.\n" +
+      "5. Vuelve al Sheet y recarga la página.\n\n" +
+      "Detalle técnico: " + raw
+    );
+  }
+
+  return "Error en Clinyco IA: " + raw;
+}
+
 function validarFila_(sheet, tabName, rowNumber) {
   const row = leerFilaComoObjeto_(sheet, rowNumber);
   const headers = row.headers;
@@ -391,9 +440,35 @@ function validarFila_(sheet, tabName, rowNumber) {
   const chunks = [];
   const requiredHeaders = obtenerColumnasRequeridas_(tabName);
   const missingRequired = requiredHeaders.filter((header) => textoCelda_(record[header]) === "");
+  const minimumInterpretationHeaders = obtenerColumnasMinimasParaInterpretar_(tabName);
+  const hasMinimumInterpretationData = minimumInterpretationHeaders.some((header) => textoCelda_(record[header]) !== "");
 
   if (missingRequired.length) {
     notes.push("Faltan campos obligatorios: " + missingRequired.join(", ") + ".");
+  }
+
+  if (!hasMinimumInterpretationData) {
+    notes.push("Todavía no hay suficiente información para que la IA interprete esta fila con seguridad.");
+  }
+
+  if (tabName === "Equipo medico") {
+    agregarChunkTexto_(chunks, "nombre", record["Nombre profesional"]);
+    agregarChunkTexto_(chunks, "categoria", record["Categoria operativa"]);
+    agregarChunkTexto_(chunks, "especialidad_web", record["Especialidad web"]);
+    agregarChunkTexto_(chunks, "validacion", record["Estado validacion"]);
+  }
+
+  if (tabName === "profesionales") {
+    agregarChunkTexto_(chunks, "especialidad", record["Especialidad"]);
+    agregarChunkTexto_(chunks, "modalidad", record["Modalidad"]);
+  }
+
+  if (tabName === "examenes") {
+    agregarChunkTexto_(chunks, "categoria", record["Categoria"]);
+  }
+
+  if (tabName === "preguntas frecuentes") {
+    agregarChunkTexto_(chunks, "pregunta", record["Pregunta frecuente"]);
   }
 
   if (record["Valor"]) {
@@ -437,7 +512,11 @@ function validarFila_(sheet, tabName, rowNumber) {
 
   const principal = obtenerPrincipal_(record, tabName);
 
-  const interpretacion = chunks.length ? principal + ": " + chunks.join(" | ") : principal;
+  if (!chunks.length) {
+    notes.push("La fila tiene contenido, pero no encontré datos claros para resumir su significado.");
+  }
+
+  const interpretacion = chunks.length ? principal + ": " + chunks.join(" | ") : principal + ": sin interpretación clara todavía";
   const estado = notes.length ? "Revisar" : "OK";
   const feedback = notes.length ? notes.join(" | ") : "Interpretación clara.";
 
