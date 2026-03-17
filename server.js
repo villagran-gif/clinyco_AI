@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
 import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
+import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -1629,7 +1630,12 @@ function hasScheduleIntent(text) {
     "AGENDA",
     "DISPONIBILIDAD",
     "DISPONIBLE",
+    "HORITA",
     "CITA",
+    "CONTROL",
+    "CAMBIO HORA",
+    "CAMBIO DE HORA",
+    "REAGENDAR",
     "RESERVAR HORA",
     "TOMA DE HORA"
   ].some((phrase) => normalized.includes(phrase));
@@ -1645,6 +1651,8 @@ function hasExplicitScheduleIntent(text) {
     "DISPONIBILIDAD CON",
     "AGENDA CON",
     "RESERVAR HORA CON",
+    "CAMBIO DE HORA",
+    "CONTROL CON",
     "ONLINE",
     "TELEMEDICINA",
     "PRESENCIAL"
@@ -1906,6 +1914,10 @@ function buildStateSummary(state) {
 
   if (state.identity.caseType || state.identity.nextAction) {
     parts.push(`[RESOLVER] caseType=${state.identity.caseType || ""} nextAction=${state.identity.nextAction || ""}`);
+  }
+
+  if (state.identity.lastResolvedStage) {
+    parts.push(`[RESOLVER_ETAPA] ${state.identity.lastResolvedStage}`);
   }
 
   if (Array.isArray(state.identity.lastMissingFields) && state.identity.lastMissingFields.length) {
@@ -2273,7 +2285,14 @@ function shouldTriggerCaseE(state) {
 }
 
 function shouldAskForFonasaTramo(state, latestUserText) {
+  const key = normalizeKey(latestUserText || "");
   const parsed = parseAseguradora(latestUserText || "");
+  const needsTramoForThisFlow =
+    Boolean(state.dealDraft.dealInteres) ||
+    ["PAD", "BONO", "COPAGO", "COBERTURA", "TRAMO"].some((phrase) => key.includes(phrase));
+
+  if (!needsTramoForThisFlow) return false;
+  if (parseFonasaTramo(latestUserText || "")) return false;
   if (parsed?.negatedAseguradora === "FONASA") return false;
   if (parsed?.aseguradora && parsed.aseguradora !== "FONASA") return false;
   if (parsed?.isIsapreGeneric) return false;
@@ -2281,7 +2300,12 @@ function shouldAskForFonasaTramo(state, latestUserText) {
 }
 
 function shouldAskForSpecificAseguradora(state, latestUserText) {
+  const key = normalizeKey(latestUserText || "");
   const parsed = parseAseguradora(latestUserText || "");
+  const needsSpecificInsurance =
+    Boolean(state.dealDraft.dealInteres) ||
+    ["VALOR", "PRECIO", "COSTO", "COTIZ", "COBERTURA", "BONO", "ISAPRE"].some((phrase) => key.includes(phrase));
+  if (!needsSpecificInsurance) return false;
   return Boolean(parsed?.isIsapreGeneric) && !normalizeAseguradoraValue(state.contactDraft.c_aseguradora);
 }
 
@@ -2305,12 +2329,24 @@ function buildResolverQuestionKey(decision) {
   return [decision.caseType || "", decision.nextAction || "", missing, decision.question].join("|");
 }
 
-function shouldUseResolverQuestion(state, decision) {
+function shouldUseResolverQuestion(state, decision, latestUserText = "") {
   if (!decision?.question) return false;
   if (!decision.shouldDerive) {
     const hasMissingFields = Array.isArray(decision.missingFields) && decision.missingFields.length > 0;
-    const isStrongResolverTurn = decision.caseType === "A" || decision.nextAction === "ask_identity";
+    const canAskIdentity =
+      Array.isArray(decision.missingFields) &&
+      decision.missingFields.includes("identity_min") &&
+      Boolean(state?.identity?.saysExistingPatient);
+    const canAskMeasurements =
+      Array.isArray(decision.missingFields) &&
+      decision.missingFields.some((field) => ["dealPeso", "dealEstatura"].includes(field));
+    const isStrongResolverTurn =
+      decision.caseType === "A" ||
+      canAskIdentity ||
+      canAskMeasurements;
     if (!hasMissingFields && !isStrongResolverTurn) return false;
+    if (!isStrongResolverTurn && hasScheduleIntent(latestUserText)) return false;
+    if (!isStrongResolverTurn) return false;
   }
 
   const key = buildResolverQuestionKey(decision);
@@ -2335,6 +2371,9 @@ Objetivo:
 - hacer solo 1 pregunta a la vez
 - no sonar como robot
 - responder en español chileno neutral, profesional y cálido
+- escucha la intención real antes de preguntar datos
+- si la persona habla como humano normal, tú también debes responder como humano normal
+- evita preguntas duras tipo flujo si ya entendiste la necesidad
 
 Identidad:
 - idealmente en tu segundo mensaje debes presentarte como Antonia
@@ -2347,6 +2386,9 @@ Reglas operativas:
 - si ya sabemos interés/procedimiento, avanzar a la siguiente pregunta útil
 - si ya sabemos teléfono, no volver a pedirlo
 - si el usuario solo responde con una palabra, interpreta usando el contexto
+- si el usuario pide hora, agenda, control, cambio de hora, cita o escribe "horita", entiende que está hablando de agenda aunque no use palabras perfectas
+- si la persona pregunta por un doctor, una doctora, una especialidad o un control, no respondas con "¿Qué procedimiento o evaluación te interesa?" salvo que de verdad no haya contexto
+- no pidas RUT, correo o teléfono al inicio si todavía puedes orientar primero
 - si el usuario ya entregó peso y estatura confirmados, usa el IMC disponible en el historial
 - si el usuario pregunta por cirugía y aún no sabemos previsión, puedes preguntar si es Fonasa, Isapre o Particular
 - si el usuario es Fonasa y aún no sabemos el tramo, debes pedir Tramo A, B, C o D
@@ -2362,20 +2404,16 @@ Reglas operativas:
 - si preguntan por la agenda u hora de un profesional que no esté en la lista disponible, no inventes disponibilidad; indica que derivarás con una agente porque no tienes acceso a esa agenda en esta franja horaria y sugiere la agenda web ${MEDINET_AGENDA_WEB_URL}
 
 Datos importantes:
-- Clinyco tiene presencia en Antofagasta, Calama y Santiago
-- Endoscopía solo en Antofagasta
-- La agenda médica completa está disponible en Antofagasta
-- En Santiago por ahora solo hay telemedicina
-- En Calama las consultas presenciales con cirujanos se realizan en DiagnoSalud, Av. Granaderos #1483
-- Las cirugías en Santiago con el Dr. Rodrigo Villagran se realizan en Clínica Tabancura, RedSalud Vitacura
-- El balón gástrico, la manga gástrica y el bypass gástrico lo ofrecen Dr. Nelson Aros, Dr. Rodrigo Villagran y Dr. Alberto Sirabo
-- Las cirugías plásticas en Antofagasta las ofrecen Francisco Bencina, Edmundo Ziede y Rosirys Ruiz
 - si quiere avanzar, cotizar, agendar o resolver su caso y ya tenemos teléfono, no vuelvas a pedirlo
 - si ya tenemos teléfono, previsión, interés y los datos clínicos mínimos, prioriza una derivación clara con una agente en vez de seguir explorando
 - no ofrezcas llamada telefónica por defecto si la persona no la pidió
 - no ofrezcas horarios específicos si no tienes acceso real a agenda
 - si la persona quiere avanzar y ya tenemos los datos principales, indica que dejarás su solicitud lista para coordinación con una agente y, como alternativa, comparte la agenda web
 - si ya entregó teléfono y ya tenemos lo esencial, cierra cordialmente o deriva de forma clara
+- si un profesional aparece como inactivo en la base de conocimiento, dilo con honestidad, explica el motivo si está disponible y usa el mensaje sugerido para cliente
+- si la persona ya dijo lo que necesita y tú puedes orientar, responde primero y pregunta después solo si hace falta
+
+${buildKnowledgePromptContext()}
 `.trim();
 }
 
@@ -2873,7 +2911,7 @@ app.post("/messages", async (req, res) => {
       }));
     }
 
-    if (shouldUseResolverQuestion(state, resolverDecision)) {
+    if (shouldUseResolverQuestion(state, resolverDecision, userText)) {
       return res.json(await sendManagedReply({
         appId,
         conversationId,

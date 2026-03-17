@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "source": "repo_seed",
+  "sheet_tab": "procedures",
+  "descripcion": "Procedimientos y reglas de orientacion segura.",
+  "mensaje_para_equipo": "Una fila por procedimiento o evaluacion. No poner diagnosticos ni promesas medicas.",
+  "columns": [
+    { "header": "Activo", "key": "activo", "type": "boolean" },
+    { "header": "Procedimiento", "key": "procedimiento", "type": "string" },
+    { "header": "Categoria", "key": "categoria", "type": "string" },
+    { "header": "Requiere peso y estatura", "key": "requiere_peso_estatura", "type": "boolean" },
+    { "header": "Se puede orientar sin RUT", "key": "se_puede_orientar_sin_rut", "type": "boolean" },
+    { "header": "Profesionales sugeridos", "key": "profesionales_sugeridos", "type": "list" },
+    { "header": "Sedes sugeridas", "key": "sedes_sugeridas", "type": "list" },
+    { "header": "Observaciones", "key": "observaciones", "type": "string" },
+    { "header": "Notas para el bot", "key": "notas_para_bot", "type": "string" }
+  ],
+  "records": [
+    {
+      "activo": true,
+      "procedimiento": "Balon gastrico",
+      "categoria": "Bariatrica",
+      "requiere_peso_estatura": true,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
+      "sedes_sugeridas": ["Antofagasta", "Santiago"],
+      "observaciones": "Pedir peso y estatura para orientacion inicial.",
+      "notas_para_bot": "Aclarar que el IMC es solo una referencia inicial."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Manga gastrica",
+      "categoria": "Bariatrica",
+      "requiere_peso_estatura": true,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
+      "sedes_sugeridas": ["Antofagasta", "Santiago"],
+      "observaciones": "Pedir cobertura y medidas antes de derivar.",
+      "notas_para_bot": "No diagnosticar."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Bypass gastrico",
+      "categoria": "Bariatrica",
+      "requiere_peso_estatura": true,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
+      "sedes_sugeridas": ["Antofagasta", "Santiago"],
+      "observaciones": "Pedir cobertura y medidas antes de derivar.",
+      "notas_para_bot": "No diagnosticar."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Cirugia plastica",
+      "categoria": "Plastica",
+      "requiere_peso_estatura": false,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Francisco Bencina", "Edmundo Ziede", "Rosirys Ruiz"],
+      "sedes_sugeridas": ["Antofagasta"],
+      "observaciones": "Primero entender interes y cobertura.",
+      "notas_para_bot": "No inventar precios."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Cirugia general",
+      "categoria": "General",
+      "requiere_peso_estatura": false,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": [],
+      "sedes_sugeridas": ["Antofagasta", "Calama", "Santiago"],
+      "observaciones": "Si el usuario menciona hernia o vesicula, orientar sin diagnosticar.",
+      "notas_para_bot": "No inventar agenda."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Endoscopia",
+      "categoria": "General",
+      "requiere_peso_estatura": false,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": [],
+      "sedes_sugeridas": ["Antofagasta"],
+      "observaciones": "Disponible solo en Antofagasta.",
+      "notas_para_bot": "Si preguntan por otra ciudad, explicarlo con claridad."
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "source": "repo_seed",
+  "sheet_tab": "faq_medical_safe",
+  "descripcion": "Respuestas seguras y aprobadas para preguntas frecuentes.",
+  "mensaje_para_equipo": "Una fila por pregunta frecuente. No incluir diagnosticos ni promesas no confirmadas.",
+  "columns": [
+    { "header": "Activo", "key": "activo", "type": "boolean" },
+    { "header": "Pregunta frecuente", "key": "pregunta_frecuente", "type": "string" },
+    { "header": "Respuesta aprobada", "key": "respuesta_aprobada", "type": "string" },
+    { "header": "Cuando derivar a persona", "key": "cuando_derivar", "type": "string" },
+    { "header": "No prometer", "key": "no_prometer", "type": "string" },
+    { "header": "Notas para el bot", "key": "notas_para_bot", "type": "string" }
+  ],
+  "records": [
+    {
+      "activo": true,
+      "pregunta_frecuente": "Como funciona PAD Fonasa",
+      "respuesta_aprobada": "Primero se puede orientar segun tramo y procedimiento. Luego se pide solo el dato minimo util para avanzar.",
+      "cuando_derivar": "Si el caso requiere confirmacion especifica o evaluacion personalizada.",
+      "no_prometer": "No prometer que aplica sin revisar la prestacion.",
+      "notas_para_bot": "Responder primero y pedir un dato a la vez."
+    },
+    {
+      "activo": true,
+      "pregunta_frecuente": "Tienen horas para un doctor",
+      "respuesta_aprobada": "Si no hay acceso real a agenda, decirlo con honestidad y ofrecer derivacion o agenda web.",
+      "cuando_derivar": "Cuando piden hora exacta o agenda puntual.",
+      "no_prometer": "No prometer horarios ni cupos.",
+      "notas_para_bot": "No inventar disponibilidad."
+    },
+    {
+      "activo": true,
+      "pregunta_frecuente": "Atienden en Santiago",
+      "respuesta_aprobada": "En Santiago por ahora se puede orientar por telemedicina y algunas cirugias se realizan alla segun el caso.",
+      "cuando_derivar": "Si necesita coordinacion exacta o caso clinico especifico.",
+      "no_prometer": "No prometer consulta presencial general en Santiago si no esta confirmada.",
+      "notas_para_bot": "Ser claro y simple."
+    },
+    {
+      "activo": true,
+      "pregunta_frecuente": "Me pueden dar un valor o cotizacion",
+      "respuesta_aprobada": "Primero conviene entender el procedimiento, la cobertura y algunos datos basicos para orientar mejor la cotizacion.",
+      "cuando_derivar": "Si el usuario quiere avanzar con su caso.",
+      "no_prometer": "No inventar precios.",
+      "notas_para_bot": "Pedir solo el siguiente dato util."
+    }
+  ]
+}

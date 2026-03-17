@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "source": "repo_seed",
+  "sheet_tab": "doctors",
+  "descripcion": "Profesionales y lo que si se puede orientar sin revisar agenda en vivo.",
+  "mensaje_para_equipo": "Una fila por profesional. No poner horarios exactos aqui si cambian seguido.",
+  "columns": [
+    { "header": "Activo", "key": "activo", "type": "boolean" },
+    { "header": "Profesional", "key": "profesional", "type": "string" },
+    { "header": "Especialidad", "key": "especialidad", "type": "string" },
+    { "header": "Sedes", "key": "sedes", "type": "list" },
+    { "header": "Modalidad", "key": "modalidad", "type": "string" },
+    { "header": "Procedimientos", "key": "procedimientos", "type": "list" },
+    { "header": "Agenda directa disponible", "key": "agenda_directa_disponible", "type": "boolean" },
+    { "header": "Observaciones", "key": "observaciones", "type": "string" },
+    { "header": "Notas para el bot", "key": "notas_para_bot", "type": "string" }
+  ],
+  "records": [
+    {
+      "activo": true,
+      "profesional": "Nelson Aros",
+      "especialidad": "Cirugia bariatrica",
+      "sedes": ["Antofagasta", "Santiago"],
+      "modalidad": "Evaluacion y cirugia",
+      "procedimientos": ["Balon gastrico", "Manga gastrica", "Bypass gastrico"],
+      "agenda_directa_disponible": false,
+      "observaciones": "No prometer horario exacto si no hay acceso real a agenda.",
+      "notas_para_bot": "Si el usuario quiere avanzar, derivar con una agente."
+    },
+    {
+      "activo": true,
+      "profesional": "Rodrigo Villagran",
+      "especialidad": "Cirugia bariatrica",
+      "sedes": ["Santiago", "Telemedicina"],
+      "modalidad": "Telemedicina y cirugia",
+      "procedimientos": ["Balon gastrico", "Manga gastrica", "Bypass gastrico"],
+      "agenda_directa_disponible": false,
+      "observaciones": "Las cirugias en Santiago se realizan en Clinica Tabancura, RedSalud Vitacura.",
+      "notas_para_bot": "No prometer cupos ni horarios exactos."
+    },
+    {
+      "activo": true,
+      "profesional": "Alberto Sirabo",
+      "especialidad": "Cirugia bariatrica",
+      "sedes": ["Antofagasta", "Santiago"],
+      "modalidad": "Evaluacion y cirugia",
+      "procedimientos": ["Balon gastrico", "Manga gastrica", "Bypass gastrico"],
+      "agenda_directa_disponible": false,
+      "observaciones": null,
+      "notas_para_bot": "Orientar y luego derivar."
+    },
+    {
+      "activo": true,
+      "profesional": "Francisco Bencina",
+      "especialidad": "Cirugia plastica",
+      "sedes": ["Antofagasta"],
+      "modalidad": "Presencial",
+      "procedimientos": ["Cirugia plastica"],
+      "agenda_directa_disponible": false,
+      "observaciones": "Cirugias plasticas en Antofagasta.",
+      "notas_para_bot": "Si preguntan por horarios, derivar o compartir agenda web."
+    },
+    {
+      "activo": true,
+      "profesional": "Edmundo Ziede",
+      "especialidad": "Cirugia plastica",
+      "sedes": ["Antofagasta"],
+      "modalidad": "Presencial",
+      "procedimientos": ["Cirugia plastica"],
+      "agenda_directa_disponible": false,
+      "observaciones": null,
+      "notas_para_bot": "No inventar disponibilidad."
+    },
+    {
+      "activo": true,
+      "profesional": "Rosirys Ruiz",
+      "especialidad": "Cirugia plastica",
+      "sedes": ["Antofagasta"],
+      "modalidad": "Presencial",
+      "procedimientos": ["Cirugia plastica"],
+      "agenda_directa_disponible": false,
+      "observaciones": null,
+      "notas_para_bot": "No inventar disponibilidad."
+    }
+  ]
+}

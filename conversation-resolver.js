@@ -206,7 +206,25 @@ function hasPositiveAdvanceIntent(text) {
 
 function hasScheduleIntent(text) {
   const key = normalizeKey(text);
-  return ["HORA", "HORAS", "HORARIO", "HORARIOS", "DISPONIBILIDAD", "AGENDA", "AGENDAR", "RESERVAR", "CITA"].some((phrase) => key.includes(phrase));
+  return [
+    "HORA",
+    "HORAS",
+    "HORARIO",
+    "HORARIOS",
+    "HORITA",
+    "DISPONIBILIDAD",
+    "AGENDA",
+    "AGENDAR",
+    "RESERVAR",
+    "CITA",
+    "CONTROL",
+    "PREOPERATORIO",
+    "PRE OPERATORIO",
+    "CAMBIO HORA",
+    "CAMBIO DE HORA",
+    "REAGENDAR",
+    "REAGEND"
+  ].some((phrase) => key.includes(phrase));
 }
 
 function detectStage({ state, resolved, latestUserText }) {
@@ -215,6 +233,7 @@ function detectStage({ state, resolved, latestUserText }) {
   const hasMinimum = hasMinimumClinicalData(knownData) && hasCommercialContactData(knownData);
 
   if (resolved.caseType === "E") return "clinical_record_only";
+  if (hasScheduleIntent(latestUserText) && !hasMinimum) return "schedule_request";
   if (hasMinimum && hasScheduleIntent(latestUserText)) return "agenda_without_direct_access";
   if (hasMinimum && hasPositiveAdvanceIntent(latestUserText)) return "ready_for_handoff";
   if (hasMinimum && key === "NO") return "handoff_without_call";
@@ -355,6 +374,19 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
     };
   }
 
+  if (resolved.stage === "schedule_request") {
+    return {
+      question: "Entiendo que quieres revisar una hora, control o cambio de agenda. Cuéntame con qué profesional, especialidad o sede te gustaría atenderte para orientarte mejor.",
+      reason: "La persona pidió agenda, control o cambio de hora antes de completar todos los datos.",
+      missingFields,
+      shouldDerive: false,
+      forceQuestion: false,
+      caseType: resolved.caseType,
+      nextAction: resolved.nextAction,
+      resolved
+    };
+  }
+
   if (resolved.caseType === "A" && missingFields.length === 0) {
     return {
       question: "Perfecto, ya tengo tu contexto y no quiero hacerte repetir datos. Cuéntame qué necesitas resolver hoy para seguir ayudándote.",
@@ -384,7 +416,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
   const field = missingFields[0] || null;
   const questionMap = {
     identity_min: {
-      question: "Para ayudarte mejor, ¿me compartes tu RUT o tu correo o tu número de teléfono?",
+      question: "Si quieres que deje tu solicitud lista para seguimiento, ¿me compartes tu teléfono o correo? Si ya eres paciente, también puede ser tu RUT.",
       reason: "Falta identidad mínima para buscar y continuar con contexto."
     },
     dealInteres: {
@@ -431,5 +463,6 @@ export function applyResolverToState(state, resolverDecision) {
   state.identity.nextAction = resolverDecision?.nextAction || null;
   state.identity.lastQuestionReason = resolverDecision?.reason || null;
   state.identity.lastMissingFields = resolverDecision?.missingFields || [];
+  state.identity.lastResolvedStage = resolverDecision?.resolved?.stage || null;
   state.identity.lastResolvedContext = resolverDecision?.resolved || null;
 }
