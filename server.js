@@ -575,6 +575,22 @@ function shouldSuppressOutboundReply(state, reply, reason) {
   return !reason || !lastReason || reason === lastReason;
 }
 
+function isRecentOutboundEcho(state, userText) {
+  const fingerprint = fingerprintReplyText(userText);
+  const lastFingerprint = state?.system?.lastOutboundFingerprint || null;
+  const lastAt = state?.system?.lastOutboundAt ? Date.parse(state.system.lastOutboundAt) : NaN;
+
+  if (!fingerprint || !lastFingerprint || fingerprint !== lastFingerprint) {
+    return false;
+  }
+
+  if (!Number.isFinite(lastAt)) {
+    return false;
+  }
+
+  return Date.now() - lastAt <= OUTBOUND_DEDUPE_WINDOW_MS;
+}
+
 function markMaxMessagesReached(state) {
   state.system.aiEnabled = false;
   state.system.handoffReason = "max_bot_messages_reached";
@@ -2649,6 +2665,20 @@ app.post("/messages", async (req, res) => {
 
     if (!appId || !userText) {
       return res.json({ ok: true, skipped: "payload_not_parsed_yet" });
+    }
+
+    if (isRecentOutboundEcho(state, userText)) {
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: buildBlockedDecision(state, "recent_outbound_echo")
+      });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json({ ok: true, skipped: "recent_outbound_echo" });
     }
 
     await persistConversationSnapshot(conversationId, state, channelLabel);
