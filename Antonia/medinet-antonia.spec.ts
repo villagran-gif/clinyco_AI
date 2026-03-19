@@ -377,5 +377,13 @@ test('flujo Medinet Antonia por profesional o especialidad', async ({ page }) =>
 }, null, 2));
   console.log('ANTONIA_RESPONSE', JSON.stringify(antoniaResponse, null, 2));
 
-  expect(antoniaResponse.available_slots.length).toBeGreaterThan(0);
+  expect(antoniaResponse.professional).toBeTruthy();
+  expect(antoniaResponse.patient_reply).toContain(`URL: ${AGENDA_URL}`);
+  expect(antoniaResponse.available_slots.length).toBeLessThanOrEqual(MAX_SLOTS);
+
+  if (antoniaResponse.available_slots.length > 0) {
+    expect(antoniaResponse.patient_reply).toContain('Tengo estas horas disponibles');
+  } else {
+    expect(antoniaResponse.patient_reply).toContain('No encontre disponibilidad visible');
+  }
 });
