@@ -54,6 +54,11 @@ const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 10;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
+const TEST_BYPASS_ENABLED = String(process.env.TEST_BYPASS_ENABLED || "false").toLowerCase() === "true";
+const TEST_BYPASS_IDENTIFIERS = String(process.env.TEST_BYPASS_IDENTIFIERS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 const MEDINET_ANTONIA_SCRIPT = process.env.MEDINET_ANTONIA_SCRIPT || new URL("./Antonia/medinet-antonia.cjs", import.meta.url).pathname;
@@ -678,6 +683,62 @@ function normalizePhone(raw) {
     return value.startsWith("+") ? value : `+${digits}`;
   }
   return null;
+}
+
+function normalizeBypassIdentifier(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  if (text.includes("@")) {
+    return text.replace(/^@+/, "").toUpperCase();
+  }
+
+  const phone = normalizePhone(text);
+  if (phone) {
+    return phone.replace(/\D/g, "");
+  }
+
+  return normalizeKey(text).replace(/\s+/g, "");
+}
+
+function getConfiguredBypassIdentifiers() {
+  return TEST_BYPASS_IDENTIFIERS
+    .map((value) => normalizeBypassIdentifier(value))
+    .filter(Boolean);
+}
+
+function getTestBypassCandidates(info, state) {
+  return [
+    info?.channelExternalId,
+    info?.channelDisplayName,
+    info?.sourceProfileName,
+    info?.authorDisplayName,
+    state?.system?.lastChannelExternalId,
+    state?.system?.lastChannelDisplayName,
+    state?.system?.lastSourceProfileName,
+    state?.contactDraft?.c_tel1,
+    state?.contactDraft?.c_tel2,
+    state?.contactDraft?.c_nombres,
+    state?.contactDraft?.c_apellidos
+  ]
+    .map((value) => normalizeBypassIdentifier(value))
+    .filter(Boolean);
+}
+
+function isTestBypassActive(info, state) {
+  if (!TEST_BYPASS_ENABLED) return false;
+  const configured = getConfiguredBypassIdentifiers();
+  if (!configured.length) return false;
+
+  const candidates = getTestBypassCandidates(info, state);
+  return candidates.some((candidate) => configured.includes(candidate));
+}
+
+function rememberChannelIdentity(state, info) {
+  if (!state?.system || !info) return;
+  state.system.lastChannelExternalId = info.channelExternalId || state.system.lastChannelExternalId || null;
+  state.system.lastChannelDisplayName = info.channelDisplayName || state.system.lastChannelDisplayName || null;
+  state.system.lastSourceProfileName = info.sourceProfileName || state.system.lastSourceProfileName || null;
 }
 
 function extractEmail(text) {
@@ -1399,7 +1460,11 @@ function buildInitialConversationState() {
       assigneeId: null,
       botMessagesSent: 0,
       introducedAsAntonia: false,
+      introducedAsAntoniaJ: false,
       handoffReason: null,
+      lastChannelExternalId: null,
+      lastChannelDisplayName: null,
+      lastSourceProfileName: null,
       lastQuestionKey: null,
       lastInboundMessageId: null,
       lastOutboundFingerprint: null,
@@ -1573,7 +1638,7 @@ async function sendManagedReply({
     return resJsonSkip("stale_message_after_delay");
   }
 
-  const finalReply = appendAntoniaIntroduction(latestState, reply);
+  const finalReply = appendAntoniaIntroduction(latestState, reply, kind);
   if (!allowDuplicateText && shouldSuppressOutboundReply(latestState, finalReply, kind)) {
     await saveConversationEvent({
       conversationId,
@@ -2368,7 +2433,12 @@ function isMeasurementQuestionNeeded(state) {
   return isWeightHeightRelevant && (!state.measurements.weightKg || !state.measurements.heightM);
 }
 
-function appendAntoniaIntroduction(state, reply) {
+function appendAntoniaIntroduction(state, reply, kind = null) {
+  if (kind === "antonia_medinet_reply" && !state.system.introducedAsAntoniaJ) {
+    state.system.introducedAsAntoniaJ = true;
+    return `Hola, hablas con Antonia J. 😊\n\n${reply}`;
+  }
+
   if (state.system.botMessagesSent === 1 && !state.system.introducedAsAntonia) {
     state.system.introducedAsAntonia = true;
     return `Hola, hablas con Antonia 😊\n\n${reply}`;
@@ -2590,12 +2660,16 @@ app.post("/ticket-assigned", async (req, res) => {
 
     await hydrateConversationCache(conversation_id);
     const state = getConversationState(conversation_id);
-    state.system.aiEnabled = false;
-    state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
-    state.system.handoffReason = "ticket_assigned";
+    const bypassActive = isTestBypassActive(null, state);
 
-    console.log("AI disabled for conversation:", conversation_id);
+    if (!bypassActive) {
+      state.system.aiEnabled = false;
+      state.system.humanTakenOver = true;
+      state.system.handoffReason = "ticket_assigned";
+    }
+
+    console.log(bypassActive ? "TEST BYPASS ignored ticket-assigned for:" : "AI disabled for conversation:", conversation_id);
     console.log("Conversation state:", safeJson(state));
 
     await saveConversationEvent({
@@ -2612,9 +2686,9 @@ app.post("/ticket-assigned", async (req, res) => {
       botReply: null,
       state,
       resolverDecision: {
-        nextAction: "blocked",
+        nextAction: bypassActive ? "continue" : "blocked",
         caseType: state?.identity?.caseType || null,
-        reason: "ticket_assigned",
+        reason: bypassActive ? "test_bypass_ticket_assigned" : "ticket_assigned",
         missingFields: state?.identity?.lastMissingFields || []
       }
     });
@@ -2623,7 +2697,7 @@ app.post("/ticket-assigned", async (req, res) => {
 
     return res.json({
       ok: true,
-      event: event || "human_takeover",
+      event: bypassActive ? "test_bypass_ticket_assigned" : (event || "human_takeover"),
       conversation_id,
       aiEnabled: state.system.aiEnabled
     });
@@ -2669,12 +2743,21 @@ app.post("/messages", async (req, res) => {
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
     const channelLabel = info.sourceType || info.entryPoint || null;
+    rememberChannelIdentity(state, info);
+    const bypassActive = isTestBypassActive(info, state);
 
     if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
-      state.system.aiEnabled = false;
-      state.system.humanTakenOver = true;
-      state.system.handoffReason = "human_business_message_detected";
-      console.log("AI disabled due to human business message:", conversationId);
+      if (!bypassActive) {
+        state.system.aiEnabled = false;
+        state.system.humanTakenOver = true;
+        state.system.handoffReason = "human_business_message_detected";
+      }
+      console.log(
+        bypassActive
+          ? "TEST BYPASS ignored human business message:"
+          : "AI disabled due to human business message:",
+        conversationId
+      );
       console.log("Business sourceType:", sourceType);
 
       await saveConversationEvent({
@@ -2685,15 +2768,17 @@ app.post("/messages", async (req, res) => {
         botReply: null,
         state,
         resolverDecision: {
-          nextAction: "blocked",
+          nextAction: bypassActive ? "continue" : "blocked",
           caseType: state?.identity?.caseType || null,
-          reason: "human_business_message_detected",
+          reason: bypassActive ? "test_bypass_human_business_message_detected" : "human_business_message_detected",
           missingFields: state?.identity?.lastMissingFields || []
         }
       });
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
-      return res.json({ ok: true, skipped: "human_business_message_detected" });
+      if (!bypassActive) {
+        return res.json({ ok: true, skipped: "human_business_message_detected" });
+      }
     }
 
     if (authorType !== "user") {
@@ -2711,33 +2796,78 @@ app.post("/messages", async (req, res) => {
     }
 
     if (!state.system.aiEnabled) {
-      console.log("AI blocked: disabled for", conversationId);
-      await saveConversationEvent({
-        conversationId,
-        info,
-        channelLabel,
-        userText,
-        botReply: null,
-        state,
-        resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
-      });
-      await persistConversationSnapshot(conversationId, state, channelLabel);
-      return res.json({ ok: true, skipped: "ai_disabled" });
+      if (bypassActive) {
+        state.system.aiEnabled = true;
+        state.system.humanTakenOver = false;
+        state.system.handoffReason = null;
+        console.log("TEST BYPASS re-enabled AI for", conversationId);
+        await saveConversationEvent({
+          conversationId,
+          info,
+          channelLabel,
+          userText,
+          botReply: null,
+          state,
+          resolverDecision: {
+            nextAction: "continue",
+            caseType: state?.identity?.caseType || null,
+            reason: "test_bypass_active",
+            missingFields: state?.identity?.lastMissingFields || []
+          }
+        });
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+      } else {
+        console.log("AI blocked: disabled for", conversationId);
+        await saveConversationEvent({
+          conversationId,
+          info,
+          channelLabel,
+          userText,
+          botReply: null,
+          state,
+          resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
+        });
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json({ ok: true, skipped: "ai_disabled" });
+      }
     }
 
     if (state.system.botMessagesSent >= MAX_BOT_MESSAGES) {
-      markMaxMessagesReached(state);
-      await saveConversationEvent({
-        conversationId,
-        info,
-        channelLabel,
-        userText,
-        botReply: null,
-        state,
-        resolverDecision: buildBlockedDecision(state, "max_bot_messages_reached")
-      });
-      await persistConversationSnapshot(conversationId, state, channelLabel);
-      return res.json({ ok: true, skipped: "max_bot_messages_reached" });
+      if (bypassActive) {
+        state.system.botMessagesSent = 0;
+        state.system.aiEnabled = true;
+        state.system.humanTakenOver = false;
+        state.system.handoffReason = null;
+        console.log("TEST BYPASS ignored max bot messages for", conversationId);
+        await saveConversationEvent({
+          conversationId,
+          info,
+          channelLabel,
+          userText,
+          botReply: null,
+          state,
+          resolverDecision: {
+            nextAction: "continue",
+            caseType: state?.identity?.caseType || null,
+            reason: "test_bypass_max_bot_messages",
+            missingFields: state?.identity?.lastMissingFields || []
+          }
+        });
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+      } else {
+        markMaxMessagesReached(state);
+        await saveConversationEvent({
+          conversationId,
+          info,
+          channelLabel,
+          userText,
+          botReply: null,
+          state,
+          resolverDecision: buildBlockedDecision(state, "max_bot_messages_reached")
+        });
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json({ ok: true, skipped: "max_bot_messages_reached" });
+      }
     }
 
     const inboundClaimed = await claimInboundUserMessage({

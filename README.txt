@@ -16,6 +16,8 @@ Required env vars:
 - DATABASE_URL=postgresql://...
 - DATABASE_SSL=false   (use true only if your database connection requires SSL)
 - ENABLE_SUPPORT_SEARCH=true   (if you want Support search enabled)
+- TEST_BYPASS_ENABLED=false
+- TEST_BYPASS_IDENTIFIERS=+56987297033,@paporafafeli
 
 Important:
 - Install dependency: npm install pg
@@ -32,8 +34,14 @@ Suggested rollout:
 Quick checks:
 - node --check server.js
 - node --check db.js
+- TEST_BYPASS_ENABLED=true TEST_BYPASS_IDENTIFIERS="+56987297033,@paporafafeli" npm run print:test-bypass
+- TEST_BYPASS_ENABLED=true TEST_BYPASS_IDENTIFIERS="+56987297033,@paporafafeli" npm start
 
 What is persisted:
 - conversations: full state_json + takeover flags + counters
 - conversation_messages: inbound/outbound messages
 - structured_leads: normalized lead data for CRM/stats
+
+Test bypass:
+- If TEST_BYPASS_ENABLED=true and the incoming identity matches TEST_BYPASS_IDENTIFIERS, the app ignores takeover-style blocking for those test identities.
+- This is intended for real testing only and can be disabled again by setting TEST_BYPASS_ENABLED=false in Render.

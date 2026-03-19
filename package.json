@@ -14,6 +14,7 @@
     "analyze:support-behavior": "node scripts/analyze-support-behavior.js",
     "build:meta-leads": "node scripts/build-meta-leads-canonical.js",
     "build:meta-attribution": "node scripts/build-meta-attribution.js",
+    "print:test-bypass": "node scripts/print-test-bypass-config.js",
     "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
     "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv"
   },
