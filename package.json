@@ -14,10 +14,12 @@
   "dependencies": {
     "@playwright/test": "^1.58.2",
     "braintrust": "0.3.7",
+    "csv-parse": "^6.2.0",
     "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "openai": "^5.12.2",
+    "playwright": "^1.58.2",
     "pg": "^8.20.0",
-    "playwright": "^1.58.2"
+    "xlsx": "^0.18.5"
   }
 }
