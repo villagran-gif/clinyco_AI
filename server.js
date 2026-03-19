@@ -94,22 +94,27 @@ function extractMedinetQuery(text = "") {
     .replace(/\s+/g, " ")
     .trim();
 
-  const patterns = [
-    /(?:con|hora con|agendar con|quiero una hora con|quiero hora con|quiero agendar con)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i,
-    /(?:especialidad|nutricion|nutriologia|cirugia|psicologia|psiquiatria|endocrinologia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    if (match?.[1]) return match[1].trim();
+  const directProfessionalMatch = normalized.match(
+    /(?:con|hora con|agendar con|quiero una hora con|quiero hora con|quiero agendar con)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,2})/i
+  );
+  if (directProfessionalMatch?.[1]) {
+    return directProfessionalMatch[1].trim();
   }
 
-  const cleaned = normalized
-    .replace(/\b(hola|buenas|quiero|necesito|me gustaria|me gustaría|agendar|agenda|hora|horas|cita|control|con|para|una|un|por favor)\b/gi, " ")
+  let cleaned = normalized
+    .replace(/\b(quiero|necesito|busco|tienen|tiene|agendar|agenda|hora|horas|cita|control|reservar|reagendar|con|para|por|una|un|presencial|telemedicina|doctor|doctora|dr|dra|por favor)\b/gi, " ")
+    .replace(/\b(cirugia bariatrica|cirugía bariátrica|manga gastrica|manga gástrica|bypass gastrico|bypass gástrico)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  return cleaned.split(" ").slice(0, 4).join(" ").trim();
+  const specialtyMatch = cleaned.match(
+    /(?:gastroenterologia|gastroenterología|nutricion|nutrición|nutriologia|nutriología|cirugia general|cirugía general|psicologia|psicología|psiquiatria|psiquiatría|endocrinologia|endocrinología)/i
+  );
+  if (specialtyMatch?.[0]) {
+    return specialtyMatch[0].trim();
+  }
+
+  return cleaned.split(" ").filter(Boolean).slice(0, 3).join(" ").trim();
 }
 
 async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
