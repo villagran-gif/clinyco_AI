@@ -56,7 +56,7 @@ const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
-const MEDINET_ANTONIA_SCRIPT = process.env.MEDINET_ANTONIA_SCRIPT || "/workspaces/clinyco_AI/Antonia/medinet-antonia.js";
+const MEDINET_ANTONIA_SCRIPT = process.env.MEDINET_ANTONIA_SCRIPT || new URL("./Antonia/medinet-antonia.js", import.meta.url).pathname;
 const execFileAsync = promisify(execFile);
 
 function extractMedinetQuery(text = "") {
@@ -84,6 +84,7 @@ function extractMedinetQuery(text = "") {
 }
 
 async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
 
@@ -96,6 +97,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
       MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
       MEDINET_HEADED: "false"
     },
+    timeout: timeoutMs,
     maxBuffer: 10 * 1024 * 1024
   });
 
@@ -2976,7 +2978,7 @@ app.post("/messages", async (req, res) => {
         const medinetQuery = extractMedinetQuery(userText);
         const antoniaResponse = await runMedinetAntonia({
           query: medinetQuery,
-          patientPhone: info?.authorDisplayName || "",
+          patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
           patientMessage: userText
         });
 
