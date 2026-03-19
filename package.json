@@ -8,14 +8,24 @@
     "monitor:ai": "bash scripts/run-ai-observability.sh",
     "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js",
     "preview:knowledge": "node scripts/preview-knowledge-row.js",
+    "build:surgery-canonical": "node scripts/build-surgery-canonical.js",
+    "analyze:surgery-canonical": "node scripts/analyze-surgery-canonical.js",
+    "build:support-behavior": "node scripts/build-support-behavior-dataset.js",
+    "analyze:support-behavior": "node scripts/analyze-support-behavior.js",
+    "build:meta-leads": "node scripts/build-meta-leads-canonical.js",
+    "build:meta-attribution": "node scripts/build-meta-attribution.js",
     "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
     "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv"
   },
   "dependencies": {
+    "@playwright/test": "^1.58.2",
     "braintrust": "0.3.7",
+    "csv-parse": "^6.2.0",
     "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "openai": "^5.12.2",
-    "pg": "^8.20.0"
+    "playwright": "^1.58.2",
+    "pg": "^8.20.0",
+    "xlsx": "^0.18.5"
   }
 }

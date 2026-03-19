@@ -1,5 +1,7 @@
 import express from "express";
 import OpenAI from "openai";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
@@ -53,6 +55,9 @@ const MAX_BOT_MESSAGES = 10;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
+const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
+const MEDINET_ANTONIA_SCRIPT = process.env.MEDINET_ANTONIA_SCRIPT || new URL("./Antonia/medinet-antonia.cjs", import.meta.url).pathname;
+const execFileAsync = promisify(execFile);
 
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
 const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
@@ -82,6 +87,54 @@ const baseOpenAI = OPENAI_API_KEY
 const openai = baseOpenAI && BRAINTRUST_API_KEY
   ? wrapOpenAI(baseOpenAI)
   : baseOpenAI;
+
+function extractMedinetQuery(text = "") {
+  const normalized = String(text || "")
+    .replace(/[¿?.,!;:()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /(?:con|hora con|agendar con|quiero una hora con|quiero hora con|quiero agendar con)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i,
+    /(?:especialidad|nutricion|nutriologia|cirugia|psicologia|psiquiatria|endocrinologia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  const cleaned = normalized
+    .replace(/\b(hola|buenas|quiero|necesito|me gustaria|me gustaría|agendar|agenda|hora|horas|cita|control|con|para|una|un|por favor)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned.split(" ").slice(0, 4).join(" ").trim();
+}
+
+async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
+  const safeQuery = String(query || "").trim();
+  if (!safeQuery) return null;
+
+  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
+    env: {
+      ...process.env,
+      MEDINET_RUT,
+      MEDINET_QUERY: safeQuery,
+      MEDINET_PATIENT_PHONE: String(patientPhone || ""),
+      MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
+      MEDINET_HEADED: "false"
+    },
+    timeout: timeoutMs,
+    maxBuffer: 10 * 1024 * 1024
+  });
+
+  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
+  if (!match) return null;
+
+  return JSON.parse(match[1]);
+}
 
 
 const ASEGURADORA_OPTIONS = [
@@ -2889,6 +2942,39 @@ app.post("/messages", async (req, res) => {
         /clinical_record_only|ficha clinica|ficha clínica/i.test(String(resolverDecision.reason || "")) ||
         unknownScheduleRequest.shouldDerive
       );
+
+    if (resolverContext.stage === "agenda_without_direct_access") {
+      try {
+        const medinetQuery = extractMedinetQuery(userText);
+        const antoniaResponse = await runMedinetAntonia({
+          query: medinetQuery,
+          patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
+          patientMessage: userText
+        });
+
+        if (antoniaResponse?.patient_reply) {
+          return res.json(await sendManagedReply({
+            appId,
+            conversationId,
+            messageId,
+            userText,
+            reply: antoniaResponse.patient_reply,
+            kind: "antonia_medinet_reply",
+            state,
+            info,
+            channelLabel,
+            resolverDecision: {
+              ...resolverDecision,
+              nextAction: "antonia_medinet_reply",
+              reason: "Agenda resuelta por Antonia Medinet",
+              antoniaResponse
+            }
+          }));
+        }
+      } catch (error) {
+        console.error("ANTONIA MEDINET ERROR:", error.message);
+      }
+    }
 
     if (resolverDecision.shouldDerive && !hardDerive) {
       resolverDecision.shouldDerive = false;
