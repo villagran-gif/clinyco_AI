@@ -2864,6 +2864,59 @@ app.post("/messages", async (req, res) => {
       }));
     }
 
+    // Fast-path Antonia: si la persona pide hora/control/agendar y logramos extraer un profesional/especialidad,
+    // intentamos consultar agenda web antes de exigir identidad/aseguradora.
+    const medinetQueryEarly = extractMedinetQuery(userText);
+    const normalizedUserText = normalizeKey(userText);
+    const wantsScheduleEarly = [
+      "HORA",
+      "HORAS",
+      "HORARIO",
+      "HORARIOS",
+      "DISPONIBILIDAD",
+      "AGENDA",
+      "AGENDAR",
+      "RESERVAR",
+      "CITA",
+      "CONTROL",
+      "REAGENDAR",
+      "CAMBIO HORA",
+      "CAMBIO DE HORA"
+    ].some((phrase) => normalizedUserText.includes(phrase));
+
+    if (wantsScheduleEarly && medinetQueryEarly) {
+      try {
+        const antoniaResponse = await runMedinetAntonia({
+          query: medinetQueryEarly,
+          patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
+          patientMessage: userText
+        });
+
+        if (antoniaResponse?.patient_reply) {
+          return res.json(await sendManagedReply({
+            appId,
+            conversationId,
+            messageId,
+            userText,
+            reply: antoniaResponse.patient_reply,
+            kind: "antonia_medinet_reply",
+            state,
+            info,
+            channelLabel,
+            resolverDecision: {
+              nextAction: "antonia_medinet_reply",
+              caseType: state?.identity?.caseType || null,
+              reason: "Agenda resuelta por Antonia Medinet (fast-path)",
+              missingFields: state?.identity?.lastMissingFields || [],
+              antoniaResponse
+            }
+          }));
+        }
+      } catch (error) {
+        console.error("ANTONIA MEDINET FAST_PATH ERROR:", error.message);
+      }
+    }
+
     await maybeRunIdentitySearch(state, info);
 
     if (shouldTriggerCaseE(state)) {
