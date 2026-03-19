@@ -59,35 +59,6 @@ const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 const MEDINET_ANTONIA_SCRIPT = process.env.MEDINET_ANTONIA_SCRIPT || new URL("./Antonia/medinet-antonia.cjs", import.meta.url).pathname;
 const execFileAsync = promisify(execFile);
 
-const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
-const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
-const DEBUG_EVENTS_MEMORY_LIMIT = Number(process.env.DEBUG_EVENTS_MEMORY_LIMIT || 500);
-const DEBUG_DATABASE_URL =
-  process.env.DATABASE_URL ||
-  process.env.RENDER_DATABASE_URL ||
-  process.env.RENDER_EXTERNAL_DATABASE_URL ||
-  null;
-
-const debugEventsMemory = [];
-let debugPool = null;
-
-const btLogger = BRAINTRUST_API_KEY
-  ? initLogger({
-      projectName: BRAINTRUST_PROJECT_NAME,
-      apiKey: BRAINTRUST_API_KEY
-    })
-  : null;
-
-const baseOpenAI = OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: OPENAI_API_KEY
-    })
-  : null;
-
-const openai = baseOpenAI && BRAINTRUST_API_KEY
-  ? wrapOpenAI(baseOpenAI)
-  : baseOpenAI;
-
 function extractMedinetQuery(text = "") {
   const normalized = String(text || "")
     .replace(/[¿?.,!;:()]/g, " ")
@@ -135,6 +106,35 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
 
   return JSON.parse(match[1]);
 }
+
+const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
+const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
+const DEBUG_EVENTS_MEMORY_LIMIT = Number(process.env.DEBUG_EVENTS_MEMORY_LIMIT || 500);
+const DEBUG_DATABASE_URL =
+  process.env.DATABASE_URL ||
+  process.env.RENDER_DATABASE_URL ||
+  process.env.RENDER_EXTERNAL_DATABASE_URL ||
+  null;
+
+const debugEventsMemory = [];
+let debugPool = null;
+
+const btLogger = BRAINTRUST_API_KEY
+  ? initLogger({
+      projectName: BRAINTRUST_PROJECT_NAME,
+      apiKey: BRAINTRUST_API_KEY
+    })
+  : null;
+
+const baseOpenAI = OPENAI_API_KEY
+  ? new OpenAI({
+      apiKey: OPENAI_API_KEY
+    })
+  : null;
+
+const openai = baseOpenAI && BRAINTRUST_API_KEY
+  ? wrapOpenAI(baseOpenAI)
+  : baseOpenAI;
 
 
 const ASEGURADORA_OPTIONS = [
@@ -626,6 +626,22 @@ function shouldSuppressOutboundReply(state, reply, reason) {
   }
 
   return !reason || !lastReason || reason === lastReason;
+}
+
+function isRecentOutboundEcho(state, userText) {
+  const fingerprint = fingerprintReplyText(userText);
+  const lastFingerprint = state?.system?.lastOutboundFingerprint || null;
+  const lastAt = state?.system?.lastOutboundAt ? Date.parse(state.system.lastOutboundAt) : NaN;
+
+  if (!fingerprint || !lastFingerprint || fingerprint !== lastFingerprint) {
+    return false;
+  }
+
+  if (!Number.isFinite(lastAt)) {
+    return false;
+  }
+
+  return Date.now() - lastAt <= OUTBOUND_DEDUPE_WINDOW_MS;
 }
 
 function markMaxMessagesReached(state) {
@@ -2702,6 +2718,20 @@ app.post("/messages", async (req, res) => {
 
     if (!appId || !userText) {
       return res.json({ ok: true, skipped: "payload_not_parsed_yet" });
+    }
+
+    if (isRecentOutboundEcho(state, userText)) {
+      await saveConversationEvent({
+        conversationId,
+        info,
+        channelLabel,
+        userText,
+        botReply: null,
+        state,
+        resolverDecision: buildBlockedDecision(state, "recent_outbound_echo")
+      });
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json({ ok: true, skipped: "recent_outbound_echo" });
     }
 
     await persistConversationSnapshot(conversationId, state, channelLabel);
