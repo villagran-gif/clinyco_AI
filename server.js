@@ -170,6 +170,97 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   }
 }
 
+async function runMedinetAntoniaBooking({ slot, patientData }) {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+  if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
+    env: {
+      ...process.env,
+      MEDINET_MODE: "book",
+      MEDINET_RUT,
+      MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
+      MEDINET_SLOT_DATE: String(slot.dataDia || ""),
+      MEDINET_SLOT_TIME: String(slot.time || ""),
+      MEDINET_PATIENT_NOMBRES: String(patientData.nombres || ""),
+      MEDINET_PATIENT_AP_PATERNO: String(patientData.apPaterno || ""),
+      MEDINET_PATIENT_AP_MATERNO: String(patientData.apMaterno || ""),
+      MEDINET_PATIENT_PREVISION: String(patientData.prevision || ""),
+      MEDINET_PATIENT_NACIMIENTO: String(patientData.nacimiento || ""),
+      MEDINET_PATIENT_EMAIL: String(patientData.email || ""),
+      MEDINET_PATIENT_FONO: String(patientData.fono || ""),
+      MEDINET_PATIENT_DIRECCION: String(patientData.direccion || ""),
+      MEDINET_HEADED: "false"
+    },
+    timeout: timeoutMs,
+    maxBuffer: 10 * 1024 * 1024
+  });
+
+  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
+  if (!match) return null;
+
+  try {
+    return JSON.parse(match[1]);
+  } catch (parseError) {
+    console.error("ANTONIA BOOKING JSON PARSE ERROR:", parseError.message);
+    return null;
+  }
+}
+
+function detectBookingSlotChoice(text, availableSlots) {
+  if (!availableSlots || !availableSlots.length) return null;
+  const cleaned = String(text || "").trim();
+
+  // Match patterns: "1", "la 1", "opcion 1", "hora 1", "numero 1", "quiero la 1", etc.
+  const numberMatch = cleaned.match(/(?:^|\s)(\d)(?:\s|$|[.,;!?])/);
+  const directMatch = cleaned.match(/^(\d)$/);
+  const phraseMatch = cleaned.match(/(?:la|opcion|hora|numero|n[uú]mero|quiero|elijo|prefiero)\s*(\d)/i);
+
+  const choiceStr = directMatch?.[1] || phraseMatch?.[1] || numberMatch?.[1];
+  if (!choiceStr) return null;
+
+  const index = parseInt(choiceStr, 10) - 1;
+  if (index < 0 || index >= availableSlots.length) return null;
+
+  return { index, slot: availableSlots[index] };
+}
+
+function splitApellidos(apellidos) {
+  if (!apellidos) return { paterno: "", materno: "" };
+  const parts = String(apellidos).trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return { paterno: parts[0], materno: parts.slice(1).join(" ") };
+  }
+  return { paterno: parts[0] || "", materno: "" };
+}
+
+function buildPatientDataFromState(state) {
+  const cd = state?.contactDraft || {};
+  const { paterno, materno } = splitApellidos(cd.c_apellidos);
+  return {
+    nombres: cd.c_nombres || "",
+    apPaterno: paterno,
+    apMaterno: materno,
+    prevision: cd.c_aseguradora || "",
+    nacimiento: cd.c_fecha || "",
+    email: cd.c_email || "",
+    fono: cd.c_tel1 || "",
+    direccion: cd.c_direccion || ""
+  };
+}
+
+function getMissingBookingFields(patientData) {
+  const required = [
+    { key: "nombres", label: "nombre completo" },
+    { key: "apPaterno", label: "apellido paterno" },
+    { key: "prevision", label: "previsión/aseguradora" },
+    { key: "email", label: "correo electrónico" },
+    { key: "fono", label: "teléfono" },
+    { key: "direccion", label: "dirección" }
+  ];
+  return required.filter((f) => !patientData[f.key]);
+}
+
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
 const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
 const DEBUG_EVENTS_MEMORY_LIMIT = Number(process.env.DEBUG_EVENTS_MEMORY_LIMIT || 500);
@@ -1489,6 +1580,15 @@ function buildInitialConversationState() {
       askedAt: null,
       response: null,
       classifiedIntent: null
+    },
+    booking: {
+      pendingSlots: null,
+      pendingProfessional: null,
+      pendingSpecialty: null,
+      awaitingSlotChoice: false,
+      awaitingPatientData: false,
+      chosenSlot: null,
+      missingFields: null
     },
     system: {
       aiEnabled: true,
@@ -2990,6 +3090,135 @@ app.post("/messages", async (req, res) => {
     updateDraftsFromText(state, userText, info);
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
+    // --- Antonia booking slot choice interceptor ---
+    if (state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
+      const choice = detectBookingSlotChoice(userText, state.booking.pendingSlots);
+      if (choice) {
+        console.log("Antonia booking: patient chose slot", choice.index + 1, safeJson(choice.slot));
+        state.booking.chosenSlot = choice.slot;
+        state.booking.awaitingSlotChoice = false;
+
+        const patientData = buildPatientDataFromState(state);
+        const missing = getMissingBookingFields(patientData);
+
+        if (missing.length > 0) {
+          state.booking.awaitingPatientData = true;
+          state.booking.missingFields = missing.map((f) => f.key);
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const missingLabels = missing.map((f) => f.label).join(", ");
+          const reply = `Perfecto, seleccionaste la hora ${choice.slot.time} del ${choice.slot.date}. Para completar la reserva necesito los siguientes datos: ${missingLabels}. Por favor envíamelos.`;
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply,
+            kind: "antonia_booking_collect_data",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "collect_patient_data",
+              reason: "Booking: collecting missing patient data"
+            }
+          }));
+        }
+
+        // All data available — execute booking
+        try {
+          console.log("Antonia booking: all data ready, executing booking...");
+          const bookingResult = await runMedinetAntoniaBooking({ slot: choice.slot, patientData });
+
+          state.booking.pendingSlots = null;
+          state.booking.awaitingSlotChoice = false;
+          state.booking.awaitingPatientData = false;
+          state.booking.chosenSlot = null;
+          state.booking.missingFields = null;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply,
+            kind: "antonia_booking_result",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "booking_completed",
+              reason: "Booking completed by Antonia",
+              bookingResult
+            }
+          }));
+        } catch (error) {
+          console.error("ANTONIA BOOKING ERROR:", error.message);
+          state.booking.pendingSlots = null;
+          state.booking.awaitingSlotChoice = false;
+          state.booking.chosenSlot = null;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+        }
+      }
+    }
+
+    // --- Antonia booking: patient providing missing data ---
+    if (state.booking.awaitingPatientData && state.booking.chosenSlot) {
+      // Re-extract patient data (updateDraftsFromText may have captured new fields)
+      const patientData = buildPatientDataFromState(state);
+      const missing = getMissingBookingFields(patientData);
+
+      if (missing.length > 0) {
+        state.booking.missingFields = missing.map((f) => f.key);
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const missingLabels = missing.map((f) => f.label).join(", ");
+        const reply = `Gracias. Aún me falta: ${missingLabels}. Por favor envíamelos para completar tu reserva.`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "antonia_booking_collect_data",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "collect_patient_data",
+            reason: "Booking: still collecting missing patient data"
+          }
+        }));
+      }
+
+      // All data collected — execute booking
+      try {
+        console.log("Antonia booking: data complete, executing booking...");
+        const bookingResult = await runMedinetAntoniaBooking({ slot: state.booking.chosenSlot, patientData });
+
+        state.booking.pendingSlots = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.awaitingPatientData = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "antonia_booking_result",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_completed",
+            reason: "Booking completed by Antonia",
+            bookingResult
+          }
+        }));
+      } catch (error) {
+        console.error("ANTONIA BOOKING ERROR:", error.message);
+        state.booking.awaitingPatientData = false;
+        state.booking.chosenSlot = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+      }
+    }
+    // --- End Antonia booking interceptor ---
+
     // --- Antonia fast-path (Step 8) ---
     let antoniaFastPathAttempted = false;
     const fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
@@ -3004,6 +3233,17 @@ app.post("/messages", async (req, res) => {
         });
 
         if (antoniaResponse?.patient_reply) {
+          // Store available slots for booking flow
+          if (antoniaResponse.available_slots?.length) {
+            state.booking.pendingSlots = antoniaResponse.available_slots;
+            state.booking.pendingProfessional = antoniaResponse.professional || null;
+            state.booking.pendingSpecialty = antoniaResponse.specialty || null;
+            state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingPatientData = false;
+            state.booking.chosenSlot = null;
+            state.booking.missingFields = null;
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+          }
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
             appId,
@@ -3276,6 +3516,17 @@ app.post("/messages", async (req, res) => {
         });
 
         if (antoniaResponse?.patient_reply) {
+          // Store available slots for booking flow
+          if (antoniaResponse.available_slots?.length) {
+            state.booking.pendingSlots = antoniaResponse.available_slots;
+            state.booking.pendingProfessional = antoniaResponse.professional || null;
+            state.booking.pendingSpecialty = antoniaResponse.specialty || null;
+            state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingPatientData = false;
+            state.booking.chosenSlot = null;
+            state.booking.missingFields = null;
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+          }
           return res.json(await sendManagedReply({
             appId,
             conversationId,
