@@ -79,7 +79,14 @@ const MEDINET_DISCARD_TOKENS = new Set([
   "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
   "POR", "FAVOR", "DOCTOR", "DOCTORA", "DR", "DRA", "EL", "LA", "LOS", "LAS", "DE",
   "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "TENGO", "TENER",
-  "RESERVAR", "SOLICITAR", "PEDIR"
+  "RESERVAR", "SOLICITAR", "PEDIR",
+  // títulos profesionales que contaminan la búsqueda
+  "PSICOLOGA", "PSICOLOGO", "NUTRICIONISTA", "NUTRIOLOGA", "NUTRIOLOGO",
+  "KINESIOLOGOA", "KINESIOLOGA", "KINESIOLOGO", "PEDIATRA", "CIRUJANO", "CIRUJANA",
+  "ENDOCRINOLOGO", "ENDOCRINOLOGA", "DERMATOLOGO", "DERMATOLOGA",
+  "GINECOLOGO", "GINECOLOGA", "TRAUMATOLOGO", "TRAUMATOLOGA",
+  "OFTALMOLOGO", "OFTALMOLOGA", "PSIQUIATRA", "INTERNISTA",
+  "ENFERMERA", "ENFERMERO", "MATRONA", "MATRON"
 ]);
 
 function sanitizeMedinetProfessionalCandidate(rawValue) {
@@ -107,12 +114,32 @@ function extractCanonicalSpecialtyQuery(text) {
 }
 
 const FIRST_NAME_ALIASES = {
-  RODRIGO: "rodrigo villagran", VILLAGRAN: "rodrigo villagran", VILLAGRA: "rodrigo villagran",
-  NELSON: "nelson aros", AROS: "nelson aros",
-  ALBERTO: "alberto sirabo", SIRABO: "alberto sirabo",
-  FRANCISCO: "francisco bencina", BENCINA: "francisco bencina",
-  EDMUNDO: "edmundo ziede", ZIEDE: "edmundo ziede",
-  ROSIRYS: "rosirys ruiz", RUIZ: "rosirys ruiz"
+  // Cirugía Digestiva
+  VILLAGRAN: "rodrigo villagran", VILLAGRA: "rodrigo villagran",
+  AROS: "nelson aros",
+  SIRABO: "alberto sirabo",
+  // Cirugía Plástica
+  ZIEDE: "edmundo ziede",
+  ROSIRYS: "rosirys ruiz",
+  // Nutrición
+  CERQUERA: "magaly cerquera",
+  SAAVEDRA: "katherine saavedra",
+  // Psicología
+  PEGGY: "peggy huerta", HUERTA: "peggy huerta",
+  NARITELLI: "francisca naritelli",
+  // Nutriología
+  YEVENES: "ingrid yevenes",
+  MOYA: "fernando moya",
+  // Medicina Deportiva
+  RAMOS: "pablo ramos",
+  // Medicina General
+  NUNEZ: "carlos nunez",
+  // Pediatría
+  JALDIN: "daniza jaldin",
+  // Endocrinología Infantil
+  BANCALARI: "rodrigo bancalari",
+  // Otros
+  BENCINA: "francisco bencina",
 };
 
 function extractKnownProfessionalAlias(text) {
@@ -387,12 +414,34 @@ const MODALIDAD_FROM_ASEGURADORA = {
 };
 
 const KNOWN_AGENDA_PROFESSIONALS = new Set([
+  // Cirugía general y Aparato Digestivo
   "RODRIGO VILLAGRAN",
   "NELSON AROS",
   "ALBERTO SIRABO",
-  "FRANCISCO BENCINA",
+  // Cirugía Plástica
   "EDMUNDO ZIEDE",
-  "ROSIRYS RUIZ"
+  "ROSIRYS RUIZ",
+  // Nutrición
+  "MAGALY CERQUERA",
+  "KATHERINE SAAVEDRA",
+  // Psicología
+  "PEGGY HUERTA",
+  "FRANCISCA NARITELLI",
+  // Nutriología
+  "KATHERINNE ARAYA",
+  "INGRID YEVENES",
+  "FERNANDO MOYA",
+  "SOFIA ARAYA",
+  // Medicina Deportiva
+  "PABLO RAMOS",
+  // Medicina General
+  "CARLOS NUNEZ",
+  // Pediatría
+  "DANIZA JALDIN",
+  // Endocrinología Infantil
+  "RODRIGO BANCALARI",
+  // Otros (no agenda web actualmente)
+  "FRANCISCO BENCINA",
 ]);
 
 const SORTED_ASEGURADORA_ALIASES = Object.entries(ASEGURADORA_ALIASES).sort((a, b) => b[0].length - a[0].length);
