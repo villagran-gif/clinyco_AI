@@ -2,6 +2,8 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { accessSync, constants as fsConstants } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
@@ -56,31 +58,87 @@ const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
-const MEDINET_ANTONIA_SCRIPT = process.env.MEDINET_ANTONIA_SCRIPT || new URL("./Antonia/medinet-antonia.cjs", import.meta.url).pathname;
+function firstExistingPath(paths) {
+  for (const p of paths) {
+    try { accessSync(p, fsConstants.R_OK); return p; } catch { /* skip */ }
+  }
+  return null;
+}
+
+function resolveMedinetAntoniaScript() {
+  if (process.env.MEDINET_ANTONIA_SCRIPT) return process.env.MEDINET_ANTONIA_SCRIPT;
+  const base = fileURLToPath(new URL("./Antonia/", import.meta.url));
+  return firstExistingPath([base + "medinet-antonia.cjs", base + "medinet-antonia.js"]) || base + "medinet-antonia.cjs";
+}
+
+const MEDINET_ANTONIA_SCRIPT = resolveMedinetAntoniaScript();
 const execFileAsync = promisify(execFile);
 
-function extractMedinetQuery(text = "") {
-  const normalized = String(text || "")
-    .replace(/[¿?.,!;:()]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+const MEDINET_DISCARD_TOKENS = new Set([
+  "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
+  "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
+  "POR", "FAVOR", "DOCTOR", "DOCTORA", "DR", "DRA", "EL", "LA", "LOS", "LAS", "DE",
+  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "TENGO", "TENER",
+  "RESERVAR", "SOLICITAR", "PEDIR"
+]);
 
-  const patterns = [
-    /(?:con|hora con|agendar con|quiero una hora con|quiero hora con|quiero agendar con)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i,
-    /(?:especialidad|nutricion|nutriologia|cirugia|psicologia|psiquiatria|endocrinologia)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})/i
-  ];
+function sanitizeMedinetProfessionalCandidate(rawValue) {
+  const tokens = normalizeKey(rawValue).split(/\s+/).filter((t) => !MEDINET_DISCARD_TOKENS.has(t));
+  return tokens.slice(0, 3).join(" ").toLowerCase().trim() || null;
+}
 
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    if (match?.[1]) return match[1].trim();
+const SPECIALTY_KEYWORDS = {
+  NUTRICION: "nutricion", NUTRICIONISTA: "nutricion", NUTRIOLOGIA: "nutriologia", NUTRIOLOGA: "nutriologia", NUTRIOLOGO: "nutriologia",
+  PSICOLOGIA: "psicologia", PSICOLOGO: "psicologia", PSICOLOGA: "psicologia",
+  PSIQUIATRIA: "psiquiatria", PSIQUIATRA: "psiquiatria",
+  CIRUGIA: "cirugia", CIRUJANO: "cirugia", CIRUJANA: "cirugia",
+  BARIATRICA: "cirugia bariatrica", BARIATRICO: "cirugia bariatrica",
+  ENDOCRINOLOGIA: "endocrinologia", ENDOCRINOLOGO: "endocrinologia", ENDOCRINOLOGA: "endocrinologia",
+  GASTROENTEROLOGO: "gastroenterologia", GASTROENTEROLOGA: "gastroenterologia", GASTROENTEROLOGIA: "gastroenterologia",
+  PLASTICA: "cirugia plastica", PLASTICO: "cirugia plastica"
+};
+
+function extractCanonicalSpecialtyQuery(text) {
+  const tokens = normalizeKey(text).split(/\s+/);
+  for (const t of tokens) {
+    if (SPECIALTY_KEYWORDS[t]) return SPECIALTY_KEYWORDS[t];
   }
+  return null;
+}
 
-  const cleaned = normalized
-    .replace(/\b(hola|buenas|quiero|necesito|me gustaria|me gustaría|agendar|agenda|hora|horas|cita|control|con|para|una|un|por favor)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+const FIRST_NAME_ALIASES = {
+  RODRIGO: "rodrigo villagran", VILLAGRAN: "rodrigo villagran", VILLAGRA: "rodrigo villagran",
+  NELSON: "nelson aros", AROS: "nelson aros",
+  ALBERTO: "alberto sirabo", SIRABO: "alberto sirabo",
+  FRANCISCO: "francisco bencina", BENCINA: "francisco bencina",
+  EDMUNDO: "edmundo ziede", ZIEDE: "edmundo ziede",
+  ROSIRYS: "rosirys ruiz", RUIZ: "rosirys ruiz"
+};
 
-  return cleaned.split(" ").slice(0, 4).join(" ").trim();
+function extractKnownProfessionalAlias(text) {
+  const nk = normalizeKey(text);
+  for (const prof of KNOWN_AGENDA_PROFESSIONALS) {
+    if (nk.includes(prof)) return prof.toLowerCase();
+  }
+  const tokens = nk.split(/\s+/);
+  for (const t of tokens) {
+    if (FIRST_NAME_ALIASES[t]) return FIRST_NAME_ALIASES[t];
+  }
+  return null;
+}
+
+function extractMedinetQuery(text = "") {
+  const alias = extractKnownProfessionalAlias(text);
+  if (alias) return alias;
+
+  const specialty = extractCanonicalSpecialtyQuery(text);
+  if (specialty) return specialty;
+
+  const { professionalName } = extractProfessionalReference(text);
+  if (professionalName) return sanitizeMedinetProfessionalCandidate(professionalName) || professionalName.toLowerCase();
+
+  const cleaned = sanitizeMedinetProfessionalCandidate(text);
+  return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
 }
 
 async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
@@ -1409,6 +1467,12 @@ function buildInitialConversationState() {
       proposedHeightCm: null,
       askedMeasurementInstructions: false
     },
+    openHelp: {
+      asked: false,
+      askedAt: null,
+      response: null,
+      classifiedIntent: null
+    },
     system: {
       aiEnabled: true,
       humanTakenOver: false,
@@ -1706,7 +1770,12 @@ function hasScheduleIntent(text) {
     "CAMBIO DE HORA",
     "REAGENDAR",
     "RESERVAR HORA",
-    "TOMA DE HORA"
+    "TOMA DE HORA",
+    "HORA EN",
+    "QUIERO HORA",
+    "QUIERO UNA HORA",
+    "AGENDAR EN",
+    "AGENDA EN"
   ].some((phrase) => normalized.includes(phrase));
 }
 
@@ -1741,7 +1810,7 @@ function extractProfessionalReference(text) {
     return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
 
-  const withConMatch = source.match(/\b(?:con|para)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})\b/);
+  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){1,3})\b/i);
   if (withConMatch) {
     return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
   }
@@ -1788,6 +1857,37 @@ function getUnknownProfessionalScheduleMessage(professionalName) {
     "",
     `Si quieres revisar como alternativa, quizás encuentres disponibilidad en nuestra agenda web: ${MEDINET_AGENDA_WEB_URL}`
   ].join("\n");
+}
+
+function hasAgendaSpecialtyReference(text) {
+  return !!extractCanonicalSpecialtyQuery(text);
+}
+
+function buildAntoniaFastPathCandidate(text, state) {
+  const noFastPath = { shouldTry: false, reason: null, query: null, trigger: null };
+
+  if (state.system.humanTakenOver || !state.system.aiEnabled) return noFastPath;
+
+  const alias = extractKnownProfessionalAlias(text);
+  if (alias) {
+    return { shouldTry: true, reason: "known_professional_alias", query: alias, trigger: "alias" };
+  }
+
+  const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
+  if (!hasIntent) return noFastPath;
+
+  const specialty = extractCanonicalSpecialtyQuery(text);
+  if (specialty) {
+    return { shouldTry: true, reason: "schedule_intent_with_specialty", query: specialty, trigger: "specialty" };
+  }
+
+  const { professionalName, matchType } = extractProfessionalReference(text);
+  if (professionalName && (matchType === "titled" || matchType === "con_phrase")) {
+    const q = sanitizeMedinetProfessionalCandidate(professionalName) || professionalName.toLowerCase();
+    return { shouldTry: true, reason: "schedule_intent_with_professional", query: q, trigger: "professional_ref" };
+  }
+
+  return noFastPath;
 }
 
 function detectExistingPatientIntent(text) {
@@ -1929,6 +2029,60 @@ function applyConfirmedMeasurements(state, bmiContext) {
   state.measurements.proposedHeightCm = null;
   state.dealDraft.dealPeso = String(bmiContext.weightKg);
   state.dealDraft.dealEstatura = String(bmiContext.heightCm);
+}
+
+// =========================
+// Open-help conversational layer (Step 10)
+// =========================
+function ensureOpenHelpState(state) {
+  if (!state.openHelp) {
+    state.openHelp = { asked: false, askedAt: null, response: null, classifiedIntent: null };
+  }
+  return state.openHelp;
+}
+
+const CLEAR_INTENT_TOKENS = [
+  "AGENDAR", "AGENDA", "HORA", "CIRUGIA", "MANGA", "BYPASS", "BALON", "GASTRICO",
+  "CONSULTA", "CONTROL", "NUTRICION", "NUTRIOLOGIA", "PSICOLOGIA", "PSIQUIATRIA",
+  "ENDOSCOPIA", "PLASTICA", "BARIATRICA", "ENDOCRINOLOGIA", "PAD", "FONASA", "ISAPRE",
+  "PRESUPUESTO", "PRECIO", "COSTO", "VALOR", "OPERARME", "OPERAR", "EVALUACION",
+  "EXAMEN", "EXAMENES", "BIOPSIA", "HOLTER", "LABORATORIO", "TELEMEDICINA", "ONLINE",
+  "PRESENCIAL", "DERIVAR", "AGENTE", "HUMANO", "PERSONA"
+];
+
+function hasClearTopLevelIntent(text) {
+  const nk = normalizeKey(text);
+  return CLEAR_INTENT_TOKENS.some((t) => nk.includes(t)) || hasScheduleIntent(text) || hasAgendaSpecialtyReference(text);
+}
+
+function classifyOpenHelpIntent(text) {
+  const nk = normalizeKey(text);
+  if (/AGENDAR|AGENDA|HORA|RESERVAR|CITA/.test(nk)) return "schedule";
+  if (/INFORMACION|ORIENTACION|PRECIO|VALOR|COSTO|PRESUPUESTO|COTIZAR/.test(nk)) return "orientation";
+  if (/YA SOY PACIENTE|YA ME ATENDI|SEGUIMIENTO|CONTROL|MI OPERACION/.test(nk)) return "existing_patient";
+  if (/EVALUAR|EVALUACION|PRIMERA VEZ|PRIMERA CONSULTA/.test(nk)) return "evaluation";
+  if (/AGENTE|HUMANO|PERSONA|EJECUTIVA|DERIVAR/.test(nk)) return "human";
+  return "unknown";
+}
+
+function shouldAskOpenHelpQuestion(state, userText) {
+  ensureOpenHelpState(state);
+  if (state.openHelp.asked) return false;
+  if (state.system.botMessagesSent < 5) return false;
+  if (hasClearTopLevelIntent(userText)) return false;
+  return true;
+}
+
+function getOpenHelpQuestion() {
+  return [
+    "Noto que llevamos un rato conversando y quiero asegurarme de ayudarte bien.",
+    "",
+    "¿En qué te puedo ayudar hoy?",
+    "1. Agendar una hora médica",
+    "2. Información sobre procedimientos o precios",
+    "3. Ya soy paciente y necesito seguimiento",
+    "4. Hablar con una agente"
+  ].join("\n");
 }
 
 function buildCalculatedDataBlock(state, originalText) {
@@ -2798,6 +2952,45 @@ app.post("/messages", async (req, res) => {
     updateDraftsFromText(state, userText, info);
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
+    // --- Antonia fast-path (Step 8) ---
+    let antoniaFastPathAttempted = false;
+    const fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
+    if (fastPathCandidate.shouldTry) {
+      antoniaFastPathAttempted = true;
+      try {
+        console.log("Antonia fast-path triggered:", safeJson(fastPathCandidate));
+        const antoniaResponse = await runMedinetAntonia({
+          query: fastPathCandidate.query,
+          patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
+          patientMessage: userText
+        });
+
+        if (antoniaResponse?.patient_reply) {
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId,
+            conversationId,
+            messageId,
+            userText,
+            reply: antoniaResponse.patient_reply,
+            kind: "antonia_fast_path_reply",
+            state,
+            info,
+            channelLabel,
+            resolverDecision: {
+              stage: "antonia_fast_path",
+              nextAction: "antonia_fast_path_reply",
+              reason: `Fast-path Antonia: ${fastPathCandidate.reason}`,
+              antoniaResponse
+            }
+          }));
+        }
+      } catch (error) {
+        console.error("ANTONIA FAST-PATH ERROR:", error.message);
+      }
+    }
+    // --- End Antonia fast-path ---
+
     // Measurement confirmation flow first.
     if (state.measurements.pendingConfirmation) {
       if (isTruthyText(userText)) {
@@ -2844,6 +3037,35 @@ app.post("/messages", async (req, res) => {
         }));
       }
     } else {
+      // --- Bare-number weight/height fix (Step 7) ---
+      const bareNumberMatch = userText.trim().match(/^(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:kg|kgs|kilo|kilos|kilogramos?|cm|centimetros?|metros?|m|mt|mts)?\s*$/i);
+      const lastMissing = state.identity.lastMissingFields || [];
+      if (bareNumberMatch) {
+        const rawNum = parseFloat(bareNumberMatch[1].replace(",", "."));
+        const unitHint = (bareNumberMatch[0].match(/(?:kg|kgs|kilo|kilos|kilogramos?|cm|centimetros?|metros?|m|mt|mts)\s*$/i) || [""])[0].toLowerCase();
+        const isWeightUnit = /^(kg|kgs|kilo|kilos|kilogramos?)$/.test(unitHint);
+        const isHeightUnit = /^(cm|centimetros?|metros?|m|mt|mts)$/.test(unitHint);
+
+        if ((lastMissing.includes("dealPeso") || isWeightUnit) && !isHeightUnit && rawNum >= 30 && rawNum <= 350) {
+          state.dealDraft.dealPeso = String(rawNum);
+          state.measurements.weightKg = rawNum;
+          console.log("Bare-number weight fix: dealPeso =", rawNum);
+        } else if ((lastMissing.includes("dealEstatura") || isHeightUnit) && !isWeightUnit) {
+          if (rawNum >= 100 && rawNum <= 220) {
+            state.dealDraft.dealEstatura = String(rawNum);
+            state.measurements.heightCm = rawNum;
+            state.measurements.heightM = Math.round((rawNum / 100) * 100) / 100;
+            console.log("Bare-number height fix (cm): dealEstatura =", rawNum);
+          } else if (rawNum >= 1.2 && rawNum <= 2.2) {
+            state.measurements.heightM = rawNum;
+            state.measurements.heightCm = Math.round(rawNum * 100);
+            state.dealDraft.dealEstatura = String(state.measurements.heightCm);
+            console.log("Bare-number height fix (m): dealEstatura =", state.measurements.heightCm);
+          }
+        }
+      }
+      // --- End bare-number fix ---
+
       const bmiSourceText = [userText, structuredLeadToMeasurementText(parseStructuredLeadText(userText))].filter(Boolean).join("\n");
       const bmiContext = buildBMIContext(bmiSourceText);
       if (bmiContext) {
@@ -2893,6 +3115,39 @@ app.post("/messages", async (req, res) => {
         handoffReasonAfterSend: "unknown_professional_schedule"
       }));
     }
+
+    // --- Open-help layer (Step 11) ---
+    ensureOpenHelpState(state);
+    if (state.openHelp.asked && !state.openHelp.classifiedIntent) {
+      state.openHelp.response = userText;
+      state.openHelp.classifiedIntent = classifyOpenHelpIntent(userText);
+      console.log("Open-help classified:", state.openHelp.classifiedIntent);
+
+      if (state.openHelp.classifiedIntent === "human") {
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "Perfecto, te derivo con una agente. Un momento por favor.",
+          kind: "open_help_derive_human",
+          state, info, channelLabel,
+          resolverDecision: buildBlockedDecision(state, "open_help_derive", "derive"),
+          disableAiAfterSend: true,
+          handoffReasonAfterSend: "open_help_derive"
+        }));
+      }
+    }
+
+    if (shouldAskOpenHelpQuestion(state, userText)) {
+      state.openHelp.asked = true;
+      state.openHelp.askedAt = new Date().toISOString();
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText,
+        reply: getOpenHelpQuestion(),
+        kind: "open_help_question",
+        state, info, channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "open_help_question")
+      }));
+    }
+    // --- End open-help layer ---
 
     await maybeRunIdentitySearch(state, info);
 
@@ -2973,7 +3228,7 @@ app.post("/messages", async (req, res) => {
         unknownScheduleRequest.shouldDerive
       );
 
-    if (resolverContext.stage === "agenda_without_direct_access") {
+    if (!antoniaFastPathAttempted && resolverContext.stage === "agenda_without_direct_access") {
       try {
         const medinetQuery = extractMedinetQuery(userText);
         const antoniaResponse = await runMedinetAntonia({
