@@ -2,7 +2,7 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, readFileSync, constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
@@ -73,6 +73,85 @@ function resolveMedinetAntoniaScript() {
 
 const MEDINET_ANTONIA_SCRIPT = resolveMedinetAntoniaScript();
 const execFileAsync = promisify(execFile);
+
+const MEDINET_CACHE_FILE = fileURLToPath(new URL("./data/medinet_professionals_cache.json", import.meta.url));
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function readMedinetCache() {
+  try {
+    const raw = readFileSync(MEDINET_CACHE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isCacheStale() {
+  const cache = readMedinetCache();
+  if (!cache || !cache.cachedAt) return true;
+  return Date.now() - new Date(cache.cachedAt).getTime() > CACHE_TTL_MS;
+}
+
+function matchProfessionalFromCache(text) {
+  const cache = readMedinetCache();
+  if (!cache || !Array.isArray(cache.professionals) || !cache.professionals.length) return null;
+
+  const requested = normalizeKey(text);
+  if (!requested) return null;
+
+  let bestMatch = null;
+  let bestPriority = 99;
+
+  for (const prof of cache.professionals) {
+    const normalizedName = normalizeKey(prof.name || "");
+    const normalizedSpecialty = normalizeKey(prof.specialty || "");
+    const nameTokens = normalizedName.split(/\s+/).filter(Boolean);
+
+    let priority = 99;
+    if (normalizedName === requested) priority = 1;
+    else if (normalizedName.startsWith(requested)) priority = 3;
+    else if (normalizedName.includes(requested)) priority = 4;
+    else if (normalizedSpecialty === requested) priority = 5;
+    else if (normalizedSpecialty.includes(requested)) priority = 7;
+    else if (nameTokens.some((t) => t === requested)) priority = 8;
+    else if (nameTokens.some((t) => t.startsWith(requested) || requested.startsWith(t))) priority = 9;
+    else {
+      // multi-token match: check if all tokens in request appear in name
+      const requestedTokens = requested.split(/\s+/).filter(Boolean);
+      if (requestedTokens.length >= 2 && requestedTokens.every((rt) => nameTokens.some((nt) => nt.includes(rt) || rt.includes(nt)))) {
+        priority = 2;
+      }
+    }
+
+    if (priority < bestPriority) {
+      bestPriority = priority;
+      bestMatch = prof;
+    }
+  }
+
+  return bestPriority < 99 ? bestMatch : null;
+}
+
+async function runMedinetAntoniaCache() {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+  try {
+    const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
+      env: {
+        ...process.env,
+        MEDINET_MODE: "cache",
+        MEDINET_RUT,
+        MEDINET_HEADED: "false"
+      },
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024
+    });
+    console.log("MEDINET CACHE REFRESH completed");
+    return true;
+  } catch (error) {
+    console.error("MEDINET CACHE REFRESH ERROR:", error.message);
+    return false;
+  }
+}
 
 const MEDINET_DISCARD_TOKENS = new Set([
   "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
@@ -413,36 +492,28 @@ const MODALIDAD_FROM_ASEGURADORA = {
   "VIDA TRES": "Vida Tres"
 };
 
-const KNOWN_AGENDA_PROFESSIONALS = new Set([
-  // Cirugía general y Aparato Digestivo
-  "RODRIGO VILLAGRAN",
-  "NELSON AROS",
-  "ALBERTO SIRABO",
-  // Cirugía Plástica
-  "EDMUNDO ZIEDE",
-  "ROSIRYS RUIZ",
-  // Nutrición
-  "MAGALY CERQUERA",
-  "KATHERINE SAAVEDRA",
-  // Psicología
-  "PEGGY HUERTA",
-  "FRANCISCA NARITELLI",
-  // Nutriología
-  "KATHERINNE ARAYA",
-  "INGRID YEVENES",
-  "FERNANDO MOYA",
-  "SOFIA ARAYA",
-  // Medicina Deportiva
-  "PABLO RAMOS",
-  // Medicina General
-  "CARLOS NUNEZ",
-  // Pediatría
-  "DANIZA JALDIN",
-  // Endocrinología Infantil
-  "RODRIGO BANCALARI",
-  // Otros (no agenda web actualmente)
+const KNOWN_AGENDA_PROFESSIONALS_FALLBACK = [
+  "RODRIGO VILLAGRAN", "NELSON AROS", "ALBERTO SIRABO",
+  "EDMUNDO ZIEDE", "ROSIRYS RUIZ",
+  "MAGALY CERQUERA", "KATHERINE SAAVEDRA",
+  "PEGGY HUERTA", "FRANCISCA NARITELLI",
+  "KATHERINNE ARAYA", "INGRID YEVENES", "FERNANDO MOYA", "SOFIA ARAYA",
+  "PABLO RAMOS", "CARLOS NUNEZ", "DANIZA JALDIN", "RODRIGO BANCALARI",
   "FRANCISCO BENCINA",
-]);
+];
+
+function buildKnownAgendaProfessionals() {
+  const cache = readMedinetCache();
+  const names = new Set(KNOWN_AGENDA_PROFESSIONALS_FALLBACK);
+  if (cache && Array.isArray(cache.professionals)) {
+    for (const prof of cache.professionals) {
+      if (prof.name) names.add(normalizeKey(prof.name));
+    }
+  }
+  return names;
+}
+
+let KNOWN_AGENDA_PROFESSIONALS = buildKnownAgendaProfessionals();
 
 const SORTED_ASEGURADORA_ALIASES = Object.entries(ASEGURADORA_ALIASES).sort((a, b) => b[0].length - a[0].length);
 
@@ -2065,6 +2136,15 @@ function buildAntoniaFastPathCandidate(text, state) {
     return { shouldTry: true, reason: "schedule_intent_with_professional", query: q, trigger: "professional_ref" };
   }
 
+  // Check cache for any professional name match even without explicit "con" phrase
+  const sanitized = sanitizeMedinetProfessionalCandidate(text);
+  if (sanitized) {
+    const cacheHit = matchProfessionalFromCache(sanitized);
+    if (cacheHit) {
+      return { shouldTry: true, reason: "cache_professional_match", query: sanitized, trigger: "cache" };
+    }
+  }
+
   return noFastPath;
 }
 
@@ -3273,6 +3353,20 @@ app.post("/messages", async (req, res) => {
     const fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
+
+      // Cache TTL check: refresh if stale (>30 min)
+      if (isCacheStale()) {
+        console.log("Medinet cache stale (>30 min), refreshing before fast-path...");
+        await runMedinetAntoniaCache();
+        KNOWN_AGENDA_PROFESSIONALS = buildKnownAgendaProfessionals();
+      }
+
+      // Try matching from cache first
+      const cachedMatch = matchProfessionalFromCache(fastPathCandidate.query);
+      if (cachedMatch) {
+        console.log("Medinet cache match:", cachedMatch.name, "id:", cachedMatch.id);
+      }
+
       try {
         console.log("Antonia fast-path triggered:", safeJson(fastPathCandidate));
         const antoniaResponse = await runMedinetAntonia({

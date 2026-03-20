@@ -1,8 +1,11 @@
 const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
 
 const AGENDA_URL = 'https://clinyco.medinetapp.com/agendaweb/planned/';
 const DEFAULT_BRANCH_NAME = process.env.MEDINET_BRANCH_NAME || 'Antofagasta Mall Arauco Express';
 const MAX_SLOTS = 3;
+const CACHE_FILE = path.resolve(__dirname, '..', 'data', 'medinet_professionals_cache.json');
 function normalizeSpaces(value = '') {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -58,6 +61,18 @@ function candidatePriority(candidate, query) {
   if (candidate.variants.some((variant) => variant.startsWith(requested))) return 8;
   if (candidate.variants.some((variant) => variant.includes(requested))) return 9;
   return 99;
+}
+
+function writeProfessionalsCache(professionals, branchName) {
+  const cacheDir = path.dirname(CACHE_FILE);
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+  const payload = {
+    cachedAt: new Date().toISOString(),
+    branch: branchName || DEFAULT_BRANCH_NAME,
+    professionals,
+  };
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  console.log(`CACHE_SAVED ${professionals.length} professionals -> ${CACHE_FILE}`);
 }
 
 function buildPatientReply(professional, specialty, slots) {
@@ -189,17 +204,26 @@ async function main() {
           const reserveButton = row.querySelector('button.btn-option');
           const name = reserveButton?.getAttribute('profesional-name') || row.getAttribute('data-nombre-profesional') || getText('.doctor-title');
           const specialty = reserveButton?.getAttribute('profesional-especialidad') || getText('.doctor-title strong');
+          const specialtyId = reserveButton?.getAttribute('profesional-especialidad_id') || '';
           const alertText = getText('.doctor-alert');
+          const img = row.querySelector('img');
           return {
             id: row.getAttribute('data-id-profesional') || '',
             name,
             specialty,
+            specialtyId,
+            tipocita: row.getAttribute('data-tipocita') || '',
+            duracion: row.getAttribute('data-duracion') || '',
             alert_text: alertText,
+            avatarUrl: img?.getAttribute('src') || '',
             text: (row.textContent || '').replace(/\s+/g, ' ').trim(),
           };
         }),
       };
     });
+
+    // Always save professionals to cache
+    writeProfessionalsCache(memory.professionals, branchName);
 
     const candidates = memory.professionals.map((candidate) => ({
       ...candidate,
@@ -588,8 +612,92 @@ async function bookSlot() {
   }
 }
 
+async function cacheAllProfessionals() {
+  const rut = process.env.MEDINET_RUT;
+  const branchName = DEFAULT_BRANCH_NAME;
+  const headed = process.env.MEDINET_HEADED !== 'false';
+
+  if (!rut) throw new Error('Define MEDINET_RUT para ejecutar cache.');
+
+  const browser = await chromium.launch({ headless: !headed });
+  const page = await browser.newPage();
+
+  try {
+    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+
+    const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
+    await bookingRunInput.fill(rut);
+    await bookingRunInput.dispatchEvent('input');
+    await bookingRunInput.dispatchEvent('change');
+
+    const branchSelect = page.locator('#ubicacion');
+    const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
+      return options
+        .map((option) => ({ value: option.value, label: (option.textContent || '').trim() }))
+        .filter((option) => option.value && option.label);
+    });
+
+    const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
+      || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
+
+    if (!selectedBranch) throw new Error(`No encontre la sucursal ${branchName}`);
+
+    await branchSelect.selectOption(selectedBranch.value);
+    await branchSelect.dispatchEvent('change');
+
+    const nextButton = page.locator('#agendar #step-0 #btn-step-one');
+    await nextButton.waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => {
+      const button = document.querySelector('#agendar #step-0 #btn-step-one');
+      return !!button && !button.hasAttribute('disabled');
+    }, undefined, { timeout: 10000 });
+    await nextButton.click();
+
+    await page.locator('a[href="#profesional-tab"]').click();
+    await waitForProfessionalResults(page);
+
+    const professionals = await page.locator('ul.doctor-professional-results').evaluate((list) => {
+      const rows = Array.from(list.querySelectorAll('li.fila-profesional'));
+      return rows.map((row) => {
+        const getText = (selector) => (row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
+        const reserveButton = row.querySelector('button.btn-option');
+        const name = reserveButton?.getAttribute('profesional-name') || row.getAttribute('data-nombre-profesional') || getText('.doctor-title');
+        const specialty = reserveButton?.getAttribute('profesional-especialidad') || getText('.doctor-title strong');
+        const specialtyId = reserveButton?.getAttribute('profesional-especialidad_id') || '';
+        const alertText = getText('.doctor-alert');
+        const img = row.querySelector('img');
+        return {
+          id: row.getAttribute('data-id-profesional') || '',
+          name,
+          specialty,
+          specialtyId,
+          tipocita: row.getAttribute('data-tipocita') || '',
+          duracion: row.getAttribute('data-duracion') || '',
+          alert_text: alertText,
+          avatarUrl: img?.getAttribute('src') || '',
+        };
+      });
+    });
+
+    writeProfessionalsCache(professionals, branchName);
+
+    const cacheResponse = {
+      source: 'antonia_cache_professionals',
+      cachedAt: new Date().toISOString(),
+      branch: branchName,
+      count: professionals.length,
+      professionals,
+    };
+
+    console.log('ANTONIA_RESPONSE', JSON.stringify(cacheResponse, null, 2));
+  } finally {
+    await page.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
 const mode = process.env.MEDINET_MODE || 'search';
-const entrypoint = mode === 'book' ? bookSlot : main;
+const entrypoint = mode === 'book' ? bookSlot : mode === 'cache' ? cacheAllProfessionals : main;
 
 entrypoint().catch((error) => {
   console.error('MEDINET_ANTONIA_ERROR', error?.stack || error?.message || String(error));
