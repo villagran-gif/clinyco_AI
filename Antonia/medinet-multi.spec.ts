@@ -38,16 +38,34 @@ const MAX_SLOTS = 3;
 
 /* ─────────────────────────  queries a probar  ───────────────────────── */
 const QUERIES: { label: string; query: string }[] = [
-  { label: 'nutricion',          query: 'nutricion' },
-  { label: 'nelson',             query: 'nelson' },
-  { label: 'kinesiologia',       query: 'kinesiologia' },
-  { label: 'psicologia',         query: 'psicologia' },
-  { label: 'dermatologia',       query: 'dermatologia' },
-  { label: 'medicina general',   query: 'medicina general' },
-  { label: 'ginecologia',        query: 'ginecologia' },
-  { label: 'pediatria',          query: 'pediatria' },
-  { label: 'traumatologia',      query: 'traumatologia' },
-  { label: 'oftalmologia',       query: 'oftalmologia' },
+  // ── por nombre de profesional ──
+  { label: 'Magaly Cerquera (Nutrición)',              query: 'cerquera' },
+  { label: 'Peggy Huerta (Psicología)',                query: 'huerta' },
+  { label: 'Francisca Naritelli (Psicología)',         query: 'naritelli' },
+  { label: 'Katherinne Araya (Nutriología)',           query: 'katherinne araya' },
+  { label: 'Ingrid Yevenes (Nutriología)',             query: 'yevenes' },
+  { label: 'Pablo Ramos (Medicina Deportiva)',         query: 'pablo ramos' },
+  { label: 'Carlos Nuñez (Medicina General)',          query: 'nuñez' },
+  { label: 'Fernando Moya (Nutriología)',              query: 'moya' },
+  { label: 'Nelson Aros (Cirugía Digestiva)',          query: 'nelson' },
+  { label: 'Rodrigo Villagran (Cirugía Digestiva)',    query: 'villagran' },
+  { label: 'Daniza Jaldín (Pediatría)',                query: 'jaldin' },
+  { label: 'Katherine Saavedra (Nutrición)',           query: 'saavedra' },
+  { label: 'Rosirys Ruiz (Cirugía Plástica)',          query: 'rosirys' },
+  { label: 'Sofia Araya (Nutriología)',                query: 'sofia araya' },
+  { label: 'Edmundo Ziede (Cirugía Plástica)',         query: 'ziede' },
+  { label: 'Alberto Sirabo (Cirugía Digestiva)',       query: 'sirabo' },
+  { label: 'Rodrigo Bancalari (Endocrinología Inf.)',  query: 'bancalari' },
+  // ── por especialidad ──
+  { label: 'Especialidad: Nutrición',                  query: 'nutricion' },
+  { label: 'Especialidad: Psicología',                 query: 'psicologia' },
+  { label: 'Especialidad: Nutriología',                query: 'nutriologia' },
+  { label: 'Especialidad: Medicina Deportiva',         query: 'medicina deportiva' },
+  { label: 'Especialidad: Medicina General',           query: 'medicina general' },
+  { label: 'Especialidad: Cirugía Digestiva',          query: 'cirugia general' },
+  { label: 'Especialidad: Pediatría',                  query: 'pediatria' },
+  { label: 'Especialidad: Cirugía Plástica',           query: 'cirugia plastica' },
+  { label: 'Especialidad: Endocrinología Infantil',    query: 'endocrinologia' },
 ];
 
 /* ── helpers ── */
