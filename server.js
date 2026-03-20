@@ -162,7 +162,12 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
   if (!match) return null;
 
-  return JSON.parse(match[1]);
+  try {
+    return JSON.parse(match[1]);
+  } catch (parseError) {
+    console.error("ANTONIA JSON PARSE ERROR:", parseError.message, "raw:", match[1].slice(0, 200));
+    return null;
+  }
 }
 
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
@@ -1680,7 +1685,18 @@ async function sendManagedReply({
     return resJsonSkip("duplicate_reply_suppressed");
   }
 
-  await sendConversationReply(appId, conversationId, finalReply);
+  try {
+    await sendConversationReply(appId, conversationId, finalReply);
+  } catch (sendError) {
+    console.error("SEND_REPLY_ERROR:", sendError.message);
+    await saveConversationEvent({
+      conversationId, info, channelLabel, userText,
+      botReply: `[SEND_FAILED] ${finalReply}`,
+      state: latestState,
+      resolverDecision: { ...resolverDecision, sendError: sendError.message }
+    });
+    throw sendError;
+  }
   addToHistory(conversationId, "assistant", finalReply);
 
   latestState.system.botMessagesSent += 1;
@@ -1841,7 +1857,7 @@ function detectUnknownProfessionalScheduleRequest(text) {
     return { shouldDerive: false, professionalName: null };
   }
 
-  if (!hasScheduleIntent(text) || !hasExplicitScheduleIntent(text)) {
+  if (!hasScheduleIntent(text) && !hasExplicitScheduleIntent(text)) {
     return { shouldDerive: false, professionalName };
   }
 
@@ -1880,12 +1896,13 @@ function buildAntoniaFastPathCandidate(text, state) {
 
   if (state.system.humanTakenOver || !state.system.aiEnabled) return noFastPath;
 
+  const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
+
   const alias = extractKnownProfessionalAlias(text);
-  if (alias) {
+  if (alias && hasIntent) {
     return { shouldTry: true, reason: "known_professional_alias", query: alias, trigger: "alias" };
   }
 
-  const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
   if (!hasIntent) return noFastPath;
 
   const specialty = extractCanonicalSpecialtyQuery(text);
@@ -2069,6 +2086,11 @@ function hasClearTopLevelIntent(text) {
 
 function classifyOpenHelpIntent(text) {
   const nk = normalizeKey(text);
+  const trimmed = nk.trim();
+  if (trimmed === "1") return "schedule";
+  if (trimmed === "2") return "orientation";
+  if (trimmed === "3") return "existing_patient";
+  if (trimmed === "4") return "human";
   if (/AGENDAR|AGENDA|HORA|RESERVAR|CITA/.test(nk)) return "schedule";
   if (/INFORMACION|ORIENTACION|PRECIO|VALOR|COSTO|PRESUPUESTO|COTIZAR/.test(nk)) return "orientation";
   if (/YA SOY PACIENTE|YA ME ATENDI|SEGUIMIENTO|CONTROL|MI OPERACION/.test(nk)) return "existing_patient";
@@ -2701,7 +2723,11 @@ async function sendConversationReply(appId, conversationId, reply) {
     throw new Error(`Conversations send failed: ${raw}`);
   }
 
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { ok: true, rawResponse: raw };
+  }
 }
 
 app.get("/", (req, res) => {
