@@ -270,6 +270,14 @@ function cloneJson(value) {
   }
 }
 
+function toDbJson(value) {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return "null";
+  }
+}
+
 function getDebugPool() {
   if (!DEBUG_DATABASE_URL) return null;
   if (!debugPool) {
@@ -411,6 +419,10 @@ async function saveConversationEvent({
     user_text: userText || null,
     bot_reply: botReply || null
   };
+  const dbMissingFields = toDbJson(event.missing_fields);
+  const dbKnownData = toDbJson(event.known_data);
+  const dbSupportSummary = toDbJson(event.support_summary);
+  const dbSellSummary = toDbJson(event.sell_summary);
 
   rememberDebugEvent(event);
 
@@ -434,7 +446,7 @@ async function saveConversationEvent({
         bmi,
         bot_messages_sent
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::json,$11::json,$12::json,$13::json,$14,$15
       )
       RETURNING id, created_at
       `,
@@ -448,10 +460,10 @@ async function saveConversationEvent({
         event.case_type,
         event.next_action,
         event.reason,
-        event.missing_fields,
-        event.known_data,
-        event.support_summary,
-        event.sell_summary,
+        dbMissingFields,
+        dbKnownData,
+        dbSupportSummary,
+        dbSellSummary,
         event.bmi,
         event.bot_messages_sent
       ]
