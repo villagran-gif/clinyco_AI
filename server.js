@@ -1857,7 +1857,7 @@ function detectUnknownProfessionalScheduleRequest(text) {
     return { shouldDerive: false, professionalName: null };
   }
 
-  if (!hasScheduleIntent(text) || !hasExplicitScheduleIntent(text)) {
+  if (!hasScheduleIntent(text) && !hasExplicitScheduleIntent(text)) {
     return { shouldDerive: false, professionalName };
   }
 
