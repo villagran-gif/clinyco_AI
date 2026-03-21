@@ -20,13 +20,22 @@ Y tambien prepara la hoja con apoyo visual:
 - filtro en la fila 1
 - listas desplegables en columnas tipo `SI/NO`
 - ayuda guiada en columnas como `Telemedicina`, `Duracion` y `Valor`
+- para textos ambiguos o no legibles, mantiene el dato original y marca la celda en naranjo
+- detecta placeholders o texto poco legible (por ejemplo `...`, `asdf`, `N/A`) y lo marca para revisión
 
 Ejemplos:
 
 - `70,000` -> `valor=$70.000 CLP`
 - `70mil la consulta` -> `valor=$70.000 CLP`
-- `No realiza telemedicina` -> `telemedicina=No`
-- `Solo telemedicina` -> `telemedicina=Solo telemedicina`
+- `SOLO PRESENCIAL` -> `telemedicina=Solo presencial`
+- `SOLO TELEMEDICINA` -> `telemedicina=Solo telemedicina`
+- `AMBAS PRESENCIAL/TELEMEDICINA` -> `telemedicina=Presencial y telemedicina`
+
+## Regla de formato
+
+- El script no repinta toda la fila de encabezados al agregar feedback.
+- Solo da formato a columnas nuevas de feedback.
+- Cuando detecta ambigüedad, no borra el dato: deja el texto y marca la celda en naranjo con advertencia en `Observaciones IA`.
 
 ## Archivo
 
