@@ -61,6 +61,33 @@ const CLINYCO_TABS = {
 };
 
 const LOG_SHEET_NAME = "Bitacora IA";
+const WARNING_ORANGE = "#F9CB9C";
+const COLUMNAS_TEXTO_CRITICO = [
+  "Nombre profesional",
+  "Nombre en validacion",
+  "Especialidad web",
+  "Descripcion web",
+  "Observaciones",
+  "Sede",
+  "Ciudad",
+  "Direccion",
+  "Profesional",
+  "Especialidad",
+  "Modalidad",
+  "Procedimientos",
+  "Motivo inactividad",
+  "Mensaje para el cliente",
+  "Examen o evaluacion",
+  "Categoria",
+  "Cobertura o prevision",
+  "Regla simple para el bot",
+  "Que dato pedir despues",
+  "Pregunta frecuente",
+  "Respuesta aprobada",
+  "Cuando derivar a persona",
+  "No prometer",
+  "Notas para el bot"
+];
 
 function onInstall(e) {
   onOpen(e);
@@ -171,18 +198,24 @@ function asegurarColumnasFeedback_(sheet, tabName) {
   const headers = obtenerHeaders_(sheet);
   const feedbackHeaders = CLINYCO_TABS[tabName].columnasFeedback;
   let changed = false;
+  const insertedColumns = [];
   feedbackHeaders.forEach((header) => {
     if (headers.indexOf(header) === -1) {
-      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      const newColumn = sheet.getLastColumn() + 1;
+      sheet.getRange(1, newColumn).setValue(header);
+      insertedColumns.push(newColumn);
       changed = true;
     }
   });
   if (changed) {
-    const headerRange = sheet.getRange(1, 1, 1, sheet.getLastColumn());
-    headerRange.setFontWeight("bold");
-    headerRange.setBackground("#0E8A6A");
-    headerRange.setFontColor("#FFFFFF");
-    headerRange.setWrap(true);
+    // Solo formatea columnas nuevas de feedback para no pisar formato existente.
+    insertedColumns.forEach((column) => {
+      const cell = sheet.getRange(1, column);
+      cell.setFontWeight("bold");
+      cell.setBackground("#0E8A6A");
+      cell.setFontColor("#FFFFFF");
+      cell.setWrap(true);
+    });
   }
 }
 
@@ -216,9 +249,18 @@ function aplicarValidaciones_(sheet, tabName) {
       .setHelpText("Escribe solo SI o NO.")
       .build(),
     telemedicina: SpreadsheetApp.newDataValidation()
-      .requireValueInList(["SI", "NO", "SOLO TELEMEDICINA", "PRESENCIAL Y TELEMEDICINA"], true)
+      .requireValueInList(
+        [
+          "SOLO PRESENCIAL",
+          "AMBAS PRESENCIAL/TELEMEDICINA",
+          "SOLO TELEMEDICINA"
+        ],
+        true
+      )
       .setAllowInvalid(false)
-      .setHelpText("Usa una de estas opciones para que el bot entienda la modalidad.")
+      .setHelpText(
+        "Usa: SOLO PRESENCIAL, AMBAS PRESENCIAL/TELEMEDICINA o SOLO TELEMEDICINA."
+      )
       .build(),
     duracion: SpreadsheetApp.newDataValidation()
       .requireTextContains("min")
@@ -245,7 +287,7 @@ function aplicarValidaciones_(sheet, tabName) {
       return;
     }
 
-    if (header === "Telemedicina") {
+    if (esColumnaTelemedicina_(header)) {
       range.setDataValidation(helpers.telemedicina);
       return;
     }
@@ -265,6 +307,15 @@ function aplicarValidaciones_(sheet, tabName) {
 function obtenerHeaders_(sheet) {
   const lastColumn = Math.max(sheet.getLastColumn(), 1);
   return sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map((value) => String(value || "").trim());
+}
+
+function esColumnaTelemedicina_(header) {
+  const key = limpiarClave_(header);
+  return (
+    key === "TELEMEDICINA" ||
+    key === "PRESENCIAL TELEMEDICINA" ||
+    key === "ATENCION PRESENCIAL TELEMEDICINA"
+  );
 }
 
 function leerFilaComoObjeto_(sheet, rowNumber) {
@@ -365,13 +416,36 @@ function normalizarTelemedicina_(value) {
   const text = String(value || "").trim();
   const key = limpiarClave_(text);
   if (!key) return { label: "", notes: [] };
-  if (key.indexOf("NO REALIZA TELEMEDICINA") >= 0 || key === "NO") return { label: "No", notes: [] };
-  if (key.indexOf("SOLO TELEMEDICINA") >= 0) return { label: "Solo telemedicina", notes: [] };
-  if ((key.indexOf("TELEMEDICINA") >= 0 && key.indexOf("PRESENCIAL") >= 0) || key.indexOf("HIBRIDO") >= 0) {
-    return { label: "Presencial y telemedicina", notes: ["Detecté modalidad mixta."] };
+  if (key === "SOLO PRESENCIAL") return { label: "Solo presencial", notes: [] };
+  if (key === "SOLO TELEMEDICINA") return { label: "Solo telemedicina", notes: [] };
+  if (key === "AMBAS PRESENCIAL TELEMEDICINA") return { label: "Presencial y telemedicina", notes: [] };
+  if (key === "PRESENCIAL Y TELEMEDICINA") {
+    return {
+      label: "Presencial y telemedicina",
+      notes: ['Usa exactamente "AMBAS PRESENCIAL/TELEMEDICINA".']
+    };
   }
-  if (key.indexOf("TELEMEDICINA") >= 0 || key === "SI") return { label: "Si", notes: ["Interpretado desde texto libre."] };
-  return { label: "", notes: ["No entendí la modalidad de telemedicina."] };
+
+  return {
+    label: "",
+    notes: [
+      'Valor no valido. Usa exactamente: "SOLO PRESENCIAL", "SOLO TELEMEDICINA" o "AMBAS PRESENCIAL/TELEMEDICINA".'
+    ]
+  };
+}
+
+function textoPocoLegible_(value) {
+  const text = textoCelda_(value);
+  if (!text) return false;
+  const key = limpiarClave_(text);
+
+  if (key.length <= 2) return true;
+  if (["N A", "NA", "N", "X", "XX", "XXX", "OK", "PENDIENTE", "REVISAR"].indexOf(key) >= 0) return true;
+  if (/^(asd|asdf|qwe|xxx|---|\.{3,})$/i.test(text)) return true;
+
+  const usefulChars = (text.match(/[A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ]/g) || []).length;
+  const ratio = usefulChars / text.length;
+  return ratio < 0.55;
 }
 
 function limpiarClave_(value) {
@@ -438,6 +512,7 @@ function validarFila_(sheet, tabName, rowNumber) {
 
   const notes = [];
   const chunks = [];
+  const warningsByHeader = {};
   const requiredHeaders = obtenerColumnasRequeridas_(tabName);
   const missingRequired = requiredHeaders.filter((header) => textoCelda_(record[header]) === "");
   const minimumInterpretationHeaders = obtenerColumnasMinimasParaInterpretar_(tabName);
@@ -445,6 +520,9 @@ function validarFila_(sheet, tabName, rowNumber) {
 
   if (missingRequired.length) {
     notes.push("Faltan campos obligatorios: " + missingRequired.join(", ") + ".");
+    missingRequired.forEach((header) => {
+      warningsByHeader[header] = "Campo obligatorio faltante.";
+    });
   }
 
   if (!hasMinimumInterpretationData) {
@@ -475,30 +553,46 @@ function validarFila_(sheet, tabName, rowNumber) {
     const monto = normalizarMonto_(record["Valor"]);
     if (monto.label) chunks.push("valor=" + monto.label);
     notes.push.apply(notes, monto.notes);
+    if (monto.notes.length) {
+      warningsByHeader["Valor"] = monto.notes.join(" ");
+    }
   }
 
   if (record["Duracion"]) {
     const duracion = normalizarDuracion_(record["Duracion"]);
     if (duracion.label) chunks.push("duracion=" + duracion.label);
     notes.push.apply(notes, duracion.notes);
+    if (duracion.notes.length) {
+      warningsByHeader["Duracion"] = duracion.notes.join(" ");
+    }
   }
 
   if (record["Previo pago"]) {
     const previo = normalizarBooleano_(record["Previo pago"]);
     if (previo.label) chunks.push("previo_pago=" + previo.label);
     notes.push.apply(notes, previo.notes);
+    if (previo.notes.length) {
+      warningsByHeader["Previo pago"] = previo.notes.join(" ");
+    }
   }
 
-  if (record["Telemedicina"]) {
-    const tele = normalizarTelemedicina_(record["Telemedicina"]);
+  const telemedicinaHeader = headers.find((header) => esColumnaTelemedicina_(header));
+  if (telemedicinaHeader && record[telemedicinaHeader]) {
+    const tele = normalizarTelemedicina_(record[telemedicinaHeader]);
     if (tele.label) chunks.push("telemedicina=" + tele.label);
     notes.push.apply(notes, tele.notes);
+    if (tele.notes.length) {
+      warningsByHeader[telemedicinaHeader] = tele.notes.join(" ");
+    }
   }
 
   if (record["Activo"] !== "") {
     const activo = normalizarBooleano_(record["Activo"]);
     if (activo.label) chunks.push("activo=" + activo.label);
     notes.push.apply(notes, activo.notes);
+    if (activo.notes.length) {
+      warningsByHeader["Activo"] = activo.notes.join(" ");
+    }
 
     if (activo.label === "No") {
       if (!textoCelda_(record["Motivo inactividad"])) {
@@ -510,6 +604,15 @@ function validarFila_(sheet, tabName, rowNumber) {
     }
   }
 
+  headers.forEach((header) => {
+    if (COLUMNAS_TEXTO_CRITICO.indexOf(header) === -1) return;
+    const value = record[header];
+    if (!textoCelda_(value)) return;
+    if (!textoPocoLegible_(value)) return;
+    notes.push(`Texto poco legible en "${header}".`);
+    warningsByHeader[header] = "Texto poco legible o no adaptado.";
+  });
+
   const principal = obtenerPrincipal_(record, tabName);
 
   if (!chunks.length) {
@@ -519,6 +622,8 @@ function validarFila_(sheet, tabName, rowNumber) {
   const interpretacion = chunks.length ? principal + ": " + chunks.join(" | ") : principal + ": sin interpretación clara todavía";
   const estado = notes.length ? "Revisar" : "OK";
   const feedback = notes.length ? notes.join(" | ") : "Interpretación clara.";
+
+  pintarAdvertenciasFila_(sheet, headers, rowNumber, warningsByHeader);
 
   escribirFeedback_(sheet, headers, rowNumber, {
     "Interpretacion IA": interpretacion,
@@ -547,19 +652,15 @@ function escribirFeedback_(sheet, headers, rowNumber, values) {
       }
     }
   });
+}
 
-  const activoIndex = headers.indexOf("Activo");
-  if (activoIndex >= 0) {
-    const activoCell = sheet.getRange(rowNumber, activoIndex + 1);
-    const activo = normalizarBooleano_(sheet.getRange(rowNumber, activoIndex + 1).getValue()).label;
-    if (activo === "Si") {
-      activoCell.setBackground("#C6EFCE");
-    } else if (activo === "No") {
-      activoCell.setBackground("#F4CCCC");
-    } else {
-      activoCell.setBackground(null);
-    }
-  }
+function pintarAdvertenciasFila_(sheet, headers, rowNumber, warningsByHeader) {
+  Object.keys(warningsByHeader).forEach((header) => {
+    const index = headers.indexOf(header);
+    if (index === -1) return;
+    // No borra datos, solo marca visualmente celdas con advertencias de interpretación.
+    sheet.getRange(rowNumber, index + 1).setBackground(WARNING_ORANGE);
+  });
 }
 
 function obtenerCorreoVisible_() {
