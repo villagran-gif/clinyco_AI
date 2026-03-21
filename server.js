@@ -2938,6 +2938,7 @@ Datos importantes:
 - si la persona quiere avanzar y ya tenemos los datos principales, indica que dejarás su solicitud lista para coordinación con una agente y, como alternativa, comparte la agenda web
 - si ya entregó teléfono y ya tenemos lo esencial, cierra cordialmente o deriva de forma clara
 - si un profesional aparece como inactivo en la base de conocimiento, dilo con honestidad, explica el motivo si está disponible y usa el mensaje sugerido para cliente
+- NUNCA inventes ni transformes nombres de profesionales médicos. Solo puedes mencionar profesionales que estén explícitamente listados en la base de conocimiento operativa más abajo. Si el usuario menciona un nombre que no coincide con ninguno de la lista, NO repitas ese nombre ni lo modifiques; responde que derivarás con una agente porque no tienes información sobre ese profesional en tu base de datos.
 - si la persona ya dijo lo que necesita y tú puedes orientar, responde primero y pregunta después solo si hace falta
 
 ${buildKnowledgePromptContext()}
@@ -2962,6 +2963,15 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
   });
 
   return response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+}
+
+function sanitizeProfessionalNames(reply) {
+  const drPattern = /\b((?:Dr|Dra|Doctor|Doctora)\.?\s+)([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/gi;
+  return reply.replace(drPattern, (fullMatch, prefix, name) => {
+    if (isKnownAgendaProfessional(name)) return fullMatch;
+    console.warn("PROFESSIONAL_NAME_SANITIZED", safeJson({ original: fullMatch, replaced: "el profesional solicitado" }));
+    return "el profesional solicitado";
+  });
 }
 
 async function sendConversationReply(appId, conversationId, reply) {
@@ -3825,6 +3835,8 @@ app.post("/messages", async (req, res) => {
       stateSummary,
       history
     });
+
+    reply = sanitizeProfessionalNames(reply);
 
     const isTenthMessage = state.system.botMessagesSent + 1 >= MAX_BOT_MESSAGES;
     if (isTenthMessage) {
