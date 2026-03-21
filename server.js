@@ -3263,7 +3263,9 @@ app.post("/messages", async (req, res) => {
           state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
-          const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+          const bookingOk = bookingResult?.success === true;
+          const reply = bookingResult?.patient_reply
+            || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
             appId, conversationId, messageId, userText,
@@ -3272,8 +3274,10 @@ app.post("/messages", async (req, res) => {
             state, info, channelLabel,
             resolverDecision: {
               stage: "antonia_booking",
-              nextAction: "booking_completed",
-              reason: "Booking completed by Antonia",
+              nextAction: bookingOk ? "booking_completed" : "booking_failed",
+              reason: bookingOk
+                ? "Booking completed successfully by Antonia"
+                : `Booking failed: ${bookingResult?.message || "unknown error"}`,
               bookingResult
             }
           }));
@@ -3283,6 +3287,20 @@ app.post("/messages", async (req, res) => {
           state.booking.awaitingSlotChoice = false;
           state.booking.chosenSlot = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: errorReply,
+            kind: "antonia_booking_error",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "booking_failed",
+              reason: `Booking error: ${error.message}`
+            }
+          }));
         }
       }
     }
@@ -3325,7 +3343,9 @@ app.post("/messages", async (req, res) => {
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
-        const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+        const bookingOk = bookingResult?.success === true;
+        const reply = bookingResult?.patient_reply
+          || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
@@ -3334,8 +3354,10 @@ app.post("/messages", async (req, res) => {
           state, info, channelLabel,
           resolverDecision: {
             stage: "antonia_booking",
-            nextAction: "booking_completed",
-            reason: "Booking completed by Antonia",
+            nextAction: bookingOk ? "booking_completed" : "booking_failed",
+            reason: bookingOk
+              ? "Booking completed successfully by Antonia"
+              : `Booking failed: ${bookingResult?.message || "unknown error"}`,
             bookingResult
           }
         }));
@@ -3344,6 +3366,20 @@ app.post("/messages", async (req, res) => {
         state.booking.awaitingPatientData = false;
         state.booking.chosenSlot = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: errorReply,
+          kind: "antonia_booking_error",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_failed",
+            reason: `Booking error: ${error.message}`
+          }
+        }));
       }
     }
     // --- End Antonia booking interceptor ---
