@@ -370,6 +370,9 @@ function getMissingBookingFields(patientData) {
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
 const DEBUG_DASHBOARD_ORIGIN = process.env.DEBUG_DASHBOARD_ORIGIN || "*";
 const DEBUG_EVENTS_MEMORY_LIMIT = Number(process.env.DEBUG_EVENTS_MEMORY_LIMIT || 500);
+const KNOWLEDGE_SYNC_KEY = String(process.env.KNOWLEDGE_SYNC_KEY || process.env.DEBUG_DASHBOARD_KEY || "").trim() || null;
+const KNOWLEDGE_SYNC_TIMEOUT_MS = Number(process.env.KNOWLEDGE_SYNC_TIMEOUT_MS || 180000);
+const KNOWLEDGE_SYNC_SCRIPT = fileURLToPath(new URL("./scripts/sync-knowledge-from-sheets.js", import.meta.url));
 const DEBUG_DATABASE_URL =
   process.env.DATABASE_URL ||
   process.env.RENDER_DATABASE_URL ||
@@ -378,6 +381,7 @@ const DEBUG_DATABASE_URL =
 
 const debugEventsMemory = [];
 let debugPool = null;
+let knowledgeSyncInProgress = false;
 
 const btLogger = BRAINTRUST_API_KEY
   ? initLogger({
@@ -587,6 +591,43 @@ function requireDebugKey(req, res, next) {
   }
 
   next();
+}
+
+function requireKnowledgeSyncKey(req, res, next) {
+  const provided = String(req.headers["x-sync-key"] || req.query.key || "").trim();
+
+  if (!KNOWLEDGE_SYNC_KEY) {
+    return res.status(503).json({ ok: false, error: "knowledge_sync_key_not_configured" });
+  }
+
+  if (!provided || provided !== KNOWLEDGE_SYNC_KEY) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  next();
+}
+
+function tailLines(text, limit = 20) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.slice(-Math.max(1, Number(limit) || 1));
+}
+
+async function runKnowledgeSyncNow() {
+  const startedAt = Date.now();
+  const result = await execFileAsync("node", [KNOWLEDGE_SYNC_SCRIPT], {
+    env: { ...process.env },
+    timeout: KNOWLEDGE_SYNC_TIMEOUT_MS,
+    maxBuffer: 20 * 1024 * 1024
+  });
+
+  return {
+    durationMs: Date.now() - startedAt,
+    stdout: String(result?.stdout || ""),
+    stderr: String(result?.stderr || "")
+  };
 }
 
 function buildDebugUserName(state, info) {
@@ -2961,6 +3002,49 @@ async function sendConversationReply(appId, conversationId, reply) {
 
 app.get("/", (req, res) => {
   res.send("Clinyco Conversations AI OK");
+});
+
+app.post("/admin/sync-knowledge", requireKnowledgeSyncKey, async (req, res) => {
+  if (knowledgeSyncInProgress) {
+    return res.status(409).json({ ok: false, error: "sync_in_progress" });
+  }
+
+  knowledgeSyncInProgress = true;
+  try {
+    const syncResult = await runKnowledgeSyncNow();
+    const stdoutLines = tailLines(syncResult.stdout, 25);
+    const stderrLines = tailLines(syncResult.stderr, 25);
+
+    console.log("KNOWLEDGE_SYNC_OK", safeJson({
+      durationMs: syncResult.durationMs,
+      stdoutLines,
+      stderrLines
+    }));
+
+    return res.json({
+      ok: true,
+      durationMs: syncResult.durationMs,
+      stdoutLines,
+      stderrLines
+    });
+  } catch (error) {
+    const stdoutLines = tailLines(error?.stdout || "", 25);
+    const stderrLines = tailLines(error?.stderr || "", 25);
+
+    console.error("ERROR /admin/sync-knowledge:", error.message, safeJson({
+      stdoutLines,
+      stderrLines
+    }));
+
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stdoutLines,
+      stderrLines
+    });
+  } finally {
+    knowledgeSyncInProgress = false;
+  }
 });
 
 
