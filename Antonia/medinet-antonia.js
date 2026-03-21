@@ -496,31 +496,75 @@ async function bookSlot() {
     // Step 7: Wait for the booking form to appear
     await page.waitForTimeout(2000);
 
-    // Step 8: Select first appointment type option (always first)
-    await page.locator('#id_appointment_type').evaluate((select) => {
-      const options = Array.from(select.querySelectorAll('option'));
-      const firstValid = options.find((o) => o.value && !o.disabled);
-      if (firstValid) {
-        select.value = firstValid.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
+    const selectAnyAppointmentType = async () => {
+      const appointmentType = page.locator('#id_appointment_type:visible').first();
+      const isVisible = await appointmentType.isVisible().catch(() => false);
+      if (!isVisible) return false;
+      await appointmentType.evaluate((select) => {
+        const options = Array.from(select.querySelectorAll('option'));
+        const firstValid = options.find((o) => o.value && !o.disabled);
+        if (firstValid) {
+          select.value = firstValid.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      return true;
+    };
+    const fillIfVisible = async (selector, value) => {
+      if (!value) return false;
+      const locator = page.locator(`${selector}:visible`).first();
+      const isVisible = await locator.isVisible().catch(() => false);
+      if (!isVisible) return false;
+      await locator.fill(value);
+      return true;
+    };
+    const selectIfVisible = async (selector, value) => {
+      const locator = page.locator(`${selector}:visible`).first();
+      const isVisible = await locator.isVisible().catch(() => false);
+      if (!isVisible) return false;
+      await locator.selectOption(value);
+      return true;
+    };
+
+    // Step 8: Select any valid appointment type option
+    await selectAnyAppointmentType();
 
     await page.waitForTimeout(500);
 
-    // Step 9: Fill in patient data
-    if (patientNombres) {
-      await page.locator('#paciente_nombres').fill(patientNombres);
-    }
-    if (patientApPaterno) {
-      await page.locator('#paciente_ap_paterno').fill(patientApPaterno);
-    }
-    if (patientApMaterno) {
-      await page.locator('#paciente_ap_materno').fill(patientApMaterno);
+    const isCompactStoredPatientForm = await page.evaluate(() => {
+      const visible = (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden' && el.getBoundingClientRect().height > 0;
+      };
+
+      return visible('#id_appointment_type')
+        && visible('#paciente_rut[disabled]')
+        && visible('#paciente_email')
+        && visible('#paciente_fono')
+        && !visible('#paciente_nombres')
+        && !visible('#paciente_ap_paterno')
+        && !visible('#paciente_ap_materno')
+        && !visible('#paciente_sexo')
+        && !visible('#paciente_prevision')
+        && !visible('#paciente_nacimiento')
+        && !visible('#paciente_direccion');
+    });
+
+    if (isCompactStoredPatientForm) {
+      await fillIfVisible('#paciente_email', patientEmail);
+      await fillIfVisible('#paciente_fono', patientFono);
+      return;
     }
 
+    // Step 9: Fill in patient data
+    await fillIfVisible('#paciente_nombres', patientNombres);
+    await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
+    await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+
     // Sexo: always "Indeterminado" (value=3)
-    await page.locator('#paciente_sexo').selectOption('3');
+    await selectIfVisible('#paciente_sexo', '3');
 
     // Prevision/Aseguradora
     if (patientPrevision) {
@@ -530,33 +574,31 @@ async function bookSlot() {
       const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
         || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
       if (matchedPrevision) {
-        await page.locator('#paciente_prevision').selectOption(matchedPrevision.value);
+        await selectIfVisible('#paciente_prevision', matchedPrevision.value);
       }
     }
 
     // Fecha de nacimiento
     if (patientNacimiento) {
-      await page.locator('#paciente_nacimiento').evaluate((input, dob) => {
-        input.removeAttribute('readonly');
-        input.value = dob;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      }, patientNacimiento);
+      const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
+      const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
+      if (nacimientoVisible) {
+        await nacimientoLocator.evaluate((input, dob) => {
+          input.removeAttribute('readonly');
+          input.value = dob;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }, patientNacimiento);
+      }
     }
 
     // Email
-    if (patientEmail) {
-      await page.locator('#paciente_email').fill(patientEmail);
-    }
+    await fillIfVisible('#paciente_email', patientEmail);
 
     // Telefono
-    if (patientFono) {
-      await page.locator('#paciente_fono').fill(patientFono);
-    }
+    await fillIfVisible('#paciente_fono', patientFono);
 
     // Direccion
-    if (patientDireccion) {
-      await page.locator('#paciente_direccion').fill(patientDireccion);
-    }
+    await fillIfVisible('#paciente_direccion', patientDireccion);
 
     // Step 10: Click ENVIAR
     await page.locator('button.btn-comprobar-cita').click();
@@ -565,9 +607,20 @@ async function bookSlot() {
     await page.waitForTimeout(3000);
 
     // Step 12: Click CONFIRMAR RESERVA
-    const confirmarButton = page.locator('button.btn-confirmar');
-    await confirmarButton.waitFor({ state: 'visible', timeout: 15000 });
-    await confirmarButton.click();
+    const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
+    const hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
+    if (hasConfirmButton) {
+      await confirmarButton.click();
+    } else {
+      const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
+        hasNotText: 'Volver',
+      }).first();
+      const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
+      if (!hasFallbackButton) {
+        throw new Error('No apareció un botón util para confirmar reserva.');
+      }
+      await fallbackButton.click();
+    }
 
     // Step 13: Wait for success screen
     await page.waitForTimeout(3000);
@@ -575,16 +628,28 @@ async function bookSlot() {
     // Step 14: Check for success message
     const successResult = await page.evaluate(() => {
       const successDiv = document.querySelector('.validacion-completada');
-      if (!successDiv) return { success: false, message: 'No se encontro pantalla de confirmacion.' };
+      const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+      const explicitError = /ocurri[oó] un error|por favor intenta nuevamente|volver/i.test(bodyText);
+      if (!successDiv) {
+        return {
+          success: false,
+          message: explicitError ? 'La pagina mostro un error al confirmar la reserva.' : 'No se encontro pantalla de confirmacion.'
+        };
+      }
 
       const style = getComputedStyle(successDiv);
-      if (style.display === 'none') return { success: false, message: 'Pantalla de confirmacion no visible.' };
+      if (style.display === 'none' || style.visibility === 'hidden' || successDiv.getBoundingClientRect().height === 0) {
+        return {
+          success: false,
+          message: explicitError ? 'La pagina mostro un error al confirmar la reserva.' : 'Pantalla de confirmacion no visible.'
+        };
+      }
 
       const subtitle = (successDiv.querySelector('.validacion-completada-subtitle')?.textContent || '').trim();
       const emailSpan = (successDiv.querySelector('#email-text')?.textContent || '').trim();
 
       return {
-        success: subtitle.includes('reserva se ha realizado con éxito') || subtitle.includes('reserva se ha realizado con exito'),
+        success: !explicitError && (subtitle.includes('reserva se ha realizado con éxito') || subtitle.includes('reserva se ha realizado con exito')),
         message: subtitle,
         emailSent: emailSpan
       };
@@ -593,14 +658,16 @@ async function bookSlot() {
     // Step 15: Click TERMINAR
     await page.locator('button.btn-primary[onclick="controlStepper(0, 0)"]').click().catch(() => {});
 
+    const apiBookingAccepted = false;
     const bookingResponse = {
       source: 'antonia_booking_completed',
-      success: successResult.success,
+      success: successResult.success || apiBookingAccepted,
       message: successResult.message,
       emailSent: successResult.emailSent || '',
+      apiBookingAccepted,
       slotDate,
       slotTime,
-      patient_reply: successResult.success
+      patient_reply: (successResult.success || apiBookingAccepted)
         ? 'Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación. Gracias.'
         : `Hubo un problema al confirmar la reserva: ${successResult.message}. Por favor intenta directamente en ${AGENDA_URL}`,
     };

@@ -104,16 +104,19 @@ async function waitForProfessionalResults(page) {
   }, undefined, { timeout: 15000 });
 }
 
-async function waitForCalendar(page) {
-  await page.locator('#div_picker').waitFor({ state: 'visible', timeout: 15000 });
+async function waitForSlotsVisible(page, timeout = 15000) {
   await page.waitForFunction(() => {
-    const cells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
-    return cells.some((cell) => {
-      const html = cell;
-      const text = (html.textContent || '').trim();
-      return /^\d+$/.test(text) && !/disabled|date-disabled|not-notable/i.test(html.className || '');
+    const buttons = Array.from(document.querySelectorAll('.table-horarios button.btn-reservar[data-hora]'));
+    return buttons.some((button) => {
+      const table = button.closest('.table-horarios');
+      if (!table) return false;
+      const tableStyle = getComputedStyle(table);
+      const buttonStyle = getComputedStyle(button);
+      if (tableStyle.display === 'none' || tableStyle.visibility === 'hidden') return false;
+      if (buttonStyle.display === 'none' || buttonStyle.visibility === 'hidden') return false;
+      return !!button.getAttribute('data-hora');
     });
-  }, undefined, { timeout: 15000 });
+  }, undefined, { timeout });
 }
 
 async function readVisibleCalendarTables(page) {
@@ -122,10 +125,13 @@ async function readVisibleCalendarTables(page) {
       .map((table) => {
         const element = table;
         const style = getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        const visible = style.display !== 'none' && style.visibility !== 'hidden';
         const times = Array.from(table.querySelectorAll('button.btn-reservar[data-hora]'))
-          .map((button) => button.getAttribute('data-hora') || '')
+          .map((button) => {
+            const buttonStyle = getComputedStyle(button);
+            if (buttonStyle.display === 'none' || buttonStyle.visibility === 'hidden') return '';
+            return button.getAttribute('data-hora') || '';
+          })
           .filter(Boolean);
 
         return { visible, dataDia: element.getAttribute('data-dia') || '', times };
@@ -138,6 +144,88 @@ async function readVisibleCalendarTables(page) {
 async function readActiveCalendarTable(page) {
   const tables = await readVisibleCalendarTables(page);
   return tables[0] || { dataDia: '', times: [] };
+}
+
+async function openBookingStepOne(page, rut, branchName) {
+  await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+
+  const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
+  await bookingRunInput.fill(rut);
+  await bookingRunInput.dispatchEvent('input');
+  await bookingRunInput.dispatchEvent('change');
+
+  const branchSelect = page.locator('#ubicacion');
+  const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
+    return options
+      .map((option) => ({
+        value: option.value,
+        label: (option.textContent || '').trim(),
+      }))
+      .filter((option) => option.value && option.label);
+  });
+
+  const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
+    || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
+
+  if (!selectedBranch) throw new Error(`No encontre la sucursal ${branchName}`);
+
+  await branchSelect.selectOption(selectedBranch.value);
+  await branchSelect.dispatchEvent('change');
+
+  const nextButton = page.locator('#agendar #step-0 #btn-step-one');
+  await nextButton.waitFor({ state: 'visible', timeout: 10000 });
+  await page.waitForFunction(() => {
+    const button = document.querySelector('#agendar #step-0 #btn-step-one');
+    return !!button && !button.hasAttribute('disabled');
+  }, undefined, { timeout: 10000 });
+  await nextButton.click();
+}
+
+async function openProfessionalAgenda(page, professionalId) {
+  await page.locator('a[href="#profesional-tab"]').click();
+  await waitForProfessionalResults(page);
+
+  const targetRow = page.locator(`li.fila-profesional[data-id-profesional="${professionalId}"]`).first();
+  await targetRow.waitFor({ state: 'visible', timeout: 15000 });
+
+  const primaryButton = targetRow.locator('button.btn-option').first();
+  const fallbackButton = targetRow.locator('button.other-options.btn').first();
+
+  if (await primaryButton.isVisible().catch(() => false)) {
+    await primaryButton.click();
+  } else {
+    await fallbackButton.click();
+  }
+
+  await waitForSlotsVisible(page, 20000);
+}
+
+async function selectCalendarDate(page, slotDate) {
+  let activeTable = await readActiveCalendarTable(page);
+  if (activeTable.dataDia === slotDate) return;
+
+  const dayCells = page.locator('#div_picker li.days-cell.cell');
+  const dayCount = await dayCells.count();
+
+  for (let i = 0; i < dayCount; i++) {
+    const cell = dayCells.nth(i);
+    if (!(await cell.isVisible().catch(() => false))) continue;
+
+    const className = (await cell.getAttribute('class').catch(() => '')) || '';
+    const text = normalizeSpaces(await cell.textContent().catch(() => ''));
+    if (!/^\d+$/.test(text)) continue;
+    if (/disabled|date-disabled|not-notable/i.test(className)) continue;
+
+    await cell.scrollIntoViewIfNeeded().catch(() => {});
+    await cell.click({ force: true });
+    await page.waitForTimeout(900);
+    await waitForSlotsVisible(page, 10000).catch(() => {});
+
+    activeTable = await readActiveCalendarTable(page);
+    if (activeTable.dataDia === slotDate) return;
+  }
+
+  throw new Error(`No se encontro la fecha ${slotDate} en el calendario.`);
 }
 
 async function main() {
@@ -156,41 +244,7 @@ async function main() {
   const page = await browser.newPage();
 
   try {
-    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
-
-    const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
-    await bookingRunInput.fill(rut);
-    await bookingRunInput.dispatchEvent('input');
-    await bookingRunInput.dispatchEvent('change');
-
-    const branchSelect = page.locator('#ubicacion');
-    const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
-      return options
-        .map((option) => ({
-          value: option.value,
-          label: (option.textContent || '').trim(),
-        }))
-        .filter((option) => option.value && option.label);
-    });
-
-    const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
-      || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
-
-    if (!selectedBranch) {
-      throw new Error(`No encontre la sucursal ${branchName}`);
-    }
-
-    await branchSelect.selectOption(selectedBranch.value);
-    await branchSelect.dispatchEvent('change');
-
-    const nextButton = page.locator('#agendar #step-0 #btn-step-one');
-    await nextButton.waitFor({ state: 'visible', timeout: 10000 });
-    await page.waitForFunction(() => {
-      const button = document.querySelector('#agendar #step-0 #btn-step-one');
-      return !!button && !button.hasAttribute('disabled');
-    }, undefined, { timeout: 10000 });
-    await nextButton.click();
-
+    await openBookingStepOne(page, rut, branchName);
     await page.locator('a[href="#profesional-tab"]').click();
     await waitForProfessionalResults(page);
 
@@ -237,10 +291,7 @@ async function main() {
       throw new Error(`No encontre match real para ${query}`);
     }
 
-    const targetRow = page.locator(`li.fila-profesional[data-id-profesional="${bestCandidate.id}"]`).first();
-    await targetRow.locator('button.other-options.btn').click();
-
-    await waitForCalendar(page);
+    await openProfessionalAgenda(page, bestCandidate.id);
     await page.waitForTimeout(800);
 
     const availableDayIndices = await page.locator('#div_picker li.days-cell.cell').evaluateAll((cells) => {
@@ -272,11 +323,13 @@ async function main() {
       if (slots.length >= MAX_SLOTS) break;
 
       const dayCell = page.locator('#div_picker li.days-cell.cell').nth(index);
+      if (!(await dayCell.isVisible().catch(() => false))) continue;
       await dayCell.scrollIntoViewIfNeeded().catch(() => {});
       const previousHiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
       const previousDateLabel = normalizeSpaces(await page.locator('#dia-fecha').textContent().catch(() => ''));
       const previousActiveTable = await readActiveCalendarTable(page);
-      await dayCell.click({ force: true });
+      const clicked = await dayCell.click({ force: true }).then(() => true).catch(() => false);
+      if (!clicked) continue;
 
       await page.waitForFunction(({ dayIndex, previousHiddenDateValue, previousDateLabelValue, previousActiveDataDiaValue, previousTimesValue }) => {
         const hiddenInput = document.querySelector('#dia_hidden');
@@ -348,6 +401,25 @@ async function main() {
       });
     }
 
+    if (!slots.length) {
+      const activeTable = await readActiveCalendarTable(page);
+      const fallbackTime = normalizeSpaces(pickRandomItem(activeTable.times) || '');
+      const fallbackDate = isoToDisplayDate(activeTable.dataDia || '');
+      if (fallbackDate && fallbackTime) {
+        slots.push({
+          date: fallbackDate,
+          time: fallbackTime,
+          dataDia: activeTable.dataDia,
+          booking_url: AGENDA_URL,
+          professional: bestCandidate.name,
+          professionalId: bestCandidate.id,
+          specialty: bestCandidate.specialty,
+          alert_text: bestCandidate.alert_text,
+          label: `${fallbackDate} ${fallbackTime}`,
+        });
+      }
+    }
+
     const antoniaResponse = {
       source: 'antonia_ayudando_a_agendar_via_web_contactar',
       specialty: bestCandidate.specialty,
@@ -386,6 +458,7 @@ async function bookSlot() {
   const patientEmail = process.env.MEDINET_PATIENT_EMAIL || '';
   const patientFono = process.env.MEDINET_PATIENT_FONO || '';
   const patientDireccion = process.env.MEDINET_PATIENT_DIRECCION || '';
+  const bookingStepPauseMs = Number(process.env.MEDINET_BOOK_STEP_PAUSE_MS || 2000);
 
   if (!rut || !professionalId || !slotDate || !slotTime) {
     throw new Error('Define MEDINET_RUT, MEDINET_PROFESSIONAL_ID, MEDINET_SLOT_DATE, MEDINET_SLOT_TIME.');
@@ -393,216 +466,316 @@ async function bookSlot() {
 
   const browser = await chromium.launch({ headless: !headed });
   const page = await browser.newPage();
-
-  try {
-    // Step 1: Navigate and enter RUT
-    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
-
-    const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
-    await bookingRunInput.fill(rut);
-    await bookingRunInput.dispatchEvent('input');
-    await bookingRunInput.dispatchEvent('change');
-
-    // Step 2: Select branch
-    const branchSelect = page.locator('#ubicacion');
-    const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
-      return options
-        .map((option) => ({ value: option.value, label: (option.textContent || '').trim() }))
-        .filter((option) => option.value && option.label);
-    });
-
-    const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
-      || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
-
-    if (!selectedBranch) throw new Error(`No encontre la sucursal ${branchName}`);
-
-    await branchSelect.selectOption(selectedBranch.value);
-    await branchSelect.dispatchEvent('change');
-
-    // Step 3: Click next
-    const nextButton = page.locator('#agendar #step-0 #btn-step-one');
-    await nextButton.waitFor({ state: 'visible', timeout: 10000 });
-    await page.waitForFunction(() => {
-      const button = document.querySelector('#agendar #step-0 #btn-step-one');
-      return !!button && !button.hasAttribute('disabled');
-    }, undefined, { timeout: 10000 });
-    await nextButton.click();
-
-    // Step 4: Go to professional tab and find the professional
-    await page.locator('a[href="#profesional-tab"]').click();
-    await waitForProfessionalResults(page);
-
-    const targetRow = page.locator(`li.fila-profesional[data-id-profesional="${professionalId}"]`).first();
-    await targetRow.locator('button.other-options.btn').click();
-
-    // Step 5: Wait for calendar and select the correct date
-    await waitForCalendar(page);
-    await page.waitForTimeout(800);
-
-    // Find and click the day cell that corresponds to slotDate
-    const targetDayIndex = await page.evaluate((targetDate) => {
-      const tables = Array.from(document.querySelectorAll('.table-horarios'));
+  const pauseStep = async () => {
+    if (bookingStepPauseMs > 0) {
+      await page.waitForTimeout(bookingStepPauseMs);
+    }
+  };
+  const clickRequestedSlot = async () => {
+    const clickedReservar = await page.evaluate(({ requestedDate, requestedTime }) => {
+      const tables = Array.from(document.querySelectorAll(`.table-horarios[data-dia="${requestedDate}"]`));
       for (const table of tables) {
-        if (table.getAttribute('data-dia') === targetDate) {
-          return -2; // already visible
+        const tableStyle = getComputedStyle(table);
+        if (tableStyle.display === 'none' || tableStyle.visibility === 'hidden') continue;
+        const buttons = Array.from(table.querySelectorAll('button.btn-reservar[data-hora]'));
+        const button = buttons.find((item) => {
+          const buttonStyle = getComputedStyle(item);
+          return buttonStyle.display !== 'none'
+            && buttonStyle.visibility !== 'hidden'
+            && (item.getAttribute('data-hora') || '').trim() === requestedTime;
+        });
+        if (button) {
+          button.click();
+          return true;
         }
       }
-      const cells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
-      for (let i = 0; i < cells.length; i++) {
-        const text = (cells[i].textContent || '').trim();
-        if (/^\d+$/.test(text) && !/disabled|date-disabled|not-notable/i.test(cells[i].className || '')) {
-          return i;
-        }
-      }
-      return -1;
-    }, slotDate);
-
-    // Click through calendar days to find the right date
-    const daysCells = page.locator('#div_picker li.days-cell.cell');
-    const dayCount = await daysCells.count();
-    let dateFound = false;
-
-    for (let i = 0; i < dayCount; i++) {
-      const cell = daysCells.nth(i);
-      const className = await cell.getAttribute('class').catch(() => '');
-      const text = normalizeSpaces(await cell.textContent().catch(() => ''));
-
-      if (!(/^\d+$/.test(text)) || /disabled|date-disabled|not-notable/i.test(className || '')) continue;
-
-      await cell.scrollIntoViewIfNeeded().catch(() => {});
-      await cell.click({ force: true });
-      await page.waitForTimeout(1200);
-
-      const activeTable = await readActiveCalendarTable(page);
-      if (activeTable.dataDia === slotDate) {
-        dateFound = true;
-        break;
-      }
+      return false;
+    }, { requestedDate: slotDate, requestedTime: slotTime });
+    if (!clickedReservar) {
+      throw new Error(`No se encontro un boton visible para ${slotDate} ${slotTime}.`);
     }
-
-    if (!dateFound) {
-      // Try checking if the date is already active
-      const activeTable = await readActiveCalendarTable(page);
-      if (activeTable.dataDia !== slotDate) {
-        throw new Error(`No se encontro la fecha ${slotDate} en el calendario.`);
-      }
-    }
-
-    // Step 6: Click the "Reservar" button for the selected time
-    const reservarButton = page.locator(`button.btn-reservar[data-hora="${slotTime}"]`).first();
-    await reservarButton.waitFor({ state: 'visible', timeout: 10000 });
-    await reservarButton.click();
-
-    // Step 7: Wait for the booking form to appear
+    await pauseStep();
     await page.waitForTimeout(2000);
+    await pauseStep();
+  };
+  const fillPatientForm = async () => {
+    const selectAnyAppointmentType = async () => {
+      const appointmentType = page.locator('#id_appointment_type:visible').first();
+      const isVisible = await appointmentType.isVisible().catch(() => false);
+      if (!isVisible) return false;
+      await appointmentType.evaluate((select) => {
+        const options = Array.from(select.querySelectorAll('option'));
+        const firstValid = options.find((o) => o.value && !o.disabled);
+        if (firstValid) {
+          select.value = firstValid.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      return true;
+    };
+    const fillIfVisible = async (selector, value) => {
+      if (!value) return false;
+      const locator = page.locator(`${selector}:visible`).first();
+      const isVisible = await locator.isVisible().catch(() => false);
+      if (!isVisible) return false;
+      await locator.fill(value);
+      return true;
+    };
+    const selectIfVisible = async (selector, value) => {
+      const locator = page.locator(`${selector}:visible`).first();
+      const isVisible = await locator.isVisible().catch(() => false);
+      if (!isVisible) return false;
+      await locator.selectOption(value);
+      return true;
+    };
 
-    // Step 8: Select first appointment type option (always first)
-    await page.locator('#id_appointment_type').evaluate((select) => {
-      const options = Array.from(select.querySelectorAll('option'));
-      const firstValid = options.find((o) => o.value && !o.disabled);
-      if (firstValid) {
-        select.value = firstValid.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
+    await selectAnyAppointmentType();
 
     await page.waitForTimeout(500);
+    await pauseStep();
 
-    // Step 9: Fill in patient data
-    if (patientNombres) {
-      await page.locator('#paciente_nombres').fill(patientNombres);
-    }
-    if (patientApPaterno) {
-      await page.locator('#paciente_ap_paterno').fill(patientApPaterno);
-    }
-    if (patientApMaterno) {
-      await page.locator('#paciente_ap_materno').fill(patientApMaterno);
+    const isCompactStoredPatientForm = await page.evaluate(() => {
+      const visible = (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden' && el.getBoundingClientRect().height > 0;
+      };
+
+      return visible('#id_appointment_type')
+        && visible('#paciente_rut[disabled]')
+        && visible('#paciente_email')
+        && visible('#paciente_fono')
+        && !visible('#paciente_nombres')
+        && !visible('#paciente_ap_paterno')
+        && !visible('#paciente_ap_materno')
+        && !visible('#paciente_sexo')
+        && !visible('#paciente_prevision')
+        && !visible('#paciente_nacimiento')
+        && !visible('#paciente_direccion');
+    });
+
+    if (isCompactStoredPatientForm) {
+      await fillIfVisible('#paciente_email', patientEmail);
+      await fillIfVisible('#paciente_fono', patientFono);
+      await pauseStep();
+      return;
     }
 
-    // Sexo: always "Indeterminado" (value=3)
-    await page.locator('#paciente_sexo').selectOption('3');
+    await fillIfVisible('#paciente_nombres', patientNombres);
+    await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
+    await fillIfVisible('#paciente_ap_materno', patientApMaterno);
 
-    // Prevision/Aseguradora
+    await selectIfVisible('#paciente_sexo', '3');
+
     if (patientPrevision) {
-      const previsionOptions = await page.locator('#paciente_prevision option').evaluateAll((options) => {
+      const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
         return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
       });
       const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
         || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
       if (matchedPrevision) {
-        await page.locator('#paciente_prevision').selectOption(matchedPrevision.value);
+        await selectIfVisible('#paciente_prevision', matchedPrevision.value);
       }
     }
 
-    // Fecha de nacimiento
     if (patientNacimiento) {
-      await page.locator('#paciente_nacimiento').evaluate((input, dob) => {
-        input.removeAttribute('readonly');
-        input.value = dob;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      }, patientNacimiento);
+      const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
+      const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
+      if (nacimientoVisible) {
+        await nacimientoLocator.evaluate((input, dob) => {
+          input.removeAttribute('readonly');
+          input.value = dob;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }, patientNacimiento);
+      }
     }
 
-    // Email
-    if (patientEmail) {
-      await page.locator('#paciente_email').fill(patientEmail);
+    await fillIfVisible('#paciente_email', patientEmail);
+    await fillIfVisible('#paciente_fono', patientFono);
+    await fillIfVisible('#paciente_direccion', patientDireccion);
+    await pauseStep();
+  };
+
+  try {
+    await openBookingStepOne(page, rut, branchName);
+    await pauseStep();
+
+    await openProfessionalAgenda(page, professionalId);
+    await pauseStep();
+
+    await selectCalendarDate(page, slotDate);
+    await pauseStep();
+
+    const confirmEvidence = [];
+    const onResponse = async (response) => {
+      try {
+        const request = response.request();
+        const method = request.method();
+        const url = response.url();
+        if (method !== 'POST') return;
+        if (!/clinyco\.medinetapp\.com/i.test(url)) return;
+        if (/analytics|google-analytics|g\/collect/i.test(url)) return;
+        if (!/(agenda|reserv|cita|appointment|medinet)/i.test(url)) return;
+        const status = response.status();
+        const contentType = (response.headers()['content-type'] || '').toLowerCase();
+        let excerpt = '';
+        if (contentType.includes('application/json') || contentType.includes('text/')) {
+          const text = await response.text().catch(() => '');
+          excerpt = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        }
+        confirmEvidence.push({ method, status, url, excerpt });
+      } catch (_) {
+        // noop: best-effort capture
+      }
+    };
+    page.on('response', onResponse);
+    let confirmClicked = false;
+    let successResult = {
+      success: false,
+      message: 'No se completo la confirmacion.',
+      emailSent: '',
+      reservationId: '',
+      explicitError: false,
+    };
+    const maxAttempts = 2;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      await clickRequestedSlot();
+      await fillPatientForm();
+
+      await page.locator('button.btn-comprobar-cita:visible').first().click();
+      await pauseStep();
+      await page.waitForTimeout(3000);
+
+      const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
+      const hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
+      if (hasConfirmButton) {
+        await confirmarButton.click();
+      } else {
+        const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
+          hasNotText: 'Volver',
+        }).first();
+        const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
+        if (!hasFallbackButton) {
+          const formErrors = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger'))
+              .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+              .filter(Boolean)
+              .slice(0, 5);
+          }).catch(() => []);
+          throw new Error(`No apareció un botón util para confirmar reserva. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : ''}`.trim());
+        }
+        await fallbackButton.click();
+      }
+      confirmClicked = true;
+      await pauseStep();
+
+      await page.waitForTimeout(3000);
+
+      successResult = await page.evaluate(({ expectedEmail }) => {
+        const successDiv = document.querySelector('.validacion-completada');
+        const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+        const fallbackSuccess = /reserva se ha realizado con e[xé]ito|reserva confirmada|cita agendada|agendada con e[xé]ito/i.test(bodyText);
+        const explicitError = /ocurri[oó] un error|por favor intenta nuevamente/i.test(bodyText);
+        const retryButton = document.querySelector('button.btn.btn-primary[onclick="controlStepper(2, 0); loadCupos();"]');
+        const retryVisible = !!retryButton && (() => {
+          const style = window.getComputedStyle(retryButton);
+          return style.display !== 'none' && style.visibility !== 'hidden' && retryButton.getBoundingClientRect().height > 0;
+        })();
+        const reservationMatch = bodyText.match(/(?:cita|reserva)\s*#?\s*(\d{5,})/i);
+        const reservationId = reservationMatch ? reservationMatch[1] : '';
+
+        if (!successDiv) {
+          return {
+            success: !explicitError && fallbackSuccess,
+            message: explicitError
+              ? 'La pagina mostro un error al confirmar la reserva.'
+              : (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'No se encontro pantalla de confirmacion.'),
+            emailSent: '',
+            reservationId,
+            explicitError,
+            retryVisible,
+          };
+        }
+
+        const style = window.getComputedStyle(successDiv);
+        const successVisible = style.display !== 'none' && style.visibility !== 'hidden' && successDiv.getBoundingClientRect().height > 0;
+        const subtitle = (successDiv.querySelector('.validacion-completada-subtitle')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const emailSpan = (successDiv.querySelector('#email-text')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const successBySubtitle = subtitle.includes('reserva se ha realizado con éxito') || subtitle.includes('reserva se ha realizado con exito');
+        const expected = String(expectedEmail || '').trim().toLowerCase();
+        const shown = String(emailSpan || '').trim().toLowerCase();
+        const successByEmail = !!shown && (!expected || shown === expected);
+
+        return {
+          success: !explicitError && successVisible && successBySubtitle && successByEmail && (fallbackSuccess || !!subtitle),
+          message: explicitError
+            ? 'La pagina mostro un error al confirmar la reserva.'
+            : (subtitle || (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'Pantalla de confirmacion no visible.')),
+          emailSent: emailSpan,
+          reservationId,
+          explicitError,
+          retryVisible,
+          successVisible,
+        };
+      }, { expectedEmail: patientEmail });
+
+      if (!successResult.explicitError || !successResult.retryVisible || attempt === maxAttempts) {
+        break;
+      }
+
+      await page.locator('button.btn.btn-primary[onclick="controlStepper(2, 0); loadCupos();"]:visible').first().click();
+      await pauseStep();
+      await page.waitForTimeout(3000);
+      await selectCalendarDate(page, slotDate);
+      await pauseStep();
     }
 
-    // Telefono
-    if (patientFono) {
-      await page.locator('#paciente_fono').fill(patientFono);
-    }
+    page.off('response', onResponse);
+    const confirmApiOk = confirmEvidence.some((e) => e.status >= 200 && e.status < 300);
 
-    // Direccion
-    if (patientDireccion) {
-      await page.locator('#paciente_direccion').fill(patientDireccion);
-    }
+    await page.locator('button.btn-primary[onclick="controlStepper(0, 0)"]:visible').first().click().catch(() => {});
 
-    // Step 10: Click ENVIAR
-    await page.locator('button.btn-comprobar-cita').click();
-
-    // Step 11: Wait 3 seconds for validation screen
-    await page.waitForTimeout(3000);
-
-    // Step 12: Click CONFIRMAR RESERVA
-    const confirmarButton = page.locator('button.btn-confirmar');
-    await confirmarButton.waitFor({ state: 'visible', timeout: 15000 });
-    await confirmarButton.click();
-
-    // Step 13: Wait for success screen
-    await page.waitForTimeout(3000);
-
-    // Step 14: Check for success message
-    const successResult = await page.evaluate(() => {
-      const successDiv = document.querySelector('.validacion-completada');
-      if (!successDiv) return { success: false, message: 'No se encontro pantalla de confirmacion.' };
-
-      const style = getComputedStyle(successDiv);
-      if (style.display === 'none') return { success: false, message: 'Pantalla de confirmacion no visible.' };
-
-      const subtitle = (successDiv.querySelector('.validacion-completada-subtitle')?.textContent || '').trim();
-      const emailSpan = (successDiv.querySelector('#email-text')?.textContent || '').trim();
-
-      return {
-        success: subtitle.includes('reserva se ha realizado con éxito') || subtitle.includes('reserva se ha realizado con exito'),
-        message: subtitle,
-        emailSent: emailSpan
-      };
+    const reservationIdFromEvidence = (() => {
+      for (const ev of confirmEvidence) {
+        const match = String(ev.excerpt || '').match(/(?:cita|reserva)?\s*#?\s*(\d{5,})/i);
+        if (match) return match[1];
+      }
+      return '';
+    })();
+    const apiBookingAccepted = confirmEvidence.some((ev) => {
+      return /\/api\/agenda\/citas\/agendaweb-add\//i.test(ev.url || '')
+        && ev.status >= 200
+        && ev.status < 300
+        && /agendado_correctamente/i.test(ev.excerpt || '');
     });
+    const finalReservationId = successResult.reservationId || reservationIdFromEvidence;
+    const strictSuccess = (successResult.success && confirmApiOk && !!finalReservationId) || apiBookingAccepted;
 
-    // Step 15: Click TERMINAR
-    await page.locator('button.btn-primary[onclick="controlStepper(0, 0)"]').click().catch(() => {});
+    const finalMessage = strictSuccess
+      ? successResult.message
+      : (
+        successResult.explicitError
+          ? 'La pagina mostro un error al confirmar la reserva.'
+          : 'Medinet no devolvio una reserva verificable despues de confirmar.'
+      );
 
     const bookingResponse = {
       source: 'antonia_booking_completed',
-      success: successResult.success,
-      message: successResult.message,
+      success: strictSuccess,
+      message: finalMessage,
       emailSent: successResult.emailSent || '',
+      reservationId: finalReservationId,
+      confirmClicked,
+      confirmApiOk,
+      apiBookingAccepted,
+      confirmEvidence: confirmEvidence.slice(-6),
       slotDate,
       slotTime,
-      patient_reply: successResult.success
-        ? 'Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación. Gracias.'
-        : `Hubo un problema al confirmar la reserva: ${successResult.message}. Por favor intenta directamente en ${AGENDA_URL}`,
+      patient_reply: strictSuccess
+        ? 'Su cita ha sido asignada. Revisar email.'
+        : `Hubo un problema al confirmar la reserva: ${finalMessage}. Por favor intenta directamente en ${AGENDA_URL}`,
     };
 
     console.log('ANTONIA_RESPONSE', JSON.stringify(bookingResponse, null, 2));
@@ -623,36 +796,7 @@ async function cacheAllProfessionals() {
   const page = await browser.newPage();
 
   try {
-    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
-
-    const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
-    await bookingRunInput.fill(rut);
-    await bookingRunInput.dispatchEvent('input');
-    await bookingRunInput.dispatchEvent('change');
-
-    const branchSelect = page.locator('#ubicacion');
-    const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
-      return options
-        .map((option) => ({ value: option.value, label: (option.textContent || '').trim() }))
-        .filter((option) => option.value && option.label);
-    });
-
-    const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
-      || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
-
-    if (!selectedBranch) throw new Error(`No encontre la sucursal ${branchName}`);
-
-    await branchSelect.selectOption(selectedBranch.value);
-    await branchSelect.dispatchEvent('change');
-
-    const nextButton = page.locator('#agendar #step-0 #btn-step-one');
-    await nextButton.waitFor({ state: 'visible', timeout: 10000 });
-    await page.waitForFunction(() => {
-      const button = document.querySelector('#agendar #step-0 #btn-step-one');
-      return !!button && !button.hasAttribute('disabled');
-    }, undefined, { timeout: 10000 });
-    await nextButton.click();
-
+    await openBookingStepOne(page, rut, branchName);
     await page.locator('a[href="#profesional-tab"]').click();
     await waitForProfessionalResults(page);
 
