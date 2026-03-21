@@ -1905,17 +1905,18 @@ async function sendManagedReply({
     return resJsonSkip("duplicate_reply_suppressed");
   }
 
+  let sendFailed = false;
   try {
     await sendConversationReply(appId, conversationId, finalReply);
   } catch (sendError) {
     console.error("SEND_REPLY_ERROR:", sendError.message);
+    sendFailed = true;
     await saveConversationEvent({
       conversationId, info, channelLabel, userText,
       botReply: `[SEND_FAILED] ${finalReply}`,
       state: latestState,
       resolverDecision: { ...resolverDecision, sendError: sendError.message }
     });
-    throw sendError;
   }
   addToHistory(conversationId, "assistant", finalReply);
 
@@ -1949,7 +1950,8 @@ async function sendManagedReply({
   await persistConversationSnapshot(conversationId, latestState, channelLabel);
 
   return {
-    ok: true,
+    ok: !sendFailed,
+    sendFailed: sendFailed || undefined,
     reply: finalReply,
     delayMs,
     botMessagesSent: latestState.system.botMessagesSent,
