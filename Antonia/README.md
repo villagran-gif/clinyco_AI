@@ -1,7 +1,7 @@
 Ejecuta el runner operativo asi:
 
 ```bash
-cd /Users/box3/Documents/codex
+cd "/Users/box3/Downloads/clinyco_AI-main 2"
 MEDINET_RUT="13580388k" \
 MEDINET_QUERY="nelson" \
 MEDINET_PATIENT_PHONE="+56987297033" \

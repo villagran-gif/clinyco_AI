@@ -1,45 +1,32 @@
 export const knowledgeSheetDefinitions = [
   {
-    key: "clinics",
-    fileName: "clinics.json",
-    tabName: "sedes",
-    description: "Sedes y datos operativos simples para orientar al paciente.",
-    agentHelp: "Una fila por sede. Escribir solo informacion vigente. Si no aplica, dejar vacio.",
+    key: "professionals_detail",
+    fileName: "professionals_detail.json",
+    tabName: "Equipo medico",
+    description: "Detalle operativo completo de cada profesional: valor, horario, duracion, telemedicina, limites de edad, sobrecupo, revision de examenes y notas operativas.",
+    agentHelp: "Una fila por profesional. Incluye datos operativos confirmados y pendientes. Los campos de feedback IA se generan automaticamente.",
     columns: [
-      { header: "Activo", key: "activo", type: "boolean", description: "Escribir SI o NO.", example: "SI" },
-      { header: "Sede", key: "sede", type: "string", description: "Nombre corto de la sede.", example: "Antofagasta" },
-      { header: "Ciudad", key: "ciudad", type: "string", description: "Ciudad principal.", example: "Antofagasta" },
-      { header: "Modalidad", key: "modalidad", type: "string", description: "Presencial, telemedicina o ambos.", example: "Presencial y telemedicina" },
-      { header: "Direccion", key: "direccion", type: "string", description: "Direccion visible para el paciente.", example: "Av. Granaderos #1483" },
-      { header: "Agenda web", key: "agenda_web", type: "string", description: "Link de agenda si existe.", example: "https://clinyco.medinetapp.com/agendaweb/planned/" },
-      { header: "Solo telemedicina", key: "solo_telemedicina", type: "boolean", description: "Escribir SI solo si no hay atencion presencial.", example: "NO" },
-      { header: "Observaciones", key: "observaciones", type: "string", description: "Dato corto y util para orientar.", example: "Endoscopia solo en esta sede." },
-      { header: "Notas para el bot", key: "notas_para_bot", type: "string", description: "Regla corta para el bot.", example: "Si preguntan por endoscopia, orientar a Antofagasta." }
-    ]
-  },
-  {
-    key: "doctors",
-    fileName: "doctors.json",
-    tabName: "profesionales",
-    description: "Profesionales y lo que si se puede orientar sin revisar agenda en vivo.",
-    agentHelp: "Una fila por profesional. No poner horarios exactos aqui si cambian seguido.",
-    columns: [
-      { header: "Activo", key: "activo", type: "boolean", description: "Escribir SI o NO.", example: "SI" },
-      { header: "Profesional", key: "profesional", type: "string", description: "Nombre y apellido.", example: "Rodrigo Villagran" },
-      { header: "Especialidad", key: "especialidad", type: "string", description: "Especialidad simple.", example: "Cirugia bariatrica" },
-      { header: "Sedes", key: "sedes", type: "list", description: "Separar varias sedes con |.", example: "Santiago|Telemedicina" },
-      { header: "Modalidad", key: "modalidad", type: "string", description: "Presencial, telemedicina o ambos.", example: "Telemedicina y cirugia" },
-      { header: "Procedimientos", key: "procedimientos", type: "list", description: "Separar con |.", example: "Balon gastrico|Manga gastrica|Bypass gastrico" },
-      { header: "Agenda directa disponible", key: "agenda_directa_disponible", type: "boolean", description: "SI si el bot puede derivar a agenda web sin inventar horarios.", example: "NO" },
-      { header: "Horario", key: "horario", type: "string", description: "Horario referencial u observacion breve. No escribir horas no confirmadas.", example: "Lunes a viernes, horario sujeto a confirmacion." },
-      { header: "Valor", key: "valor", type: "string", description: "Escribir el valor en pesos chilenos. Ejemplo: 70000 o 70 mil.", example: "70000" },
-      { header: "Previo pago", key: "previo_pago", type: "string", description: "Escribir SI o NO.", example: "SI" },
-      { header: "Duracion", key: "duracion", type: "string", description: "Escribir minutos. Ejemplo: 30 min.", example: "30 min" },
-      { header: "Telemedicina", key: "telemedicina", type: "string", description: "Usar: SI, NO, SOLO TELEMEDICINA o PRESENCIAL Y TELEMEDICINA.", example: "SI" },
-      { header: "Motivo inactividad", key: "motivo_inactividad", type: "string", description: "Si esta inactivo, explicar el motivo en lenguaje simple.", example: "Licencia medica por 60 dias aprox." },
-      { header: "Mensaje para el cliente", key: "mensaje_cliente_inactivo", type: "string", description: "Mensaje sugerido para responderle al paciente si el profesional esta inactivo.", example: "El doctor esta temporalmente sin agenda por licencia medica. Si quieres, te ayudo con otra alternativa." },
-      { header: "Observaciones", key: "observaciones", type: "string", description: "Dato corto y real.", example: "Las cirugias en Santiago se realizan en Clinica Tabancura." },
-      { header: "Notas para el bot", key: "notas_para_bot", type: "string", description: "Regla corta de uso.", example: "No prometer hora exacta si no hay acceso real a agenda." }
+      { header: "Orden web", key: "orden_web", type: "string", description: "Posicion del profesional en la agenda web.", example: "1" },
+      { header: "Nombre profesional", key: "nombre_profesional", type: "string", description: "Nombre completo del profesional.", example: "Peggy Huerta Pizarro" },
+      { header: "Nombre en validacion", key: "nombre_validacion", type: "string", description: "Nombre usado internamente para validacion.", example: "Peggy Huerta Pizarro" },
+      { header: "Categoria operativa", key: "categoria_operativa", type: "string", description: "Categoria del profesional.", example: "Psicologos" },
+      { header: "Especialidad informada en pagina web", key: "especialidad_web", type: "string", description: "Especialidad mostrada en la pagina web.", example: "Psicóloga" },
+      { header: "Descripcion del profesional en página web", key: "descripcion_web", type: "string", description: "Descripcion publica del profesional.", example: "Profesional que evalúa y apoya la salud mental..." },
+      { header: "Estado validacion", key: "estado_validacion", type: "string", description: "Estado de la validacion: POR CONFIRMAR, Pendiente, etc.", example: "POR CONFIRMAR" },
+      { header: "Horario", key: "horario", type: "string", description: "Horario de atencion.", example: "Lunes a Viernes (09:20 a 15:00)" },
+      { header: "Valor", key: "valor", type: "string", description: "Valor de la consulta.", example: "35.000 CLP" },
+      { header: "VALOR OBSERVACION", key: "valor_observacion", type: "string", description: "Detalle adicional del valor.", example: "$35.000 Particular" },
+      { header: "PAGO PREVIO A CONSULTA", key: "previo_pago", type: "string", description: "SI o NO, si requiere pago previo.", example: "NO" },
+      { header: "DURACION DE CONSULTA", key: "duracion", type: "string", description: "Duracion de la consulta.", example: "40 min" },
+      { header: "LIMITES DE EDAD. (Si no tiene límite superior=sin limite superior)", key: "limites_edad", type: "string", description: "Rango de edad que atiende.", example: "desde los 15 años" },
+      { header: "Atención Presencial y/o Telemedicina", key: "telemedicina", type: "string", description: "Modalidad de atencion.", example: "SI PRESENCIAL - SI TELEMEDICINA" },
+      { header: "Sobrecupo", key: "sobrecupo", type: "string", description: "Si permite sobrecupo.", example: "NO" },
+      { header: "Revision de examenes sin costo. SI o NO.", key: "revision_examenes", type: "string", description: "SI o NO.", example: "SI" },
+      { header: "Revi. Exam sin costo. Cuantos dÍas ?", key: "revision_examenes_dias", type: "string", description: "Plazo para revision sin costo.", example: "15 días post consulta" },
+      { header: "Observaciones operativas", key: "observaciones", type: "string", description: "Observaciones internas.", example: "SIN OBSERVACIONES" },
+      { header: "Notas", key: "notas", type: "string", description: "Notas adicionales.", example: "3 sobrecupos por dia" },
+      { header: "AGENDAMIENTO WEB VISIBLE Y PERMITIDO", key: "agendamiento_web", type: "string", description: "SI si el profesional esta visible en agenda web.", example: "SI" },
+      { header: "Coincidencia fuente", key: "coincidencia_fuente", type: "string", description: "Tipo de match con fuente de datos.", example: "exacto" }
     ]
   },
   {
@@ -58,21 +45,6 @@ export const knowledgeSheetDefinitions = [
       { header: "Sedes sugeridas", key: "sedes_sugeridas", type: "list", description: "Separar con |.", example: "Antofagasta|Santiago" },
       { header: "Observaciones", key: "observaciones", type: "string", description: "Dato corto y operativo.", example: "Si hay interes y cobertura, priorizar derivacion." },
       { header: "Notas para el bot", key: "notas_para_bot", type: "string", description: "Regla corta para orientar.", example: "Explicar que el IMC es solo referencia inicial." }
-    ]
-  },
-  {
-    key: "coverage_rules",
-    fileName: "coverage_rules.json",
-    tabName: "reglas_de_cobertura",
-    description: "Reglas simples de previsiones, Fonasa e Isapre.",
-    agentHelp: "Una fila por regla. Escribir la regla en lenguaje simple.",
-    columns: [
-      { header: "Activo", key: "activo", type: "boolean", description: "Escribir SI o NO.", example: "SI" },
-      { header: "Cobertura o prevision", key: "cobertura", type: "string", description: "Ejemplo: FONASA, Isapre, Particular.", example: "FONASA" },
-      { header: "Modalidad", key: "modalidad", type: "string", description: "Ejemplo: Tramo A, Tramo B o vacio.", example: "Tramo A" },
-      { header: "Regla simple para el bot", key: "regla_simple", type: "string", description: "Explicacion corta para orientar.", example: "En Tramo A el PAD no aplica." },
-      { header: "Que dato pedir despues", key: "siguiente_dato", type: "string", description: "Dato siguiente mas util.", example: "Tramo" },
-      { header: "Observaciones internas", key: "observaciones", type: "string", description: "Solo detalle corto y claro.", example: "Para Isapre generica, pedir aseguradora exacta." }
     ]
   },
   {

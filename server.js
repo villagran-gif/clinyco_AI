@@ -2,7 +2,7 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, readFileSync, constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
@@ -74,12 +74,98 @@ function resolveMedinetAntoniaScript() {
 const MEDINET_ANTONIA_SCRIPT = resolveMedinetAntoniaScript();
 const execFileAsync = promisify(execFile);
 
+const MEDINET_CACHE_FILE = fileURLToPath(new URL("./data/medinet_professionals_cache.json", import.meta.url));
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function readMedinetCache() {
+  try {
+    const raw = readFileSync(MEDINET_CACHE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function isCacheStale() {
+  const cache = readMedinetCache();
+  if (!cache || !cache.cachedAt) return true;
+  return Date.now() - new Date(cache.cachedAt).getTime() > CACHE_TTL_MS;
+}
+
+function matchProfessionalFromCache(text) {
+  const cache = readMedinetCache();
+  if (!cache || !Array.isArray(cache.professionals) || !cache.professionals.length) return null;
+
+  const requested = normalizeKey(text);
+  if (!requested) return null;
+
+  let bestMatch = null;
+  let bestPriority = 99;
+
+  for (const prof of cache.professionals) {
+    const normalizedName = normalizeKey(prof.name || "");
+    const normalizedSpecialty = normalizeKey(prof.specialty || "");
+    const nameTokens = normalizedName.split(/\s+/).filter(Boolean);
+
+    let priority = 99;
+    if (normalizedName === requested) priority = 1;
+    else if (normalizedName.startsWith(requested)) priority = 3;
+    else if (normalizedName.includes(requested)) priority = 4;
+    else if (normalizedSpecialty === requested) priority = 5;
+    else if (normalizedSpecialty.includes(requested)) priority = 7;
+    else if (nameTokens.some((t) => t === requested)) priority = 8;
+    else if (nameTokens.some((t) => t.startsWith(requested) || requested.startsWith(t))) priority = 9;
+    else {
+      // multi-token match: check if all tokens in request appear in name
+      const requestedTokens = requested.split(/\s+/).filter(Boolean);
+      if (requestedTokens.length >= 2 && requestedTokens.every((rt) => nameTokens.some((nt) => nt.includes(rt) || rt.includes(nt)))) {
+        priority = 2;
+      }
+    }
+
+    if (priority < bestPriority) {
+      bestPriority = priority;
+      bestMatch = prof;
+    }
+  }
+
+  return bestPriority < 99 ? bestMatch : null;
+}
+
+async function runMedinetAntoniaCache() {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+  try {
+    const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
+      env: {
+        ...process.env,
+        MEDINET_MODE: "cache",
+        MEDINET_RUT,
+        MEDINET_HEADED: "false"
+      },
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024
+    });
+    console.log("MEDINET CACHE REFRESH completed");
+    return true;
+  } catch (error) {
+    console.error("MEDINET CACHE REFRESH ERROR:", error.message);
+    return false;
+  }
+}
+
 const MEDINET_DISCARD_TOKENS = new Set([
   "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
   "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
   "POR", "FAVOR", "DOCTOR", "DOCTORA", "DR", "DRA", "EL", "LA", "LOS", "LAS", "DE",
   "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "TENGO", "TENER",
-  "RESERVAR", "SOLICITAR", "PEDIR"
+  "RESERVAR", "SOLICITAR", "PEDIR",
+  // títulos profesionales que contaminan la búsqueda
+  "PSICOLOGA", "PSICOLOGO", "NUTRICIONISTA", "NUTRIOLOGA", "NUTRIOLOGO",
+  "KINESIOLOGOA", "KINESIOLOGA", "KINESIOLOGO", "PEDIATRA", "CIRUJANO", "CIRUJANA",
+  "ENDOCRINOLOGO", "ENDOCRINOLOGA", "DERMATOLOGO", "DERMATOLOGA",
+  "GINECOLOGO", "GINECOLOGA", "TRAUMATOLOGO", "TRAUMATOLOGA",
+  "OFTALMOLOGO", "OFTALMOLOGA", "PSIQUIATRA", "INTERNISTA",
+  "ENFERMERA", "ENFERMERO", "MATRONA", "MATRON"
 ]);
 
 function sanitizeMedinetProfessionalCandidate(rawValue) {
@@ -107,12 +193,32 @@ function extractCanonicalSpecialtyQuery(text) {
 }
 
 const FIRST_NAME_ALIASES = {
-  RODRIGO: "rodrigo villagran", VILLAGRAN: "rodrigo villagran", VILLAGRA: "rodrigo villagran",
-  NELSON: "nelson aros", AROS: "nelson aros",
-  ALBERTO: "alberto sirabo", SIRABO: "alberto sirabo",
-  FRANCISCO: "francisco bencina", BENCINA: "francisco bencina",
-  EDMUNDO: "edmundo ziede", ZIEDE: "edmundo ziede",
-  ROSIRYS: "rosirys ruiz", RUIZ: "rosirys ruiz"
+  // Cirugía Digestiva
+  VILLAGRAN: "rodrigo villagran", VILLAGRA: "rodrigo villagran",
+  AROS: "nelson aros",
+  SIRABO: "alberto sirabo",
+  // Cirugía Plástica
+  ZIEDE: "edmundo ziede",
+  ROSIRYS: "rosirys ruiz",
+  // Nutrición
+  CERQUERA: "magaly cerquera",
+  SAAVEDRA: "katherine saavedra",
+  // Psicología
+  PEGGY: "peggy huerta", HUERTA: "peggy huerta",
+  NARITELLI: "francisca naritelli",
+  // Nutriología
+  YEVENES: "ingrid yevenes",
+  MOYA: "fernando moya",
+  // Medicina Deportiva
+  RAMOS: "pablo ramos",
+  // Medicina General
+  NUNEZ: "carlos nunez",
+  // Pediatría
+  JALDIN: "daniza jaldin",
+  // Endocrinología Infantil
+  BANCALARI: "rodrigo bancalari",
+  // Otros
+  BENCINA: "francisco bencina",
 };
 
 function extractKnownProfessionalAlias(text) {
@@ -168,6 +274,97 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
     console.error("ANTONIA JSON PARSE ERROR:", parseError.message, "raw:", match[1].slice(0, 200));
     return null;
   }
+}
+
+async function runMedinetAntoniaBooking({ slot, patientData }) {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+  if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
+    env: {
+      ...process.env,
+      MEDINET_MODE: "book",
+      MEDINET_RUT,
+      MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
+      MEDINET_SLOT_DATE: String(slot.dataDia || ""),
+      MEDINET_SLOT_TIME: String(slot.time || ""),
+      MEDINET_PATIENT_NOMBRES: String(patientData.nombres || ""),
+      MEDINET_PATIENT_AP_PATERNO: String(patientData.apPaterno || ""),
+      MEDINET_PATIENT_AP_MATERNO: String(patientData.apMaterno || ""),
+      MEDINET_PATIENT_PREVISION: String(patientData.prevision || ""),
+      MEDINET_PATIENT_NACIMIENTO: String(patientData.nacimiento || ""),
+      MEDINET_PATIENT_EMAIL: String(patientData.email || ""),
+      MEDINET_PATIENT_FONO: String(patientData.fono || ""),
+      MEDINET_PATIENT_DIRECCION: String(patientData.direccion || ""),
+      MEDINET_HEADED: "false"
+    },
+    timeout: timeoutMs,
+    maxBuffer: 10 * 1024 * 1024
+  });
+
+  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
+  if (!match) return null;
+
+  try {
+    return JSON.parse(match[1]);
+  } catch (parseError) {
+    console.error("ANTONIA BOOKING JSON PARSE ERROR:", parseError.message);
+    return null;
+  }
+}
+
+function detectBookingSlotChoice(text, availableSlots) {
+  if (!availableSlots || !availableSlots.length) return null;
+  const cleaned = String(text || "").trim();
+
+  // Match patterns: "1", "la 1", "opcion 1", "hora 1", "numero 1", "quiero la 1", etc.
+  const numberMatch = cleaned.match(/(?:^|\s)(\d)(?:\s|$|[.,;!?])/);
+  const directMatch = cleaned.match(/^(\d)$/);
+  const phraseMatch = cleaned.match(/(?:la|opcion|hora|numero|n[uú]mero|quiero|elijo|prefiero)\s*(\d)/i);
+
+  const choiceStr = directMatch?.[1] || phraseMatch?.[1] || numberMatch?.[1];
+  if (!choiceStr) return null;
+
+  const index = parseInt(choiceStr, 10) - 1;
+  if (index < 0 || index >= availableSlots.length) return null;
+
+  return { index, slot: availableSlots[index] };
+}
+
+function splitApellidos(apellidos) {
+  if (!apellidos) return { paterno: "", materno: "" };
+  const parts = String(apellidos).trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return { paterno: parts[0], materno: parts.slice(1).join(" ") };
+  }
+  return { paterno: parts[0] || "", materno: "" };
+}
+
+function buildPatientDataFromState(state) {
+  const cd = state?.contactDraft || {};
+  const { paterno, materno } = splitApellidos(cd.c_apellidos);
+  return {
+    nombres: cd.c_nombres || "",
+    apPaterno: paterno,
+    apMaterno: materno,
+    prevision: cd.c_aseguradora || "",
+    nacimiento: cd.c_fecha || "",
+    email: cd.c_email || "",
+    fono: cd.c_tel1 || "",
+    direccion: cd.c_direccion || ""
+  };
+}
+
+function getMissingBookingFields(patientData) {
+  const required = [
+    { key: "nombres", label: "nombre completo" },
+    { key: "apPaterno", label: "apellido paterno" },
+    { key: "prevision", label: "previsión/aseguradora" },
+    { key: "email", label: "correo electrónico" },
+    { key: "fono", label: "teléfono" },
+    { key: "direccion", label: "dirección" }
+  ];
+  return required.filter((f) => !patientData[f.key]);
 }
 
 const DEBUG_DASHBOARD_KEY = process.env.DEBUG_DASHBOARD_KEY || null;
@@ -295,14 +492,28 @@ const MODALIDAD_FROM_ASEGURADORA = {
   "VIDA TRES": "Vida Tres"
 };
 
-const KNOWN_AGENDA_PROFESSIONALS = new Set([
-  "RODRIGO VILLAGRAN",
-  "NELSON AROS",
-  "ALBERTO SIRABO",
+const KNOWN_AGENDA_PROFESSIONALS_FALLBACK = [
+  "RODRIGO VILLAGRAN", "NELSON AROS", "ALBERTO SIRABO",
+  "EDMUNDO ZIEDE", "ROSIRYS RUIZ",
+  "MAGALY CERQUERA", "KATHERINE SAAVEDRA",
+  "PEGGY HUERTA", "FRANCISCA NARITELLI",
+  "KATHERINNE ARAYA", "INGRID YEVENES", "FERNANDO MOYA", "SOFIA ARAYA",
+  "PABLO RAMOS", "CARLOS NUNEZ", "DANIZA JALDIN", "RODRIGO BANCALARI",
   "FRANCISCO BENCINA",
-  "EDMUNDO ZIEDE",
-  "ROSIRYS RUIZ"
-]);
+];
+
+function buildKnownAgendaProfessionals() {
+  const cache = readMedinetCache();
+  const names = new Set(KNOWN_AGENDA_PROFESSIONALS_FALLBACK);
+  if (cache && Array.isArray(cache.professionals)) {
+    for (const prof of cache.professionals) {
+      if (prof.name) names.add(normalizeKey(prof.name));
+    }
+  }
+  return names;
+}
+
+let KNOWN_AGENDA_PROFESSIONALS = buildKnownAgendaProfessionals();
 
 const SORTED_ASEGURADORA_ALIASES = Object.entries(ASEGURADORA_ALIASES).sort((a, b) => b[0].length - a[0].length);
 
@@ -1490,6 +1701,15 @@ function buildInitialConversationState() {
       response: null,
       classifiedIntent: null
     },
+    booking: {
+      pendingSlots: null,
+      pendingProfessional: null,
+      pendingSpecialty: null,
+      awaitingSlotChoice: false,
+      awaitingPatientData: false,
+      chosenSlot: null,
+      missingFields: null
+    },
     system: {
       aiEnabled: true,
       humanTakenOver: false,
@@ -1914,6 +2134,15 @@ function buildAntoniaFastPathCandidate(text, state) {
   if (professionalName && (matchType === "titled" || matchType === "con_phrase")) {
     const q = sanitizeMedinetProfessionalCandidate(professionalName) || professionalName.toLowerCase();
     return { shouldTry: true, reason: "schedule_intent_with_professional", query: q, trigger: "professional_ref" };
+  }
+
+  // Check cache for any professional name match even without explicit "con" phrase
+  const sanitized = sanitizeMedinetProfessionalCandidate(text);
+  if (sanitized) {
+    const cacheHit = matchProfessionalFromCache(sanitized);
+    if (cacheHit) {
+      return { shouldTry: true, reason: "cache_professional_match", query: sanitized, trigger: "cache" };
+    }
   }
 
   return noFastPath;
@@ -2990,11 +3219,154 @@ app.post("/messages", async (req, res) => {
     updateDraftsFromText(state, userText, info);
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
+    // --- Antonia booking slot choice interceptor ---
+    if (state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
+      const choice = detectBookingSlotChoice(userText, state.booking.pendingSlots);
+      if (choice) {
+        console.log("Antonia booking: patient chose slot", choice.index + 1, safeJson(choice.slot));
+        state.booking.chosenSlot = choice.slot;
+        state.booking.awaitingSlotChoice = false;
+
+        const patientData = buildPatientDataFromState(state);
+        const missing = getMissingBookingFields(patientData);
+
+        if (missing.length > 0) {
+          state.booking.awaitingPatientData = true;
+          state.booking.missingFields = missing.map((f) => f.key);
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const missingLabels = missing.map((f) => f.label).join(", ");
+          const reply = `Perfecto, seleccionaste la hora ${choice.slot.time} del ${choice.slot.date}. Para completar la reserva necesito los siguientes datos: ${missingLabels}. Por favor envíamelos.`;
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply,
+            kind: "antonia_booking_collect_data",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "collect_patient_data",
+              reason: "Booking: collecting missing patient data"
+            }
+          }));
+        }
+
+        // All data available — execute booking
+        try {
+          console.log("Antonia booking: all data ready, executing booking...");
+          const bookingResult = await runMedinetAntoniaBooking({ slot: choice.slot, patientData });
+
+          state.booking.pendingSlots = null;
+          state.booking.awaitingSlotChoice = false;
+          state.booking.awaitingPatientData = false;
+          state.booking.chosenSlot = null;
+          state.booking.missingFields = null;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply,
+            kind: "antonia_booking_result",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "booking_completed",
+              reason: "Booking completed by Antonia",
+              bookingResult
+            }
+          }));
+        } catch (error) {
+          console.error("ANTONIA BOOKING ERROR:", error.message);
+          state.booking.pendingSlots = null;
+          state.booking.awaitingSlotChoice = false;
+          state.booking.chosenSlot = null;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+        }
+      }
+    }
+
+    // --- Antonia booking: patient providing missing data ---
+    if (state.booking.awaitingPatientData && state.booking.chosenSlot) {
+      // Re-extract patient data (updateDraftsFromText may have captured new fields)
+      const patientData = buildPatientDataFromState(state);
+      const missing = getMissingBookingFields(patientData);
+
+      if (missing.length > 0) {
+        state.booking.missingFields = missing.map((f) => f.key);
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const missingLabels = missing.map((f) => f.label).join(", ");
+        const reply = `Gracias. Aún me falta: ${missingLabels}. Por favor envíamelos para completar tu reserva.`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "antonia_booking_collect_data",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "collect_patient_data",
+            reason: "Booking: still collecting missing patient data"
+          }
+        }));
+      }
+
+      // All data collected — execute booking
+      try {
+        console.log("Antonia booking: data complete, executing booking...");
+        const bookingResult = await runMedinetAntoniaBooking({ slot: state.booking.chosenSlot, patientData });
+
+        state.booking.pendingSlots = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.awaitingPatientData = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "antonia_booking_result",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_completed",
+            reason: "Booking completed by Antonia",
+            bookingResult
+          }
+        }));
+      } catch (error) {
+        console.error("ANTONIA BOOKING ERROR:", error.message);
+        state.booking.awaitingPatientData = false;
+        state.booking.chosenSlot = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+      }
+    }
+    // --- End Antonia booking interceptor ---
+
     // --- Antonia fast-path (Step 8) ---
     let antoniaFastPathAttempted = false;
     const fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
+
+      // Cache TTL check: refresh if stale (>30 min)
+      if (isCacheStale()) {
+        console.log("Medinet cache stale (>30 min), refreshing before fast-path...");
+        await runMedinetAntoniaCache();
+        KNOWN_AGENDA_PROFESSIONALS = buildKnownAgendaProfessionals();
+      }
+
+      // Try matching from cache first
+      const cachedMatch = matchProfessionalFromCache(fastPathCandidate.query);
+      if (cachedMatch) {
+        console.log("Medinet cache match:", cachedMatch.name, "id:", cachedMatch.id);
+      }
+
       try {
         console.log("Antonia fast-path triggered:", safeJson(fastPathCandidate));
         const antoniaResponse = await runMedinetAntonia({
@@ -3004,6 +3376,17 @@ app.post("/messages", async (req, res) => {
         });
 
         if (antoniaResponse?.patient_reply) {
+          // Store available slots for booking flow
+          if (antoniaResponse.available_slots?.length) {
+            state.booking.pendingSlots = antoniaResponse.available_slots;
+            state.booking.pendingProfessional = antoniaResponse.professional || null;
+            state.booking.pendingSpecialty = antoniaResponse.specialty || null;
+            state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingPatientData = false;
+            state.booking.chosenSlot = null;
+            state.booking.missingFields = null;
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+          }
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
             appId,
@@ -3276,6 +3659,17 @@ app.post("/messages", async (req, res) => {
         });
 
         if (antoniaResponse?.patient_reply) {
+          // Store available slots for booking flow
+          if (antoniaResponse.available_slots?.length) {
+            state.booking.pendingSlots = antoniaResponse.available_slots;
+            state.booking.pendingProfessional = antoniaResponse.professional || null;
+            state.booking.pendingSpecialty = antoniaResponse.specialty || null;
+            state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingPatientData = false;
+            state.booking.chosenSlot = null;
+            state.booking.missingFields = null;
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+          }
           return res.json(await sendManagedReply({
             appId,
             conversationId,
