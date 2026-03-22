@@ -62,6 +62,9 @@ const CLINYCO_TABS = {
 
 const LOG_SHEET_NAME = "Bitacora IA";
 const WARNING_ORANGE = "#F9CB9C";
+const CLINYCO_SYNC_URL_DEFAULT = "https://clinyco-ai.onrender.com/admin/sync-knowledge";
+const CLINYCO_SYNC_URL_PROP = "CLINYCO_SYNC_URL";
+const CLINYCO_SYNC_KEY_PROP = "CLINYCO_SYNC_KEY";
 const COLUMNAS_TEXTO_CRITICO = [
   "Nombre profesional",
   "Nombre en validacion",
@@ -98,6 +101,9 @@ function onOpen() {
     .createMenu("Clinyco IA")
     .addItem("Preparar hoja actual", "prepararHojaActual")
     .addItem("Validar hoja actual", "validarHojaActual")
+    .addSeparator()
+    .addItem("Validar + sincronizar IA", "validarYSincronizarClinycoIA")
+    .addItem("Solo sincronizar IA", "sincronizarClinycoIA")
     .addToUi();
 }
 
@@ -161,37 +167,139 @@ function prepararHojaActual() {
 
 function validarHojaActual() {
   try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    const tabName = sheet.getName();
-    if (!CLINYCO_TABS[tabName]) {
-      SpreadsheetApp.getUi().alert("Esta pestaña no está configurada para Clinyco IA.");
-      return;
-    }
-    asegurarColumnasFeedback_(sheet, tabName);
-    const lastRow = sheet.getLastRow();
-    let filasRevisar = 0;
-    for (let row = 2; row <= lastRow; row += 1) {
-      const resultado = validarFila_(sheet, tabName, row);
-      if (resultado && resultado.estado === "Revisar") filasRevisar += 1;
-    }
-    registrarBitacora_({
-      action: "validar_hoja",
-      sheet,
-      tabName,
-      rowNumber: null,
-      columnNumber: null,
-      oldValue: "",
-      newValue: "",
-      resultado: {
-        interpretacion: `Validación masiva en ${tabName}`,
-        estado: filasRevisar ? "Revisar" : "OK",
-        feedback: filasRevisar ? `Quedaron ${filasRevisar} filas para revisar.` : "Todas las filas quedaron OK."
-      }
-    });
-    SpreadsheetApp.getUi().alert("Validación terminada.");
+    const resumen = ejecutarValidacionHojaActiva_();
+    SpreadsheetApp.getUi().alert(`Validación terminada en "${resumen.tabName}". ${resumen.feedback}`);
   } catch (error) {
     SpreadsheetApp.getUi().alert(mensajeErrorConAyuda_(error));
   }
+}
+
+function validarYSincronizarClinycoIA() {
+  try {
+    const resumen = ejecutarValidacionHojaActiva_();
+    const sync = ejecutarSincronizacionClinycoIA_({
+      reason: "validar_y_sincronizar",
+      tabName: resumen.tabName,
+      filasRevisar: resumen.filasRevisar
+    });
+    SpreadsheetApp.getUi().alert(
+      `Validación terminada en "${resumen.tabName}". ${resumen.feedback}\n\n` +
+      `Sincronización OK en ${sync.durationMs} ms.`
+    );
+  } catch (error) {
+    SpreadsheetApp.getUi().alert(mensajeErrorConAyuda_(error));
+  }
+}
+
+function sincronizarClinycoIA() {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const sync = ejecutarSincronizacionClinycoIA_({
+      reason: "menu_sync_only",
+      tabName: sheet ? sheet.getName() : ""
+    });
+    SpreadsheetApp.getUi().alert(`Sincronización OK en ${sync.durationMs} ms.`);
+  } catch (error) {
+    SpreadsheetApp.getUi().alert(mensajeErrorConAyuda_(error));
+  }
+}
+
+function ejecutarValidacionHojaActiva_() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const tabName = sheet.getName();
+  if (!CLINYCO_TABS[tabName]) {
+    throw new Error("Esta pestaña no está configurada para Clinyco IA.");
+  }
+
+  asegurarColumnasFeedback_(sheet, tabName);
+  const lastRow = sheet.getLastRow();
+  let filasRevisar = 0;
+  for (let row = 2; row <= lastRow; row += 1) {
+    const resultado = validarFila_(sheet, tabName, row);
+    if (resultado && resultado.estado === "Revisar") filasRevisar += 1;
+  }
+
+  const feedback = filasRevisar ? `Quedaron ${filasRevisar} filas para revisar.` : "Todas las filas quedaron OK.";
+  registrarBitacora_({
+    action: "validar_hoja",
+    sheet,
+    tabName,
+    rowNumber: null,
+    columnNumber: null,
+    oldValue: "",
+    newValue: "",
+    resultado: {
+      interpretacion: `Validación masiva en ${tabName}`,
+      estado: filasRevisar ? "Revisar" : "OK",
+      feedback
+    }
+  });
+
+  return {
+    tabName,
+    filasRevisar,
+    feedback
+  };
+}
+
+function obtenerConfigSyncClinycoIA_() {
+  const props = PropertiesService.getScriptProperties();
+  const syncUrl = textoCelda_(props.getProperty(CLINYCO_SYNC_URL_PROP)) || CLINYCO_SYNC_URL_DEFAULT;
+  const syncKey = textoCelda_(props.getProperty(CLINYCO_SYNC_KEY_PROP));
+
+  if (!syncKey) {
+    throw new Error(
+      `Falta configurar ${CLINYCO_SYNC_KEY_PROP} en Apps Script > Project settings > Script properties.`
+    );
+  }
+
+  return { syncUrl, syncKey };
+}
+
+function ejecutarSincronizacionClinycoIA_(context) {
+  const { syncUrl, syncKey } = obtenerConfigSyncClinycoIA_();
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  const payload = {
+    source: "google_sheets_menu",
+    reason: context?.reason || "manual",
+    tabName: context?.tabName || "",
+    filasRevisar: context?.filasRevisar ?? null,
+    spreadsheetId: active ? active.getId() : null,
+    spreadsheetName: active ? active.getName() : null,
+    requestedAt: new Date().toISOString()
+  };
+
+  const startedAt = Date.now();
+  const response = UrlFetchApp.fetch(syncUrl, {
+    method: "post",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+    headers: {
+      "x-sync-key": syncKey
+    },
+    payload: JSON.stringify(payload)
+  });
+
+  const durationMs = Date.now() - startedAt;
+  const status = response.getResponseCode();
+  const raw = response.getContentText() || "";
+  let parsed = null;
+  try {
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    parsed = null;
+  }
+
+  if (status < 200 || status >= 300 || !parsed || parsed.ok !== true) {
+    const details = raw ? raw.slice(0, 400) : "sin detalle";
+    throw new Error(`Sync API devolvió ${status}. ${details}`);
+  }
+
+  return {
+    durationMs,
+    status,
+    parsed
+  };
 }
 
 function asegurarColumnasFeedback_(sheet, tabName) {
@@ -472,6 +580,24 @@ function agregarChunkTexto_(chunks, label, value) {
 function mensajeErrorConAyuda_(error) {
   const raw = error && error.message ? String(error.message) : "Error desconocido.";
   const lowered = raw.toLowerCase();
+
+  if (lowered.indexOf("clinyco_sync_key") >= 0) {
+    return (
+      "Falta configurar la clave de sincronización.\n\n" +
+      "En Apps Script > Project settings > Script properties agrega:\n" +
+      `- ${CLINYCO_SYNC_KEY_PROP}=<tu_clave_sync>\n` +
+      `- ${CLINYCO_SYNC_URL_PROP}=${CLINYCO_SYNC_URL_DEFAULT}\n\n` +
+      "Luego vuelve a ejecutar \"Validar + sincronizar IA\"."
+    );
+  }
+
+  if (lowered.indexOf("sync api devolvio 401") >= 0 || lowered.indexOf("unauthorized") >= 0) {
+    return (
+      "La clave de sincronización no coincide con el backend.\n\n" +
+      "Revisa que el valor de Script Property " + CLINYCO_SYNC_KEY_PROP +
+      " sea igual a KNOWLEDGE_SYNC_KEY en Render."
+    );
+  }
 
   if (
     lowered.indexOf("no tienes permiso") >= 0 ||
