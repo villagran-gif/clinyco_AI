@@ -23,11 +23,43 @@ export function extractPhone(text) {
   return normalizePhone(matches[0]);
 }
 
+export function validateRut(rut) {
+  const clean = String(rut || "").replace(/[^0-9kK]/g, "").toUpperCase();
+  if (clean.length < 2) return false;
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1);
+  const numBody = parseInt(body, 10);
+  if (isNaN(numBody) || numBody < 1000000) return false;
+
+  let sum = 0;
+  let multiplier = 2;
+  for (let i = body.length - 1; i >= 0; i--) {
+    sum += parseInt(body[i], 10) * multiplier;
+    multiplier = multiplier === 7 ? 2 : multiplier + 1;
+  }
+  const remainder = 11 - (sum % 11);
+  const expectedDv = remainder === 11 ? "0" : remainder === 10 ? "K" : String(remainder);
+  return dv === expectedDv;
+}
+
+export function normalizeRut(rut) {
+  if (!validateRut(rut)) return null;
+  const clean = String(rut || "").replace(/[^0-9kK]/g, "").toUpperCase();
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1);
+  return `${body}-${dv}`;
+}
+
 export function extractRut(text) {
   const source = String(text || "").toUpperCase();
-  const match = source.match(/\b(\d{7,8})[-\s.]?([\dK])\b/);
-  if (!match) return null;
-  return `${match[1]}-${match[2]}`;
+  const candidates = source.matchAll(/\b(\d{1,3}(?:\.\d{3})*|\d{7,8})[-\s.]?([\dK])\b/g);
+  for (const match of candidates) {
+    const body = match[1].replace(/\./g, "");
+    const dv = match[2];
+    const candidate = `${body}-${dv}`;
+    if (validateRut(candidate)) return `${body}-${dv}`;
+  }
+  return null;
 }
 
 export function formatRutHuman(rut) {

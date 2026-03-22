@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
-import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
+import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead, saveConversationChannelMeta } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
+import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
+import { enrichStateFromCustomer, buildCustomerContextBlock, saveConversationToCustomer, loadCustomerContext } from "./memory/customer-memory.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -1839,6 +1841,64 @@ async function persistConversationSnapshot(conversationId, state, channel = null
   }
 }
 
+async function maybeSaveConversationSummary(conversationId, state, channel) {
+  if (!dbEnabled()) return;
+  try {
+    let customerId = state?.customerMemory?.customerId || null;
+
+    // Safety net: si no se resolvió antes, intentar ahora
+    if (!customerId) {
+      const whatsappPhone = state?.contactDraft?.c_tel1 || null;
+      const rut = state?.contactDraft?.c_rut || null;
+      if (whatsappPhone || rut) {
+        const { customer } = await resolveCustomerFromIdentifiers({ whatsappPhone, rut, conversationId });
+        customerId = customer?.id || null;
+      }
+    }
+
+    if (!customerId) return;
+
+    await saveConversationToCustomer(customerId, conversationId, state, channel);
+  } catch (error) {
+    console.error("CUSTOMER_SUMMARY_ERROR:", error.message);
+  }
+}
+
+async function maybeResolveCustomer(conversationId, state, info) {
+  if (!dbEnabled()) return;
+  try {
+    const whatsappPhone = info?.channelExternalId || state?.contactDraft?.c_tel1 || null;
+    const rut = state?.contactDraft?.c_rut || null;
+
+    // Guardar metadata del canal en conversations
+    await saveConversationChannelMeta(conversationId, {
+      channelExternalId: info?.channelExternalId || null,
+      channelDisplayName: info?.channelDisplayName || null,
+      sourceProfileName: info?.sourceProfileName || null,
+      whatsappPhone
+    });
+
+    const { customer, isNew, matchedBy } = await resolveCustomerFromIdentifiers({
+      whatsappPhone,
+      rut,
+      conversationId
+    });
+
+    if (!customer) return;
+
+    const summaries = await loadCustomerContext(customer.id);
+    enrichStateFromCustomer(state, customer, summaries);
+
+    if (isNew) {
+      console.log(`CUSTOMER: Created new customer #${customer.id} via ${matchedBy}`);
+    } else if (matchedBy) {
+      console.log(`CUSTOMER: Matched existing #${customer.id} via ${matchedBy} (${customer.total_conversaciones || 0} prev conversations)`);
+    }
+  } catch (error) {
+    console.error("CUSTOMER_RESOLVE_ERROR:", error.message);
+  }
+}
+
 async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null }) {
   if (!dbEnabled()) return true;
   try {
@@ -1966,8 +2026,12 @@ async function sendManagedReply({
   if (disableAiAfterSend) {
     latestState.system.aiEnabled = false;
     latestState.system.handoffReason = handoffReasonAfterSend || latestState.system.handoffReason || null;
+    // Cierre real: guardar summary del customer
+    await maybeSaveConversationSummary(conversationId, latestState, channelLabel);
   } else if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
     markMaxMessagesReached(latestState);
+    // Cierre real: guardar summary del customer
+    await maybeSaveConversationSummary(conversationId, latestState, channelLabel);
   }
 
   await persistConversationMessage({
@@ -2944,7 +3008,7 @@ ${buildKnowledgePromptContext()}
 `.trim();
 }
 
-async function askOpenAI({ systemPrompt, stateSummary, history }) {
+async function askOpenAI({ systemPrompt, stateSummary, customerContext = "", history }) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY");
   }
@@ -2952,13 +3016,17 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
     throw new Error("OpenAI client not initialized");
   }
 
+  const systemMessages = [
+    { role: "system", content: systemPrompt },
+    { role: "system", content: stateSummary }
+  ];
+  if (customerContext) {
+    systemMessages.push({ role: "system", content: customerContext });
+  }
+
   const response = await openai.chat.completions.create({
     model: OPENAI_MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "system", content: stateSummary },
-      ...history
-    ]
+    messages: [...systemMessages, ...history]
   });
 
   return response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
@@ -3141,6 +3209,7 @@ app.post("/ticket-assigned", async (req, res) => {
     });
 
     await persistConversationSnapshot(conversation_id, state, null);
+    await maybeSaveConversationSummary(conversation_id, state, null);
 
     return res.json({
       ok: true,
@@ -3214,6 +3283,7 @@ app.post("/messages", async (req, res) => {
       });
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
+      await maybeSaveConversationSummary(conversationId, state, channelLabel);
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -3301,6 +3371,12 @@ app.post("/messages", async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+
+    // Resolver customer antes del prompt para inyectar [MEMORIA_CLIENTE]
+    if (!state.customerMemory?.customerId) {
+      await maybeResolveCustomer(conversationId, state, info);
+    }
+
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
     // --- Antonia booking slot choice interceptor ---
@@ -3820,9 +3896,19 @@ app.post("/messages", async (req, res) => {
     const stateSummary = buildStateSummary(state);
     const systemPrompt = buildOpenAISystemPrompt();
 
+    // Construir bloque [MEMORIA_CLIENTE] si hay customer resuelto
+    const cm = state.customerMemory || {};
+    const customerContext = cm.customerId
+      ? buildCustomerContextBlock(
+          { id: cm.customerId, ...state.contactDraft, whatsapp_phone: info?.channelExternalId, rut: state.contactDraft?.c_rut, nombres: state.contactDraft?.c_nombres, apellidos: state.contactDraft?.c_apellidos, aseguradora: state.contactDraft?.c_aseguradora, modalidad: state.contactDraft?.c_modalidad, comuna: state.contactDraft?.c_comuna, ultimo_procedimiento: state.dealDraft?.dealInteres, total_conversaciones: cm.totalConversaciones },
+          cm.previousSummaries || []
+        )
+      : "";
+
     let reply = await askOpenAI({
       systemPrompt,
       stateSummary,
+      customerContext,
       history
     });
 

@@ -73,6 +73,12 @@ export function buildInitialConversationState() {
       handoffReason: null,
       lastQuestionKey: null,
       lastProcessedUserMessageId: null
+    },
+    customerMemory: {
+      customerId: null,
+      isReturning: false,
+      totalConversaciones: 0,
+      previousSummaries: []
     }
   };
 }
@@ -85,6 +91,7 @@ export function mergeConversationState(baseState, persistedState = {}) {
     dealDraft: { ...baseState.dealDraft, ...(persistedState.dealDraft || {}) },
     identity: { ...baseState.identity, ...(persistedState.identity || {}) },
     measurements: { ...baseState.measurements, ...(persistedState.measurements || {}) },
-    system: { ...baseState.system, ...(persistedState.system || {}) }
+    system: { ...baseState.system, ...(persistedState.system || {}) },
+    customerMemory: { ...baseState.customerMemory, ...(persistedState.customerMemory || {}) }
   };
 }
