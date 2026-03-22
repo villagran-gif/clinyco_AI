@@ -8,6 +8,8 @@
     "monitor:ai": "bash scripts/run-ai-observability.sh",
     "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js",
     "preview:knowledge": "node scripts/preview-knowledge-row.js",
+    "seed:customers": "node scripts/seed-customers-from-leads.js",
+    "import:medinet:csv": "node scripts/import-medinet-patients.js",
     "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
     "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv"
   },

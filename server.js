@@ -7,8 +7,31 @@ import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
-import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
+import {
+  dbEnabled,
+  initDb,
+  getConversationRecord,
+  getRecentConversationMessages,
+  upsertConversationState,
+  insertConversationMessage,
+  upsertStructuredLead,
+  buildCustomerProfile,
+  upsertCustomer,
+  linkConversationToCustomer,
+  addCustomerChannel,
+  getCustomerSummaries
+} from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
+import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
+import {
+  enrichStateFromCustomer,
+  buildCustomerContextBlock,
+  saveConversationToCustomer
+} from "./memory/customer-memory.js";
+import {
+  extractRut as extractValidatedRut,
+  formatRutHuman as formatValidatedRutHuman
+} from "./extraction/identity-normalizers.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -1036,17 +1059,11 @@ function extractPhone(text) {
 }
 
 function extractRut(text) {
-  const match = String(text || "").match(/\b\d{1,2}[.]?\d{3}[.]?\d{3}-?[\dkK]\b/);
-  return match ? match[0].trim() : null;
+  return extractValidatedRut(text);
 }
 
 function formatRutHuman(raw) {
-  const cleaned = String(raw || "").replace(/[^0-9kK]/g, "").toUpperCase();
-  if (cleaned.length < 2) return null;
-  const body = cleaned.slice(0, -1);
-  const dv = cleaned.slice(-1);
-  const withDots = body.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${withDots}-${dv}`;
+  return formatValidatedRutHuman(raw);
 }
 
 function extractName(text) {
@@ -1705,6 +1722,17 @@ function buildInitialConversationState() {
       dealColab3: null
     },
     identity: {
+      matchStatus: "no_context",
+      customerId: null,
+      matchedBy: null,
+      requiresUserConfirmation: false,
+      safeToUseHistoricalContext: false,
+      possibleContexts: [],
+      whatsappPhone: null,
+      channelExternalId: null,
+      channelDisplayName: null,
+      sourceProfileName: null,
+      channelSourceType: null,
       saysExistingPatient: false,
       lastSellSearchRut: null,
       sellSearchCompleted: false,
@@ -1722,7 +1750,10 @@ function buildInitialConversationState() {
       nextAction: null,
       lastQuestionReason: null,
       lastMissingFields: [],
-      lastResolvedContext: null
+      lastResolvedContext: null,
+      verifiedRutAt: null,
+      verifiedWhatsappAt: null,
+      verifiedPairAt: null
     },
     measurements: {
       weightKg: null,
@@ -1735,6 +1766,11 @@ function buildInitialConversationState() {
       proposedHeightM: null,
       proposedHeightCm: null,
       askedMeasurementInstructions: false
+    },
+    customerMemory: {
+      customerId: null,
+      previousConversations: [],
+      isReturning: false
     },
     openHelp: {
       asked: false,
@@ -1857,6 +1893,224 @@ async function persistConversationMessage({ conversationId, role, messageId = nu
   }
 }
 
+function updateIdentityChannelContext(state, info = null, channelLabel = null) {
+  if (!state.identity) {
+    state.identity = {};
+  }
+
+  if (info?.channelExternalId) {
+    state.identity.channelExternalId = info.channelExternalId;
+  }
+  if (info?.channelDisplayName) {
+    state.identity.channelDisplayName = info.channelDisplayName;
+  }
+  if (info?.sourceProfileName) {
+    state.identity.sourceProfileName = info.sourceProfileName;
+  }
+  if (info?.sourceType || channelLabel) {
+    state.identity.channelSourceType = info?.sourceType || channelLabel;
+  }
+
+  const whatsappPhone = normalizePhone(
+    state.identity.channelExternalId ||
+    state.identity.whatsappPhone ||
+    state.contactDraft?.c_tel1 ||
+    null
+  );
+
+  if (whatsappPhone) {
+    state.identity.whatsappPhone = whatsappPhone;
+    state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || new Date().toISOString();
+  }
+}
+
+function applyCustomerResolutionToState(state, resolved, options = {}) {
+  const hasVerifiedRut = Boolean(options.hasVerifiedRut);
+  const hasWhatsapp = Boolean(options.hasWhatsapp);
+  const nowIso = new Date().toISOString();
+
+  state.identity.customerId = resolved?.customer?.id || state.identity.customerId || null;
+  state.identity.matchedBy = resolved?.matchedBy || null;
+  state.identity.possibleContexts = resolved?.customer
+    ? [{ customerId: resolved.customer.id, matchedBy: resolved.matchedBy || null }]
+    : [];
+
+  if (hasVerifiedRut && hasWhatsapp) {
+    state.identity.matchStatus = "identity_confirmed";
+    state.identity.requiresUserConfirmation = false;
+    state.identity.safeToUseHistoricalContext = true;
+    state.identity.verifiedRutAt = state.identity.verifiedRutAt || nowIso;
+    state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || nowIso;
+    state.identity.verifiedPairAt = state.identity.verifiedPairAt || nowIso;
+    return;
+  }
+
+  if (hasVerifiedRut) {
+    state.identity.matchStatus = "identity_confirmed";
+    state.identity.requiresUserConfirmation = false;
+    state.identity.safeToUseHistoricalContext = true;
+    state.identity.verifiedRutAt = state.identity.verifiedRutAt || nowIso;
+    return;
+  }
+
+  if (resolved?.customer && resolved.matchedBy === "whatsapp") {
+    state.identity.matchStatus = "probable_context_from_whatsapp";
+    state.identity.requiresUserConfirmation = true;
+    state.identity.safeToUseHistoricalContext = false;
+    return;
+  }
+
+  if (hasWhatsapp) {
+    state.identity.matchStatus = "awaiting_rut";
+    state.identity.requiresUserConfirmation = true;
+    state.identity.safeToUseHistoricalContext = false;
+    return;
+  }
+
+  state.identity.matchStatus = "no_context";
+  state.identity.requiresUserConfirmation = false;
+  state.identity.safeToUseHistoricalContext = false;
+}
+
+async function syncCustomerChannelsFromState(customerId, conversationId, state, channelLabel) {
+  if (!customerId) return;
+
+  const profile = buildCustomerProfile(state);
+  const identity = state.identity || {};
+  const verified = Boolean(identity.verifiedPairAt || identity.verifiedWhatsappAt || identity.verifiedRutAt);
+
+  if (profile.whatsappPhone || identity.channelExternalId) {
+    await addCustomerChannel({
+      customerId,
+      channelType: "whatsapp",
+      channelValue: profile.whatsappPhone,
+      isPrimary: true,
+      verified,
+      sourceSystem: identity.channelSourceType || "sunco",
+      externalId: identity.channelExternalId || null,
+      metadata: {
+        conversationId,
+        channel: channelLabel,
+        channelDisplayName: identity.channelDisplayName || null,
+        sourceProfileName: identity.sourceProfileName || null
+      }
+    });
+  }
+
+  if (profile.telefonoPrincipal) {
+    await addCustomerChannel({
+      customerId,
+      channelType: "phone",
+      channelValue: profile.telefonoPrincipal,
+      isPrimary: profile.telefonoPrincipal === profile.whatsappPhone,
+      verified,
+      sourceSystem: "conversation",
+      metadata: { conversationId, channel: channelLabel }
+    });
+  }
+
+  if (profile.email) {
+    await addCustomerChannel({
+      customerId,
+      channelType: "email",
+      channelValue: profile.email,
+      verified,
+      sourceSystem: "conversation",
+      metadata: { conversationId, channel: channelLabel }
+    });
+  }
+}
+
+async function ensureCustomerContext({ conversationId, state, info = null, channelLabel = null, loadSummaries = true }) {
+  if (!dbEnabled()) {
+    return { customer: null, summaries: [], customerContextBlock: null };
+  }
+
+  updateIdentityChannelContext(state, info, channelLabel);
+
+  const customerProfile = buildCustomerProfile(state);
+  const verifiedRut = state.identity?.verifiedRutAt ? customerProfile.rut : null;
+  const resolvedWhatsapp = customerProfile.whatsappPhone;
+  const resolved = await resolveCustomerFromIdentifiers({
+    whatsappPhone: resolvedWhatsapp,
+    rut: verifiedRut
+  });
+
+  applyCustomerResolutionToState(state, resolved, {
+    hasVerifiedRut: Boolean(verifiedRut),
+    hasWhatsapp: Boolean(resolvedWhatsapp)
+  });
+
+  const customer = await upsertCustomer(customerProfile, {
+    customerId: state.identity.customerId || resolved.customer?.id || null,
+    conversationAt: new Date().toISOString()
+  });
+
+  if (!customer) {
+    state.customerMemory = {
+      customerId: null,
+      previousConversations: [],
+      isReturning: false
+    };
+    return { customer: null, summaries: [], customerContextBlock: null };
+  }
+
+  state.identity.customerId = customer.id;
+  state.identity.matchedBy = state.identity.matchedBy || (customerProfile.rut ? "rut" : customerProfile.whatsappPhone ? "whatsapp" : null);
+  applyCustomerResolutionToState(state, { customer, matchedBy: state.identity.matchedBy }, {
+    hasVerifiedRut: Boolean(state.identity?.verifiedRutAt && customerProfile.rut),
+    hasWhatsapp: Boolean(customerProfile.whatsappPhone)
+  });
+
+  await linkConversationToCustomer(conversationId, customer.id, {
+    channel: channelLabel,
+    channelExternalId: state.identity.channelExternalId || null,
+    channelDisplayName: state.identity.channelDisplayName || null,
+    sourceProfileName: state.identity.sourceProfileName || null,
+    whatsappPhone: customerProfile.whatsappPhone
+  });
+  await syncCustomerChannelsFromState(customer.id, conversationId, state, channelLabel);
+
+  const summaries = loadSummaries ? await getCustomerSummaries(customer.id, 3) : [];
+  enrichStateFromCustomer(state, customer, summaries, {
+    populateDrafts: Boolean(state.identity.safeToUseHistoricalContext)
+  });
+
+  return {
+    customer,
+    summaries,
+    customerContextBlock: buildCustomerContextBlock(customer, summaries)
+  };
+}
+
+async function maybeSaveConversationSummary(conversationId, state, channelLabel = null) {
+  if (!dbEnabled()) return null;
+
+  try {
+    let customerId = state?.identity?.customerId || null;
+
+    if (!customerId) {
+      const ensured = await ensureCustomerContext({
+        conversationId,
+        state,
+        info: null,
+        channelLabel,
+        loadSummaries: false
+      });
+      customerId = ensured.customer?.id || state?.identity?.customerId || null;
+    }
+
+    if (!customerId) {
+      return null;
+    }
+
+    return await saveConversationToCustomer(customerId, conversationId, state, channelLabel);
+  } catch (error) {
+    console.error("CUSTOMER SUMMARY ERROR:", error.message);
+    return null;
+  }
+}
+
 function claimInboundMessageFallback(conversationId, messageId) {
   if (!messageId) return true;
   cleanupRecentMap(recentInboundMessageClaims, INBOUND_DEDUPE_TTL_MS);
@@ -1962,12 +2216,15 @@ async function sendManagedReply({
 
   latestState.system.botMessagesSent += 1;
   rememberOutboundReply(latestState, finalReply, kind);
+  let shouldSaveSummary = false;
 
   if (disableAiAfterSend) {
     latestState.system.aiEnabled = false;
     latestState.system.handoffReason = handoffReasonAfterSend || latestState.system.handoffReason || null;
+    shouldSaveSummary = true;
   } else if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
     markMaxMessagesReached(latestState);
+    shouldSaveSummary = true;
   }
 
   await persistConversationMessage({
@@ -1988,6 +2245,9 @@ async function sendManagedReply({
     resolverDecision
   });
   await persistConversationSnapshot(conversationId, latestState, channelLabel);
+  if (shouldSaveSummary) {
+    await maybeSaveConversationSummary(conversationId, latestState, channelLabel);
+  }
 
   return {
     ok: true,
@@ -2223,6 +2483,7 @@ function updateDraftsFromText(state, text, info) {
   const rut = extractRut(cleanText);
   if (rut) {
     state.contactDraft.c_rut = formatRutHuman(rut) || rut;
+    state.identity.verifiedRutAt = state.identity.verifiedRutAt || new Date().toISOString();
   }
 
   const dob = extractDate(cleanText);
@@ -2423,6 +2684,10 @@ function buildStateSummary(state) {
     `dealValidacionPad=${state.dealDraft.dealValidacionPad || ""}`,
     `bmi=${state.measurements.bmi || ""}`,
     `bmiCategory=${state.measurements.bmiCategory || ""}`,
+    `customerId=${state.identity.customerId || ""}`,
+    `matchStatus=${state.identity.matchStatus || ""}`,
+    `matchedBy=${state.identity.matchedBy || ""}`,
+    `isReturning=${state.customerMemory?.isReturning ? "si" : "no"}`,
     `saysExistingPatient=${state.identity.saysExistingPatient ? "si" : "no"}`,
     `sellContactFound=${state.identity.sellContactFound ? "si" : "no"}`,
     `sellDealFound=${state.identity.sellDealFound ? "si" : "no"}`,
@@ -3141,6 +3406,7 @@ app.post("/ticket-assigned", async (req, res) => {
     });
 
     await persistConversationSnapshot(conversation_id, state, null);
+    await maybeSaveConversationSummary(conversation_id, state, "ticket_assigned");
 
     return res.json({
       ok: true,
@@ -3190,6 +3456,7 @@ app.post("/messages", async (req, res) => {
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
     const channelLabel = info.sourceType || info.entryPoint || null;
+    updateIdentityChannelContext(state, info, channelLabel);
 
     if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
       state.system.aiEnabled = false;
@@ -3214,6 +3481,7 @@ app.post("/messages", async (req, res) => {
       });
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
+      await maybeSaveConversationSummary(conversationId, state, channelLabel);
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -3301,6 +3569,13 @@ app.post("/messages", async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+    await ensureCustomerContext({
+      conversationId,
+      state,
+      info,
+      channelLabel,
+      loadSummaries: true
+    });
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
     // --- Antonia booking slot choice interceptor ---
@@ -3655,6 +3930,13 @@ app.post("/messages", async (req, res) => {
     // --- End open-help layer ---
 
     await maybeRunIdentitySearch(state, info);
+    const customerMemory = await ensureCustomerContext({
+      conversationId,
+      state,
+      info,
+      channelLabel,
+      loadSummaries: true
+    });
 
     if (shouldTriggerCaseE(state)) {
       state.identity.likelyClinicalRecordOnly = true;
@@ -3817,7 +4099,8 @@ app.post("/messages", async (req, res) => {
     console.log("Conversation state:", safeJson(state));
 
     const history = getHistory(conversationId);
-    const stateSummary = buildStateSummary(state);
+    const customerContextBlock = customerMemory?.customerContextBlock || null;
+    const stateSummary = [buildStateSummary(state), customerContextBlock].filter(Boolean).join("\n\n");
     const systemPrompt = buildOpenAISystemPrompt();
 
     let reply = await askOpenAI({

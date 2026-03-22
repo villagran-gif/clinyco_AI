@@ -33,6 +33,17 @@ export function buildInitialConversationState() {
       dealColab3: null
     },
     identity: {
+      matchStatus: "no_context",
+      customerId: null,
+      matchedBy: null,
+      requiresUserConfirmation: false,
+      safeToUseHistoricalContext: false,
+      possibleContexts: [],
+      whatsappPhone: null,
+      channelExternalId: null,
+      channelDisplayName: null,
+      sourceProfileName: null,
+      channelSourceType: null,
       saysExistingPatient: false,
       lastSellSearchRut: null,
       sellSearchCompleted: false,
@@ -50,7 +61,10 @@ export function buildInitialConversationState() {
       nextAction: null,
       lastQuestionReason: null,
       lastMissingFields: [],
-      lastResolvedContext: null
+      lastResolvedContext: null,
+      verifiedRutAt: null,
+      verifiedWhatsappAt: null,
+      verifiedPairAt: null
     },
     measurements: {
       weightKg: null,
@@ -64,6 +78,26 @@ export function buildInitialConversationState() {
       proposedHeightCm: null,
       askedMeasurementInstructions: false
     },
+    customerMemory: {
+      customerId: null,
+      previousConversations: [],
+      isReturning: false
+    },
+    openHelp: {
+      asked: false,
+      askedAt: null,
+      response: null,
+      classifiedIntent: null
+    },
+    booking: {
+      pendingSlots: null,
+      pendingProfessional: null,
+      pendingSpecialty: null,
+      awaitingSlotChoice: false,
+      awaitingPatientData: false,
+      chosenSlot: null,
+      missingFields: null
+    },
     system: {
       aiEnabled: true,
       humanTakenOver: false,
@@ -72,7 +106,11 @@ export function buildInitialConversationState() {
       introducedAsAntonia: false,
       handoffReason: null,
       lastQuestionKey: null,
-      lastProcessedUserMessageId: null
+      lastInboundMessageId: null,
+      lastOutboundFingerprint: null,
+      lastOutboundText: null,
+      lastOutboundReason: null,
+      lastOutboundAt: null
     }
   };
 }
@@ -85,6 +123,9 @@ export function mergeConversationState(baseState, persistedState = {}) {
     dealDraft: { ...baseState.dealDraft, ...(persistedState.dealDraft || {}) },
     identity: { ...baseState.identity, ...(persistedState.identity || {}) },
     measurements: { ...baseState.measurements, ...(persistedState.measurements || {}) },
+    customerMemory: { ...baseState.customerMemory, ...(persistedState.customerMemory || {}) },
+    openHelp: { ...baseState.openHelp, ...(persistedState.openHelp || {}) },
+    booking: { ...baseState.booking, ...(persistedState.booking || {}) },
     system: { ...baseState.system, ...(persistedState.system || {}) }
   };
 }

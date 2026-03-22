@@ -1,3 +1,5 @@
+import { normalizeRut as normalizeValidatedRut } from "./extraction/identity-normalizers.js";
+
 const BMI_REQUIRED_PROCEDURES = [
   "BALON GASTRICO",
   "CIRUGIA BARIATRICA"
@@ -26,9 +28,7 @@ function firstTruthy(...values) {
 }
 
 function normalizeRut(value) {
-  const raw = String(value || "").replace(/[^0-9kK]/g, "").toUpperCase();
-  if (raw.length < 2) return null;
-  return `${raw.slice(0, -1)}-${raw.slice(-1)}`;
+  return normalizeValidatedRut(value);
 }
 
 function normalizePhone(value) {
