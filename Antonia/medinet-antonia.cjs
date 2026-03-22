@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const AGENDA_URL = 'https://clinyco.medinetapp.com/agendaweb/planned/';
@@ -26,6 +27,73 @@ function isoToDisplayDate(value = '') {
 function pickRandomItem(items) {
   if (!items.length) return null;
   return items[Math.floor(Math.random() * items.length)] ?? null;
+}
+
+function truncateText(value = '', maxLength = 2000) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
+}
+
+async function writeDiagnosticScreenshot(page, label = 'medinet') {
+  try {
+    const diagnosticsDir = path.join(os.tmpdir(), 'medinet-diagnostics');
+    fs.mkdirSync(diagnosticsDir, { recursive: true });
+    const screenshotPath = path.join(diagnosticsDir, `${label}-${Date.now()}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    return screenshotPath;
+  } catch {
+    return null;
+  }
+}
+
+async function collectPageDiagnostic(page, context = {}) {
+  const url = page.url();
+  const title = await page.title().catch(() => '');
+  const readyState = await page.evaluate(() => document.readyState).catch(() => 'unavailable');
+  const html = await page.content().catch(() => '');
+  const domSummary = await page.evaluate(() => {
+    const summarizeNode = (element) => ({
+      tag: element.tagName.toLowerCase(),
+      id: element.id || '',
+      name: element.getAttribute('name') || '',
+      type: element.getAttribute('type') || '',
+      text: ((element.textContent || '').replace(/\s+/g, ' ').trim()).slice(0, 120),
+    });
+
+    return {
+      agendarCount: document.querySelectorAll('#agendar').length,
+      runInputCount: document.querySelectorAll('#agendar #step-0 input[name="run"]').length,
+      branchSelectCount: document.querySelectorAll('#ubicacion').length,
+      nextButtonCount: document.querySelectorAll('#agendar #step-0 #btn-step-one').length,
+      bodyClassName: document.body?.className || '',
+      bodyTextPreview: ((document.body?.innerText || '').replace(/\s+/g, ' ').trim()).slice(0, 400),
+      firstInteractiveNodes: Array.from(document.querySelectorAll('input, select, button, form'))
+        .slice(0, 12)
+        .map(summarizeNode),
+    };
+  }).catch(() => ({
+    agendarCount: -1,
+    runInputCount: -1,
+    branchSelectCount: -1,
+    nextButtonCount: -1,
+    bodyClassName: '',
+    bodyTextPreview: '',
+    firstInteractiveNodes: [],
+  }));
+  const screenshotPath = await writeDiagnosticScreenshot(page, 'medinet-step1');
+
+  return {
+    ...context,
+    url,
+    title,
+    readyState,
+    htmlLength: html.length,
+    htmlPreview: truncateText(html, 2000),
+    screenshotPath,
+    ...domSummary,
+  };
 }
 
 function buildVariants(name = '', specialty = '') {
@@ -147,38 +215,49 @@ async function readActiveCalendarTable(page) {
 }
 
 async function openBookingStepOne(page, rut, branchName) {
-  await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+  try {
+    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
 
-  const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
-  await bookingRunInput.fill(rut);
-  await bookingRunInput.dispatchEvent('input');
-  await bookingRunInput.dispatchEvent('change');
+    const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
+    await bookingRunInput.fill(rut);
+    await bookingRunInput.dispatchEvent('input');
+    await bookingRunInput.dispatchEvent('change');
 
-  const branchSelect = page.locator('#ubicacion');
-  const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
-    return options
-      .map((option) => ({
-        value: option.value,
-        label: (option.textContent || '').trim(),
-      }))
-      .filter((option) => option.value && option.label);
-  });
+    const branchSelect = page.locator('#ubicacion');
+    const branchOptions = await branchSelect.locator('option').evaluateAll((options) => {
+      return options
+        .map((option) => ({
+          value: option.value,
+          label: (option.textContent || '').trim(),
+        }))
+        .filter((option) => option.value && option.label);
+    });
 
-  const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
-    || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
+    const selectedBranch = branchOptions.find((option) => normalizeText(option.label) === normalizeText(branchName))
+      || branchOptions.find((option) => normalizeText(option.label).includes(normalizeText(branchName)));
 
-  if (!selectedBranch) throw new Error(`No encontre la sucursal ${branchName}`);
+    if (!selectedBranch) throw new Error(`No encontre la sucursal ${branchName}`);
 
-  await branchSelect.selectOption(selectedBranch.value);
-  await branchSelect.dispatchEvent('change');
+    await branchSelect.selectOption(selectedBranch.value);
+    await branchSelect.dispatchEvent('change');
 
-  const nextButton = page.locator('#agendar #step-0 #btn-step-one');
-  await nextButton.waitFor({ state: 'visible', timeout: 10000 });
-  await page.waitForFunction(() => {
-    const button = document.querySelector('#agendar #step-0 #btn-step-one');
-    return !!button && !button.hasAttribute('disabled');
-  }, undefined, { timeout: 10000 });
-  await nextButton.click();
+    const nextButton = page.locator('#agendar #step-0 #btn-step-one');
+    await nextButton.waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => {
+      const button = document.querySelector('#agendar #step-0 #btn-step-one');
+      return !!button && !button.hasAttribute('disabled');
+    }, undefined, { timeout: 10000 });
+    await nextButton.click();
+  } catch (error) {
+    const diagnostic = await collectPageDiagnostic(page, {
+      stage: 'openBookingStepOne',
+      medinetMode: process.env.MEDINET_MODE || 'search',
+      branchName,
+      errorMessage: error?.message || String(error),
+    });
+    console.error('MEDINET_PAGE_DIAGNOSTIC', JSON.stringify(diagnostic, null, 2));
+    throw error;
+  }
 }
 
 async function openProfessionalAgenda(page, professionalId) {
