@@ -10,12 +10,16 @@ import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } 
 import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import {
-  fetchActiveProfessionals, fetchProfessionalsFull, searchProfessionalByName,
+  fetchActiveProfessionals, fetchProfessionalsFull, getProfessionalDetails,
+  fetchProfessionalsBySpecialtyAndBranch,
   fetchAvailableSlots, fetchNextSlotsChatbot, checkProfessionalAvailable,
-  bookAppointment, bookAppointmentForPatient,
+  bookChatbot, bookOverschedule, bookAppointmentForPatient,
   fetchAllAppointments, fetchAppointmentDetail, updateAppointmentState,
-  fetchSpecialties, fetchAppointmentTypes,
-  buildProfessionalsCache, findProfessional, searchAvailableSlots
+  fetchSpecialties, fetchAppointmentTypes, fetchAppointmentTypesByContext,
+  fetchBranches, fetchPrevisiones,
+  checkPatientByRut, fetchPatientById, searchPatients,
+  buildProfessionalsCache, findProfessional, searchAvailableSlots,
+  findSpecialtyId,
 } from "./Antonia/medinet-api.js";
 
 const app = express();
@@ -284,17 +288,32 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   // --- API path ---
   if (MEDINET_USE_API) {
     try {
+      // Step 1: Find professional from lightweight activos-list (id, nombres, paterno, display)
       const prof = await findProfessional(safeQuery);
       if (!prof) {
         console.log("MEDINET API: no professional match for", safeQuery);
         // Fall through to Playwright
       } else {
         const profId = prof.id;
-        const profName = prof.display || prof.name || `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
-        const ubicacionId = prof.ubicacionId || MEDINET_BRANCH_ID;
-        const especialidadId = prof.specialtyId || (prof.sucursal_especialidades?.[0]?.especialidad?.id) || "";
-        const tipocitaId = prof.tipocita || (prof.tipos_cita?.[0]?.id) || "";
-        const specialty = prof.specialty || prof.allSpecialties?.[0] || "";
+        const profName = prof.display || `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+
+        // Step 2: Get full details (tipos_cita, sucursal_especialidades) from list/
+        const detail = await getProfessionalDetails(profId);
+        const suc_esps = detail?.sucursal_especialidades || [];
+        const tipos_cita = detail?.tipos_cita || [];
+
+        // Find the right sucursal_especialidad for our branch (MEDINET_BRANCH_ID)
+        const branchMatch = suc_esps.find((se) => se.ubicacion?.id === MEDINET_BRANCH_ID) || suc_esps[0];
+        const ubicacionId = branchMatch?.ubicacion?.id || MEDINET_BRANCH_ID;
+        const especialidadId = branchMatch?.especialidad?.id || "";
+        const specialty = branchMatch?.especialidad?.nombre || "";
+
+        // Find tipo_cita available at our branch
+        const tipoCitaMatch = tipos_cita.find((tc) =>
+          (tc.sucursales || []).includes(MEDINET_BRANCH_ID)
+        ) || tipos_cita[0];
+        const tipocitaId = tipoCitaMatch?.id || "";
+        const duration = tipoCitaMatch?.duracion || 30;
 
         let slots = [];
         if (ubicacionId && especialidadId && tipocitaId) {
@@ -312,6 +331,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
           slot.professional = slot.professional || profName;
           slot.professionalId = slot.professionalId || String(profId);
           slot.specialty = slot.specialty || specialty;
+          slot.duration = slot.duration || duration;
         }
 
         const patientReply = buildPatientReplyFromSlots(profName, specialty, slots);
@@ -326,7 +346,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
           patient_phone: patientPhone,
         };
 
-        console.log("MEDINET API MATCH:", JSON.stringify({ id: profId, professional: profName, specialty, slotsFound: slots.length }));
+        console.log("MEDINET API MATCH:", JSON.stringify({ id: profId, professional: profName, specialty, slotsFound: slots.length, ubicacionId, especialidadId, tipocitaId }));
         return response;
       }
     } catch (error) {

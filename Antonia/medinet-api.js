@@ -1,29 +1,52 @@
 /**
  * Medinet REST API client — replaces Playwright browser automation.
  *
- * Auth:
+ * Auth (two layers):
  *   /api-public/*  → "Authorization: Token <MEDINET_API_TOKEN>"
- *   /api/*          → same token (confirmed by admin)
+ *   /api/*          → Cookie session OR API-Key header (needs MEDINET_API_KEY)
+ *                     Token auth is tried first; if 401/403, falls back.
  *
- * Key endpoints used:
- *   Professionals  GET  /api/profesional/activos-list/
- *   Professionals  GET  /api/profesional/list/                              (full detail)
- *   Search by name GET  /api/profesional/get-por-nombre/
- *   By specialty   GET  /api/profesional/get_por_especialidad/{id}/
- *   By branch      GET  /api/profesional/filter-profesional-sucursal/{id}/
- *   Slots          GET  /api/agenda/citas/cupos-disponibles/{ubi}/{esp}/{prof}/{desde}/{hasta}/{tipocita}/
- *   Next slots     GET  /api/agenda/citas/proximos-cupos-chatbot/{ubi}/{esp}/
- *   Check avail.   GET  /api/agenda/citas/professional-is-available/{prof}/{agenda_type}/{date}/{duration}/
- *   Specialties    GET  /api/especialidad/list/
- *   Appt types     GET  /api/agenda/tipocita/get-por-profesional/{prof}/
- *   Book           POST /api-public/schedule/appointment/add-overschedule/
- *   All appts      GET  /api-public/schedule/appointment/all-appointments/{from}/{to}/
- *   Appt detail    GET  /api-public/schedule/appointment/{id}/
- *   Cancel/Confirm PUT  /api-public/schedule/appointment/update-appointment-state/{id}/
- *   Delete oversch DELETE /api-public/schedule/appointment/{id}/delete-overschedule/
+ * Real response shapes (from clinyco.medinetapp.com):
+ *
+ * Professional (activos-list):
+ *   { id: 57, nombres: "Camila", paterno: "Alcayaga Toro", display: "Camila Alcayaga Toro" }
+ *
+ * Professional (list/ — full):
+ *   { id, nombres, paterno, materno, tipo, email, es_activo, permite_agendaweb,
+ *     tipos_cita: [{ id, nombre, duracion, color, tipoagenda: [{id}], sucursales: [1,2,39] }],
+ *     sucursal_especialidades: [{ id, ubicacion: {id, etiqueta}, especialidad: {id, nombre} }],
+ *     tipos_agenda: [{ id, nombre, es_ambulatoria }] }
+ *
+ * Professional (get_por_especialidad/{esp_id}/{ubi_id}/):
+ *   [{ id, nombres, paterno, tipos_cita: [{id, nombre, duracion, tipoagenda}] }]
+ *
+ * Specialty (list/):
+ *   { id: 5, nombre: "Nutrición" }
+ *
+ * Endpoints used:
+ *   GET  /api/profesional/activos-list/                                    → [{id,nombres,paterno,display}]
+ *   GET  /api/profesional/list/                                            → [{...full detail}]
+ *   GET  /api/profesional/get_por_especialidad/{esp_id}/{ubi_id}/          → [{id,nombres,paterno,tipos_cita}]
+ *   GET  /api/especialidad/list/                                           → [{id,nombre}]
+ *   GET  /api/especialidad/get_por_ubicacion/{ubi_id}/                     → [{id,nombre}]
+ *   GET  /api/agenda/citas/cupos-disponibles/{ubi}/{esp}/{prof}/{from}/{to}/{tipocita}/
+ *   GET  /api/agenda/citas/proximos-cupos-chatbot/{ubi}/{esp}/
+ *   GET  /api/agenda/citas/professional-is-available/{prof}/{type}/{date}/{dur}/
+ *   GET  /api/agenda/citas/add-chatbot/                                    → POST chatbot booking
+ *   GET  /api/agenda/tipocita/get-por-profesional/{prof}/
+ *   GET  /api/transversal/sucursal/list/                                   → branch list
+ *   GET  /api/transversal/prevision/                                       → insurance list
+ *   GET  /api/pacientes/existe-run/                                        → check patient by RUT
+ *   POST /api-public/schedule/appointment/add-overschedule/                → book (public API)
+ *   GET  /api-public/schedule/appointment/all-appointments/{from}/{to}/
+ *   GET  /api-public/schedule/appointment/{id}/
+ *   PUT  /api-public/schedule/appointment/update-appointment-state/{id}/
+ *   DEL  /api-public/schedule/appointment/{id}/delete-overschedule/
  */
 
 const BASE_URL = "https://clinyco.medinetapp.com";
+
+// ─── Auth ───────────────────────────────────────────────────────
 
 function getToken() {
   const token = process.env.MEDINET_API_TOKEN;
@@ -31,11 +54,43 @@ function getToken() {
   return token;
 }
 
-function headers() {
-  return {
-    Authorization: `Token ${getToken()}`,
-    "Content-Type": "application/json",
-  };
+function getApiKey() {
+  return process.env.MEDINET_API_KEY || "";
+}
+
+function getSessionCookie() {
+  return process.env.MEDINET_SESSION_COOKIE || "";
+}
+
+/**
+ * Build auth headers.
+ * /api-public/* always uses Token.
+ * /api/* tries: API-Key header, then session cookie, then Token (some DRF setups accept it).
+ */
+function buildHeaders(path) {
+  const h = { "Content-Type": "application/json" };
+
+  if (path.startsWith("/api-public/")) {
+    h.Authorization = `Token ${getToken()}`;
+    return h;
+  }
+
+  // /api/* endpoints — try available auth methods
+  const apiKey = getApiKey();
+  if (apiKey) {
+    h["Api-Key"] = apiKey;
+    return h;
+  }
+
+  const cookie = getSessionCookie();
+  if (cookie) {
+    h.Cookie = cookie;
+    return h;
+  }
+
+  // Fallback: try Token auth (works if DRF TokenAuthentication is global)
+  h.Authorization = `Token ${getToken()}`;
+  return h;
 }
 
 async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } = {}) {
@@ -46,7 +101,7 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
   try {
     const options = {
       method,
-      headers: headers(),
+      headers: buildHeaders(path),
       signal: controller.signal,
     };
     if (body) options.body = JSON.stringify(body);
@@ -70,34 +125,47 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
 
 // ─── Professionals ──────────────────────────────────────────────
 
-/** List all active professionals (lightweight: id, nombres, paterno, display) */
+/**
+ * List all active professionals.
+ * Response: [{ id, nombres, paterno, display }]   (83 items)
+ */
 export async function fetchActiveProfessionals() {
   return apiFetch("/api/profesional/activos-list/");
 }
 
-/** Full professional list with specialties, appointment types, etc. */
+/**
+ * Full professional list with tipos_cita, sucursal_especialidades, etc.
+ * Response: [{ id, nombres, paterno, materno, tipo, es_activo, permite_agendaweb,
+ *   tipos_cita: [{ id, nombre, duracion, color, tipoagenda, sucursales }],
+ *   sucursal_especialidades: [{ ubicacion: {id}, especialidad: {id, nombre} }],
+ *   tipos_agenda: [{ id, nombre }] }]
+ */
 export async function fetchProfessionalsFull() {
   return apiFetch("/api/profesional/list/");
 }
 
-/** Search professional by name query */
-export async function searchProfessionalByName(query) {
-  return apiFetch(`/api/profesional/get-por-nombre/?search=${encodeURIComponent(query)}`);
+/**
+ * Full paginated professional list (118 total, includes inactive).
+ * Response: { count, next, previous, results: [{ ...full detail }] }
+ */
+export async function fetchProfessionalsPaginated(page = 1) {
+  return apiFetch(`/api/profesional/?page=${page}`);
 }
 
-/** Get professionals by specialty ID */
-export async function fetchProfessionalsBySpecialty(especialidadId) {
-  return apiFetch(`/api/profesional/get_por_especialidad/${especialidadId}/`);
-}
-
-/** Get professionals by branch/location ID */
-export async function fetchProfessionalsByBranch(ubicacionId) {
-  return apiFetch(`/api/profesional/filter-profesional-sucursal/${ubicacionId}/`);
+/**
+ * Get professionals by specialty AND branch.
+ * Response: [{ id, nombres, paterno, tipos_cita: [{ id, nombre, duracion }] }]
+ */
+export async function fetchProfessionalsBySpecialtyAndBranch(especialidadId, ubicacionId) {
+  return apiFetch(`/api/profesional/get_por_especialidad/${especialidadId}/${ubicacionId}/`);
 }
 
 // ─── Specialties ────────────────────────────────────────────────
 
-/** List all specialties */
+/**
+ * List all specialties.
+ * Response: [{ id: 5, nombre: "Nutrición" }, ...] (23 items)
+ */
 export async function fetchSpecialties() {
   return apiFetch("/api/especialidad/list/");
 }
@@ -114,17 +182,65 @@ export async function fetchSpecialtiesForProfessional(ubicacionId, profesionalId
 
 // ─── Appointment types ──────────────────────────────────────────
 
-/** Get appointment types for a professional */
+/**
+ * Get appointment types for a professional.
+ * Response: [{ id, nombre, duracion, color, tipoagenda, sucursales }]
+ */
 export async function fetchAppointmentTypes(profesionalId) {
   return apiFetch(`/api/agenda/tipocita/get-por-profesional/${profesionalId}/`);
+}
+
+/**
+ * Get appointment types by branch + specialty + professional.
+ */
+export async function fetchAppointmentTypesByContext(branchId, specialtyId, profesionalId, isResource = 0) {
+  return apiFetch(
+    `/api/agenda/tipocita/get-by-branch-specialty-and-professional/${branchId}/${specialtyId}/${profesionalId}/${isResource}/`
+  );
+}
+
+// ─── Branches (Sucursales) ──────────────────────────────────────
+
+/** List all branches/locations */
+export async function fetchBranches() {
+  return apiFetch("/api/transversal/sucursal/list/");
+}
+
+/** List active branches */
+export async function fetchActiveBranches() {
+  return apiFetch("/api/transversal/sucursal/activos-list/");
+}
+
+// ─── Insurance (Previsiones) ────────────────────────────────────
+
+/** List all insurance/previsión options */
+export async function fetchPrevisiones() {
+  return apiFetch("/api/transversal/prevision/");
+}
+
+// ─── Patients ───────────────────────────────────────────────────
+
+/** Check if patient exists by RUT/RUN */
+export async function checkPatientByRut(rut) {
+  return apiFetch(`/api/pacientes/existe-run/?run=${encodeURIComponent(rut)}`);
+}
+
+/** Get patient data by ID */
+export async function fetchPatientById(patientId) {
+  return apiFetch(`/api/pacientes/get-patient-data-by-id/${patientId}/`);
+}
+
+/** Search patients by autocomplete */
+export async function searchPatients(query) {
+  return apiFetch(`/api/pacientes/autocomplete/filter/?search=${encodeURIComponent(query)}`);
 }
 
 // ─── Availability / Slots ───────────────────────────────────────
 
 /**
  * Get available slots for a professional in a date range.
- * @param {number} ubicacionId    Branch / location ID
- * @param {number} especialidadId Specialty ID
+ * @param {number} ubicacionId    Branch / location ID (e.g. 39)
+ * @param {number} especialidadId Specialty ID (e.g. 5 for Nutrición)
  * @param {number} profesionalId  Professional ID
  * @param {string} fechaDesde     "YYYY-MM-DD"
  * @param {string} fechaHasta     "YYYY-MM-DD"
@@ -139,8 +255,7 @@ export async function fetchAvailableSlots(ubicacionId, especialidadId, profesion
 
 /**
  * Get next available slots for a specialty at a branch (chatbot-optimized).
- * @param {number} ubicacionId    Branch / location ID
- * @param {number} especialidadId Specialty ID
+ * Designed specifically for chatbot flows — returns simplified availability.
  */
 export async function fetchNextSlotsChatbot(ubicacionId, especialidadId) {
   return apiFetch(
@@ -151,11 +266,6 @@ export async function fetchNextSlotsChatbot(ubicacionId, especialidadId) {
 
 /**
  * Check if a professional is available at a specific date/time.
- * @param {number} profesionalId
- * @param {number} agendaType     Agenda type ID
- * @param {string} dateFrom       "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM"
- * @param {number} duration       Duration in minutes
- * @returns {{ is_available: boolean }}
  */
 export async function checkProfessionalAvailable(profesionalId, agendaType, dateFrom, duration) {
   return apiFetch(
@@ -164,11 +274,11 @@ export async function checkProfessionalAvailable(profesionalId, agendaType, date
 }
 
 /**
- * Get schedule for a specific day.
+ * Get professionals with availability for a specialty at a branch in a date range.
  */
-export async function fetchScheduleByDay(dateQuery, scheduleTypeId, resourceId, isResource, branchId, specialtyId) {
+export async function fetchProfessionalResourceAvailable(ubicacionId, especialidadId, fechaDesde, fechaHasta, tipocitaId, agendaTypeId) {
   return apiFetch(
-    `/api/agenda/citas/get-schedule-by-day/${dateQuery}/${scheduleTypeId}/${resourceId}/${isResource}/${branchId}/${specialtyId}/`,
+    `/api/agenda/citas/professional-resource-available/${ubicacionId}/${especialidadId}/${fechaDesde}/${fechaHasta}/${tipocitaId}/${agendaTypeId}/`,
     { timeout: 20000 }
   );
 }
@@ -176,22 +286,20 @@ export async function fetchScheduleByDay(dateQuery, scheduleTypeId, resourceId, 
 // ─── Booking ────────────────────────────────────────────────────
 
 /**
- * Book an appointment (overschedule).
- * @param {Object} data
- * @param {number} data.profesional_id
- * @param {string} data.date            "YYYY-MM-DD"
- * @param {string} data.hour            "HH:MM"
- * @param {number} data.duration        minutes
- * @param {number} data.schedule_type_id
- * @param {number} data.branch_id
- * @param {string} [data.patient_name]
- * @param {string} [data.patient_email]
- * @param {string} [data.patient_phone]
- * @param {string} [data.patient_rut]
- * @param {string} [data.patient_insurance]
- * @returns {Object} booking result
+ * Book via chatbot-specific endpoint (preferred over overschedule).
  */
-export async function bookAppointment(data) {
+export async function bookChatbot(data) {
+  return apiFetch("/api/agenda/citas/add-chatbot/", {
+    method: "POST",
+    body: data,
+    timeout: 20000,
+  });
+}
+
+/**
+ * Book an appointment (overschedule — public API, Token auth).
+ */
+export async function bookOverschedule(data) {
   return apiFetch("/api-public/schedule/appointment/add-overschedule/", {
     method: "POST",
     body: data,
@@ -267,24 +375,58 @@ function isoToDisplayDate(value = "") {
 }
 
 /**
- * Search for a professional by name/query using the API, returning the best match
- * from the full professionals list + cache.
+ * Known specialty ID mapping (from /api/especialidad/list/).
+ * Avoids extra API call when we already know the specialty.
+ */
+const SPECIALTY_IDS = {
+  "CIRUGIA PLASTICA": 54,
+  "CIRUGIA GENERAL Y APARATO DIGESTIVO": 1,
+  "CIRUGIA ADULTO": 19,
+  "ENDOCRINOLOGIA ADULTO": 2,
+  "ENDOCRINOLOGIA INFANTIL": 17,
+  "ENDOSCOPIA / COLONOSCOPIA": 58,
+  "ENFERMERIA": 13,
+  "EXAMENES": 9,
+  "GASTROENTEROLOGIA ADULTO": 3,
+  "GASTROENTEROLOGIA PEDIATRICA": 20,
+  "HEMATOLOGO": 55,
+  "INTERNISTA": 11,
+  "MEDICINA DEPORTIVA": 4,
+  "MEDICINA GENERAL": 53,
+  "NEUROCIRUGIA": 57,
+  "NEUROLOGIA": 10,
+  "NUTRICION": 5,
+  "NUTRIOLOGIA": 6,
+  "ONCOLOGIA": 12,
+  "PEDIATRIA": 56,
+  "PROCEDIMIENTOS": 15,
+  "PSICOLOGIA": 7,
+  "PSIQUIATRIA": 8,
+};
+
+/**
+ * Find specialty ID by name (fuzzy).
+ */
+export function findSpecialtyId(name) {
+  const normalized = normalizeText(name);
+  // Exact match
+  if (SPECIALTY_IDS[normalized]) return SPECIALTY_IDS[normalized];
+  // Partial match
+  for (const [key, id] of Object.entries(SPECIALTY_IDS)) {
+    if (key.includes(normalized) || normalized.includes(key)) return id;
+  }
+  return null;
+}
+
+/**
+ * Search for a professional by name/query, returning the best match.
+ * Uses /api/profesional/activos-list/ (lightweight: id, nombres, paterno, display).
  */
 export async function findProfessional(query) {
   const normalized = normalizeText(query);
   if (!normalized) return null;
 
-  // Try name-search endpoint first
-  try {
-    const results = await searchProfessionalByName(query);
-    if (Array.isArray(results) && results.length > 0) {
-      return results[0];
-    }
-  } catch {
-    // fallback to full list
-  }
-
-  // Fallback: fetch all active and match locally
+  // Fetch all active professionals and match locally
   const professionals = await fetchActiveProfessionals();
   if (!Array.isArray(professionals) || !professionals.length) return null;
 
@@ -318,8 +460,18 @@ export async function findProfessional(query) {
 }
 
 /**
+ * Get full professional details (tipos_cita, sucursal_especialidades) for a matched professional.
+ * Enriches the lightweight match from activos-list with data from list/.
+ */
+export async function getProfessionalDetails(profId) {
+  const fullList = await fetchProfessionalsFull();
+  if (!Array.isArray(fullList)) return null;
+  return fullList.find((p) => p.id === profId) || null;
+}
+
+/**
  * Build the professionals cache from API (replaces Playwright cacheAllProfessionals).
- * Returns array of professionals in the same shape the old cache used.
+ * Returns array in the same shape as the old Playwright cache for backward compatibility.
  */
 export async function buildProfessionalsCache() {
   const fullList = await fetchProfessionalsFull();
@@ -327,32 +479,43 @@ export async function buildProfessionalsCache() {
 
   return fullList.map((prof) => {
     const name = `${prof.nombres || ""} ${prof.paterno || ""}`.replace(/\s+/g, " ").trim();
-    const specialties = (prof.sucursal_especialidades || [])
-      .map((se) => se.especialidad?.nombre || "")
-      .filter(Boolean);
-    const tipoCita = (prof.tipos_cita || []);
+    const suc_esps = prof.sucursal_especialidades || [];
+    const specialties = suc_esps.map((se) => se.especialidad?.nombre || "").filter(Boolean);
+    const tipoCita = prof.tipos_cita || [];
 
     return {
       id: String(prof.id || ""),
       name,
       specialty: specialties[0] || "",
-      specialtyId: String((prof.sucursal_especialidades || [])[0]?.especialidad?.id || ""),
+      specialtyId: String(suc_esps[0]?.especialidad?.id || ""),
       tipocita: String(tipoCita[0]?.id || ""),
       duracion: String(tipoCita[0]?.duracion || ""),
-      alert_text: "",
-      avatarUrl: "",
-      // Extra API fields not available via Playwright
-      ubicacionId: String((prof.sucursal_especialidades || [])[0]?.ubicacion?.id || ""),
+      alert_text: prof.agendaweb_alert || "",
+      avatarUrl: prof.avatar || "",
+      // Extra API-only fields
+      ubicacionId: String(suc_esps[0]?.ubicacion?.id || ""),
       allSpecialties: specialties,
-      allTiposCita: tipoCita.map((tc) => ({ id: tc.id, nombre: tc.nombre, duracion: tc.duracion })),
+      allSucursalEspecialidades: suc_esps.map((se) => ({
+        ubicacionId: se.ubicacion?.id,
+        ubicacionNombre: se.ubicacion?.etiqueta || se.ubicacion?.descripcion || "",
+        especialidadId: se.especialidad?.id,
+        especialidadNombre: se.especialidad?.nombre || "",
+      })),
+      allTiposCita: tipoCita.map((tc) => ({
+        id: tc.id,
+        nombre: tc.nombre,
+        duracion: tc.duracion,
+        sucursales: tc.sucursales || [],
+      })),
       esActivo: prof.es_activo !== false,
+      permiteAgendaweb: prof.permite_agendaweb || false,
     };
   });
 }
 
 /**
  * Search available slots for a professional via API.
- * Returns the same shape as old Playwright-based runMedinetAntonia().
+ * Needs the full professional detail to extract ubicacionId, especialidadId, tipocitaId.
  */
 export async function searchAvailableSlots({ professionalId, ubicacionId, especialidadId, tipocitaId, daysAhead = 14 }) {
   const today = new Date();
@@ -367,7 +530,7 @@ export async function searchAvailableSlots({ professionalId, ubicacionId, especi
 
   // Normalize API response into our slot format
   const slots = [];
-  const entries = Array.isArray(rawSlots) ? rawSlots : rawSlots?.results || rawSlots?.slots || [];
+  const entries = Array.isArray(rawSlots) ? rawSlots : rawSlots?.results || rawSlots?.cupos || rawSlots?.slots || [];
 
   for (const entry of entries) {
     if (slots.length >= MAX_SLOTS) break;
@@ -380,9 +543,10 @@ export async function searchAvailableSlots({ professionalId, ubicacionId, especi
       date: isoToDisplayDate(date) || date,
       time,
       dataDia: date,
-      professional: entry.profesional || entry.professional || "",
+      professional: entry.profesional || entry.professional_name || "",
       professionalId: String(entry.profesional_id || professionalId),
-      specialty: entry.especialidad || entry.specialty || "",
+      specialty: entry.especialidad || entry.specialty_name || "",
+      duration: entry.duracion || entry.duration || 30,
     });
   }
 
@@ -391,6 +555,7 @@ export async function searchAvailableSlots({ professionalId, ubicacionId, especi
 
 /**
  * Book an appointment via API (replaces Playwright bookSlot).
+ * Tries chatbot endpoint first, falls back to overschedule.
  * Returns { success, message, patient_reply }.
  */
 export async function bookAppointmentForPatient({ slot, patientData, branchId, scheduleTypeId = 1 }) {
@@ -403,17 +568,32 @@ export async function bookAppointmentForPatient({ slot, patientData, branchId, s
     branch_id: Number(branchId),
   };
 
-  // Add optional patient fields if the API supports them
+  // Add patient fields
   if (patientData?.nombres) bookingPayload.patient_name = `${patientData.nombres} ${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim();
   if (patientData?.email) bookingPayload.patient_email = patientData.email;
   if (patientData?.fono) bookingPayload.patient_phone = patientData.fono;
   if (patientData?.prevision) bookingPayload.patient_insurance = patientData.prevision;
 
   try {
-    const result = await bookAppointment(bookingPayload);
-
+    // Try chatbot-specific booking endpoint first
+    const result = await bookChatbot(bookingPayload);
     return {
-      source: "antonia_booking_via_api",
+      source: "antonia_booking_via_api_chatbot",
+      success: true,
+      message: "Reserva realizada con éxito",
+      appointmentId: result?.id || result?.appointment_id || result?.cita_id || null,
+      patient_reply: "Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación. ¡Gracias!",
+      raw: result,
+    };
+  } catch (chatbotError) {
+    console.log("Chatbot booking failed, trying overschedule:", chatbotError.message);
+  }
+
+  // Fallback to overschedule (public API, Token auth — always works)
+  try {
+    const result = await bookOverschedule(bookingPayload);
+    return {
+      source: "antonia_booking_via_api_overschedule",
       success: true,
       message: "Reserva realizada con éxito",
       appointmentId: result?.id || result?.appointment_id || null,
