@@ -394,7 +394,9 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
         scheduleTypeId: 1,
       });
       console.log("MEDINET BOOKING (API) result:", JSON.stringify({ success: result.success, message: result.message }));
-      return result;
+      if (result.success) return result;
+      console.warn("MEDINET BOOKING (API) failed (success=false) — falling back to Playwright");
+
     } catch (error) {
       console.error("MEDINET BOOKING (API) ERROR:", error.message, "— falling back to Playwright");
     }
@@ -2057,7 +2059,19 @@ async function sendManagedReply({
       state: latestState,
       resolverDecision: { ...resolverDecision, sendError: sendError.message }
     });
+    await persistConversationSnapshot(conversationId, latestState, channelLabel);
+    return {
+      ok: false,
+      sendFailed: true,
+      reply: finalReply,
+      delayMs,
+      botMessagesSent: latestState.system.botMessagesSent,
+      handoffReason: latestState.system.handoffReason || null,
+      resolverDecision: resolverDecision || null
+    };
   }
+
+  // Only advance state after successful delivery
   addToHistory(conversationId, "assistant", finalReply);
 
   latestState.system.botMessagesSent += 1;
@@ -2090,8 +2104,7 @@ async function sendManagedReply({
   await persistConversationSnapshot(conversationId, latestState, channelLabel);
 
   return {
-    ok: !sendFailed,
-    sendFailed: sendFailed || undefined,
+    ok: true,
     reply: finalReply,
     delayMs,
     botMessagesSent: latestState.system.botMessagesSent,
