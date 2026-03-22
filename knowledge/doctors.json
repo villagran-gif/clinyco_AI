@@ -23,9 +23,9 @@
       "sedes": ["Antofagasta", "Santiago"],
       "modalidad": "Evaluacion y cirugia",
       "procedimientos": ["Balon gastrico", "Manga gastrica", "Bypass gastrico"],
-      "agenda_directa_disponible": false,
+      "agenda_directa_disponible": true,
       "observaciones": "No prometer horario exacto si no hay acceso real a agenda.",
-      "notas_para_bot": "Si el usuario quiere avanzar, derivar con una agente."
+      "notas_para_bot": "Buscar disponibilidad en Medinet. Si no hay horas, derivar con una agente."
     },
     {
       "activo": true,
@@ -34,9 +34,9 @@
       "sedes": ["Santiago", "Telemedicina"],
       "modalidad": "Telemedicina y cirugia",
       "procedimientos": ["Balon gastrico", "Manga gastrica", "Bypass gastrico"],
-      "agenda_directa_disponible": false,
+      "agenda_directa_disponible": true,
       "observaciones": "Las cirugias en Santiago se realizan en Clinica Tabancura, RedSalud Vitacura.",
-      "notas_para_bot": "No prometer cupos ni horarios exactos."
+      "notas_para_bot": "Buscar disponibilidad en Medinet. No prometer cupos ni horarios exactos sin verificar."
     },
     {
       "activo": true,
@@ -45,9 +45,9 @@
       "sedes": ["Antofagasta", "Santiago"],
       "modalidad": "Evaluacion y cirugia",
       "procedimientos": ["Balon gastrico", "Manga gastrica", "Bypass gastrico"],
-      "agenda_directa_disponible": false,
+      "agenda_directa_disponible": true,
       "observaciones": null,
-      "notas_para_bot": "Orientar y luego derivar."
+      "notas_para_bot": "Buscar disponibilidad en Medinet. Si no hay horas, derivar."
     },
     {
       "activo": true,
@@ -56,9 +56,9 @@
       "sedes": ["Antofagasta"],
       "modalidad": "Presencial",
       "procedimientos": ["Cirugia plastica"],
-      "agenda_directa_disponible": false,
+      "agenda_directa_disponible": true,
       "observaciones": "Cirugias plasticas en Antofagasta.",
-      "notas_para_bot": "Si preguntan por horarios, derivar o compartir agenda web."
+      "notas_para_bot": "Buscar disponibilidad en Medinet. Si no hay horas, compartir agenda web o derivar."
     },
     {
       "activo": true,
@@ -67,9 +67,9 @@
       "sedes": ["Antofagasta"],
       "modalidad": "Presencial",
       "procedimientos": ["Cirugia plastica"],
-      "agenda_directa_disponible": false,
+      "agenda_directa_disponible": true,
       "observaciones": null,
-      "notas_para_bot": "No inventar disponibilidad."
+      "notas_para_bot": "Buscar disponibilidad en Medinet. No inventar disponibilidad."
     },
     {
       "activo": true,
@@ -78,9 +78,9 @@
       "sedes": ["Antofagasta"],
       "modalidad": "Presencial",
       "procedimientos": ["Cirugia plastica"],
-      "agenda_directa_disponible": false,
+      "agenda_directa_disponible": true,
       "observaciones": null,
-      "notas_para_bot": "No inventar disponibilidad."
+      "notas_para_bot": "Buscar disponibilidad en Medinet. No inventar disponibilidad."
     }
   ]
 }

@@ -2,13 +2,14 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { accessSync, readFileSync, constants as fsConstants } from "node:fs";
+import { accessSync, readFileSync, writeFileSync, mkdirSync, constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
 import { dbEnabled, initDb, getConversationRecord, getRecentConversationMessages, upsertConversationState, insertConversationMessage, upsertStructuredLead } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
+import { buildProfessionalsCacheFromAPI } from "./Antonia/medinet-api.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -153,6 +154,35 @@ async function runMedinetAntoniaCache() {
   }
 }
 
+/**
+ * Fast cache refresh via public Medinet REST API (~1s vs ~45s Playwright).
+ * Falls back to Playwright-based cache if the API call fails.
+ */
+async function refreshMedinetCacheViaAPI() {
+  try {
+    const professionals = await buildProfessionalsCacheFromAPI();
+    if (!professionals || !professionals.length) {
+      console.warn("Medinet API returned empty professionals list, falling back to Playwright cache");
+      return runMedinetAntoniaCache();
+    }
+
+    const cacheDir = fileURLToPath(new URL("./data", import.meta.url));
+    try { mkdirSync(cacheDir, { recursive: true }); } catch {}
+
+    const cachePayload = {
+      cachedAt: new Date().toISOString(),
+      branch: "API",
+      professionals,
+    };
+    writeFileSync(MEDINET_CACHE_FILE, JSON.stringify(cachePayload, null, 2), "utf8");
+    console.log(`MEDINET API CACHE REFRESH: ${professionals.length} professionals cached`);
+    return true;
+  } catch (error) {
+    console.warn("Medinet API cache refresh failed, falling back to Playwright:", error.message);
+    return runMedinetAntoniaCache();
+  }
+}
+
 const MEDINET_DISCARD_TOKENS = new Set([
   "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
   "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
@@ -229,6 +259,9 @@ function extractKnownProfessionalAlias(text) {
   const tokens = nk.split(/\s+/);
   for (const t of tokens) {
     if (FIRST_NAME_ALIASES[t]) return FIRST_NAME_ALIASES[t];
+    // Handle @doctorvillagran, @drvillagran, etc. — strip title prefix from token
+    const stripped = t.replace(/^(?:DOCTORA?|DRA?)/, "");
+    if (stripped && stripped !== t && FIRST_NAME_ALIASES[stripped]) return FIRST_NAME_ALIASES[stripped];
   }
   return null;
 }
@@ -2064,7 +2097,14 @@ function hasScheduleIntent(text) {
     "QUIERO HORA",
     "QUIERO UNA HORA",
     "AGENDAR EN",
-    "AGENDA EN"
+    "AGENDA EN",
+    "CONSULTA CON",
+    "NECESITO HORA",
+    "NECESITO UNA HORA",
+    "SOLICITAR HORA",
+    "SOLICITAR UNA HORA",
+    "PEDIR HORA",
+    "PEDIR UNA HORA"
   ].some((phrase) => normalized.includes(phrase));
 }
 
@@ -2090,11 +2130,11 @@ function extractProfessionalReference(text) {
   const source = normalizeSpaces(String(text || ""));
   const normalized = normalizeKey(source);
 
-  if (/\bRODRIGO\s+VILLAGRAN\b|\bRODRIGO\s+VILLAGRA\b|\bDR\s+VILLAGRAN\b|\bDR\s+VILLAGRA\b|\bDOCTOR\s+VILLAGRAN\b|\bDOCTOR\s+VILLAGRA\b/.test(normalized)) {
+  if (/\bRODRIGO\s+VILLAGRAN\b|\bRODRIGO\s+VILLAGRA\b|\bDR\s*VILLAGRAN\b|\bDR\s*VILLAGRA\b|\bDOCTOR\s*VILLAGRAN\b|\bDOCTOR\s*VILLAGRA\b/.test(normalized)) {
     return { professionalName: "Rodrigo Villagran", matchType: "known" };
   }
 
-  const titledMatch = source.match(/\b(?:dr|dra|doctor|doctora)\.?\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
+  const titledMatch = source.match(/\b(?:dr|dra|doctor|doctora)\.?\s*([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
   if (titledMatch) {
     return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
@@ -3438,10 +3478,10 @@ app.post("/messages", async (req, res) => {
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
 
-      // Cache TTL check: refresh if stale (>30 min)
+      // Cache TTL check: refresh if stale (>30 min) — use fast API first
       if (isCacheStale()) {
-        console.log("Medinet cache stale (>30 min), refreshing before fast-path...");
-        await runMedinetAntoniaCache();
+        console.log("Medinet cache stale (>30 min), refreshing via API before fast-path...");
+        await refreshMedinetCacheViaAPI();
         KNOWN_AGENDA_PROFESSIONALS = buildKnownAgendaProfessionals();
       }
 
