@@ -1283,7 +1283,7 @@ function isRealHumanBusinessTakeover(info) {
 function clearSoftHandoffState(state) {
   state.system.aiEnabled = true;
   if (state.system.handoffReason === "max_bot_messages_reached") {
-    state.system.botMessagesSent = 0;
+    state.system.botMessagesSent = MAX_BOT_MESSAGES - 1;
   }
   state.system.handoffReason = null;
   state.system.lastQuestionKey = null;
@@ -3362,6 +3362,9 @@ app.post("/messages", async (req, res) => {
             }
           }));
         } catch (error) {
+          if (error.message?.includes("Executable doesn't exist")) {
+            console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
+          }
           console.error("ANTONIA BOOKING ERROR:", error.message);
           state.booking.pendingSlots = null;
           state.booking.awaitingSlotChoice = false;
@@ -3424,6 +3427,9 @@ app.post("/messages", async (req, res) => {
           }
         }));
       } catch (error) {
+        if (error.message?.includes("Executable doesn't exist")) {
+          console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
+        }
         console.error("ANTONIA BOOKING ERROR:", error.message);
         state.booking.awaitingPatientData = false;
         state.booking.chosenSlot = null;
@@ -3491,6 +3497,9 @@ app.post("/messages", async (req, res) => {
           }));
         }
       } catch (error) {
+        if (error.message?.includes("Executable doesn't exist")) {
+          console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
+        }
         console.error("ANTONIA FAST-PATH ERROR:", error.message);
       }
     }
@@ -3773,6 +3782,9 @@ app.post("/messages", async (req, res) => {
           }));
         }
       } catch (error) {
+        if (error.message?.includes("Executable doesn't exist")) {
+          console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
+        }
         console.error("ANTONIA MEDINET ERROR:", error.message);
       }
     }
