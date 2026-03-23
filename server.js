@@ -3576,13 +3576,17 @@ app.post("/messages", async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
-    await ensureCustomerContext({
-      conversationId,
-      state,
-      info,
-      channelLabel,
-      loadSummaries: true
-    });
+    try {
+      await ensureCustomerContext({
+        conversationId,
+        state,
+        info,
+        channelLabel,
+        loadSummaries: true
+      });
+    } catch (memErr) {
+      console.error("CUSTOMER_CONTEXT_ERROR (known-patient):", memErr.message);
+    }
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
     // --- Antonia booking slot choice interceptor ---
@@ -3946,13 +3950,19 @@ app.post("/messages", async (req, res) => {
     // --- End open-help layer ---
 
     await maybeRunIdentitySearch(state, info);
-    const customerMemory = await ensureCustomerContext({
-      conversationId,
-      state,
-      info,
-      channelLabel,
-      loadSummaries: true
-    });
+    let customerMemory = null;
+    try {
+      customerMemory = await ensureCustomerContext({
+        conversationId,
+        state,
+        info,
+        channelLabel,
+        loadSummaries: true
+      });
+    } catch (memErr) {
+      console.error("CUSTOMER_CONTEXT_ERROR (main):", memErr.message);
+      customerMemory = { customer: null, summaries: [], customerContextBlock: null };
+    }
 
     if (shouldTriggerCaseE(state)) {
       state.identity.likelyClinicalRecordOnly = true;
