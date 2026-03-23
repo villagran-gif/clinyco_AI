@@ -26,7 +26,7 @@ function resolveScript() {
 
 const SCRIPT = resolveScript();
 
-const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 60000 };
+const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 120000 };
 
 const app = express();
 app.use(express.json());
@@ -93,23 +93,36 @@ app.post("/medinet/run", authMiddleware, async (req, res) => {
   const timeoutMs = payload.timeoutMs || configuredTimeout || DEFAULT_TIMEOUTS[action] || 60000;
 
   try {
-    const { stdout } = await execFileAsync("node", [SCRIPT], {
+    const { stdout, stderr } = await execFileAsync("node", [SCRIPT], {
       env,
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
     });
 
+    if (stderr) {
+      console.error(`[medinet-worker] ${action} stderr:`, stderr.slice(-500));
+    }
+
     const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
     if (!match) {
       if (action === "cache") return res.json({ success: true });
-      return res.status(500).json({ error: "No ANTONIA_RESPONSE found in output" });
+      // Include stderr excerpt for diagnosis
+      const stderrExcerpt = (stderr || "").slice(-300).trim();
+      return res.status(500).json({
+        error: "No ANTONIA_RESPONSE found in output",
+        stderr: stderrExcerpt || undefined,
+      });
     }
 
     const result = JSON.parse(match[1]);
     return res.json(result);
   } catch (error) {
-    console.error(`[medinet-worker] ${action} error:`, error.message);
-    return res.status(500).json({ error: error.message });
+    const stderr = (error.stderr || "").slice(-300).trim();
+    console.error(`[medinet-worker] ${action} error:`, error.message, stderr ? `\nstderr: ${stderr}` : "");
+    return res.status(500).json({
+      error: error.message,
+      stderr: stderr || undefined,
+    });
   }
 });
 

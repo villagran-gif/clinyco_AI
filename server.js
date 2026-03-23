@@ -113,7 +113,7 @@ async function callRemoteMedinetWorker(action, payload, timeoutMs) {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Worker responded ${res.status}: ${body.slice(0, 200)}`);
+      throw new Error(`Worker responded ${res.status}: ${body.slice(0, 500)}`);
     }
     return await res.json();
   } finally {
@@ -350,7 +350,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
 }
 
 async function runMedinetAntoniaBooking({ slot, patientData }) {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 120000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
   if (process.env.MEDINET_REMOTE_URL) {
