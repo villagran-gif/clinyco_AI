@@ -732,7 +732,9 @@ async function bookSlot() {
 
     await selectAnyAppointmentType();
 
+    // Wait for AJAX triggered by appointment type change to settle
     await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle').catch(() => {});
     await pauseStep();
 
     const isCompactStoredPatientForm = await page.evaluate(() => {
@@ -763,6 +765,10 @@ async function bookSlot() {
       return;
     }
 
+    // Wait for the full form to be ready before filling
+    await page.waitForSelector('#paciente_nombres:visible', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(300);
+
     // Fill patient RUT if the field is visible and editable (new patient)
     if (patientRut) {
       const rutField = page.locator('#paciente_rut:visible:not([disabled])').first();
@@ -775,38 +781,93 @@ async function bookSlot() {
       }
     }
 
-    await fillIfVisible('#paciente_nombres', patientNombres);
-    await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
-    await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+    // Fill all patient fields atomically via page.evaluate to avoid AJAX race conditions
+    await page.evaluate(({ nombres, apPaterno, apMaterno, prevision, nacimiento, email, fono, direccion }) => {
+      const setInput = (id, value) => {
+        if (!value) return;
+        const el = document.querySelector(`#${id}`);
+        if (!el) return;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        // Remove readonly for date fields
+        if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+        // Use native setter to trigger React/jQuery bindings
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+          || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        if (nativeSetter) nativeSetter.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const setSelect = (id, value) => {
+        if (!value) return;
+        const el = document.querySelector(`#${id}`);
+        if (!el) return;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        // Find matching option
+        const options = Array.from(el.querySelectorAll('option'));
+        const match = options.find((o) => o.value === value)
+          || options.find((o) => (o.textContent || '').trim().toUpperCase().includes(value.toUpperCase()));
+        if (match) {
+          el.value = match.value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      };
 
-    await selectIfVisible('#paciente_sexo', '3');
+      setInput('paciente_nombres', nombres);
+      setInput('paciente_ap_paterno', apPaterno);
+      setInput('paciente_ap_materno', apMaterno);
+      setSelect('paciente_sexo', '3'); // Always Indeterminado
+      setSelect('paciente_prevision', prevision);
+      setInput('paciente_nacimiento', nacimiento);
+      setInput('paciente_email', email);
+      setInput('paciente_fono', fono);
+      setInput('paciente_direccion', direccion);
+    }, {
+      nombres: patientNombres,
+      apPaterno: patientApPaterno,
+      apMaterno: patientApMaterno,
+      prevision: patientPrevision,
+      nacimiento: patientNacimiento,
+      email: patientEmail,
+      fono: patientFono,
+      direccion: patientDireccion,
+    });
 
-    if (patientPrevision) {
-      const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
-        return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
-      });
-      const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
-        || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
-      if (matchedPrevision) {
-        await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+    // Verify fields were filled; retry with Playwright fill as fallback
+    const nombresSet = await page.locator('#paciente_nombres').inputValue().catch(() => '');
+    if (!nombresSet && patientNombres) {
+      console.error('FILL_FALLBACK: atomic fill missed fields, retrying with Playwright fill');
+      await fillIfVisible('#paciente_nombres', patientNombres);
+      await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
+      await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+      await selectIfVisible('#paciente_sexo', '3');
+      if (patientPrevision) {
+        const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
+          return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
+        });
+        const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
+          || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
+        if (matchedPrevision) {
+          await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+        }
       }
-    }
-
-    if (patientNacimiento) {
-      const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
-      const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
-      if (nacimientoVisible) {
-        await nacimientoLocator.evaluate((input, dob) => {
-          input.removeAttribute('readonly');
-          input.value = dob;
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        }, patientNacimiento);
+      if (patientNacimiento) {
+        const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
+        const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
+        if (nacimientoVisible) {
+          await nacimientoLocator.evaluate((input, dob) => {
+            input.removeAttribute('readonly');
+            input.value = dob;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          }, patientNacimiento);
+        }
       }
+      await fillIfVisible('#paciente_email', patientEmail);
+      await fillIfVisible('#paciente_fono', patientFono);
+      await fillIfVisible('#paciente_direccion', patientDireccion);
     }
-
-    await fillIfVisible('#paciente_email', patientEmail);
-    await fillIfVisible('#paciente_fono', patientFono);
-    await fillIfVisible('#paciente_direccion', patientDireccion);
     await pauseStep();
   };
 
@@ -1308,7 +1369,10 @@ async function searchAndBook() {
       };
 
       await selectAnyAppointmentType();
+
+      // Wait for AJAX triggered by appointment type change to settle
       await page.waitForTimeout(500);
+      await page.waitForLoadState('networkidle').catch(() => {});
       await pauseStep();
 
       const isCompactStoredPatientForm = await page.evaluate(() => {
@@ -1338,6 +1402,10 @@ async function searchAndBook() {
         return;
       }
 
+      // Wait for the full form to be ready before filling
+      await page.waitForSelector('#paciente_nombres:visible', { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(300);
+
       if (patientRut) {
         const rutField = page.locator('#paciente_rut:visible:not([disabled])').first();
         const rutVisible = await rutField.isVisible().catch(() => false);
@@ -1349,37 +1417,90 @@ async function searchAndBook() {
         }
       }
 
-      await fillIfVisible('#paciente_nombres', patientNombres);
-      await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
-      await fillIfVisible('#paciente_ap_materno', patientApMaterno);
-      await selectIfVisible('#paciente_sexo', '3');
+      // Fill all patient fields atomically via page.evaluate to avoid AJAX race conditions
+      await page.evaluate(({ nombres, apPaterno, apMaterno, prevision, nacimiento, email, fono, direccion }) => {
+        const setInput = (id, value) => {
+          if (!value) return;
+          const el = document.querySelector(`#${id}`);
+          if (!el) return;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return;
+          if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+          const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+            || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+          if (nativeSetter) nativeSetter.call(el, value);
+          else el.value = value;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const setSelect = (id, value) => {
+          if (!value) return;
+          const el = document.querySelector(`#${id}`);
+          if (!el) return;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return;
+          const options = Array.from(el.querySelectorAll('option'));
+          const match = options.find((o) => o.value === value)
+            || options.find((o) => (o.textContent || '').trim().toUpperCase().includes(value.toUpperCase()));
+          if (match) {
+            el.value = match.value;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        };
 
-      if (patientPrevision) {
-        const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
-          return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
-        });
-        const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
-          || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
-        if (matchedPrevision) {
-          await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+        setInput('paciente_nombres', nombres);
+        setInput('paciente_ap_paterno', apPaterno);
+        setInput('paciente_ap_materno', apMaterno);
+        setSelect('paciente_sexo', '3'); // Always Indeterminado
+        setSelect('paciente_prevision', prevision);
+        setInput('paciente_nacimiento', nacimiento);
+        setInput('paciente_email', email);
+        setInput('paciente_fono', fono);
+        setInput('paciente_direccion', direccion);
+      }, {
+        nombres: patientNombres,
+        apPaterno: patientApPaterno,
+        apMaterno: patientApMaterno,
+        prevision: patientPrevision,
+        nacimiento: patientNacimiento,
+        email: patientEmail,
+        fono: patientFono,
+        direccion: patientDireccion,
+      });
+
+      // Verify fields were filled; retry with Playwright fill as fallback
+      const nombresSet = await page.locator('#paciente_nombres').inputValue().catch(() => '');
+      if (!nombresSet && patientNombres) {
+        console.error('FILL_FALLBACK: atomic fill missed fields, retrying with Playwright fill');
+        await fillIfVisible('#paciente_nombres', patientNombres);
+        await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
+        await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+        await selectIfVisible('#paciente_sexo', '3');
+        if (patientPrevision) {
+          const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
+            return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
+          });
+          const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
+            || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
+          if (matchedPrevision) {
+            await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+          }
         }
-      }
-
-      if (patientNacimiento) {
-        const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
-        const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
-        if (nacimientoVisible) {
-          await nacimientoLocator.evaluate((input, dob) => {
-            input.removeAttribute('readonly');
-            input.value = dob;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-          }, patientNacimiento);
+        if (patientNacimiento) {
+          const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
+          const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
+          if (nacimientoVisible) {
+            await nacimientoLocator.evaluate((input, dob) => {
+              input.removeAttribute('readonly');
+              input.value = dob;
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+            }, patientNacimiento);
+          }
         }
+        await fillIfVisible('#paciente_email', patientEmail);
+        await fillIfVisible('#paciente_fono', patientFono);
+        await fillIfVisible('#paciente_direccion', patientDireccion);
       }
-
-      await fillIfVisible('#paciente_email', patientEmail);
-      await fillIfVisible('#paciente_fono', patientFono);
-      await fillIfVisible('#paciente_direccion', patientDireccion);
       await pauseStep();
     };
 
