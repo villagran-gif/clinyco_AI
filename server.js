@@ -3409,6 +3409,23 @@ app.get("/debug/conversation/:conversationId", requireDebugKey, async (req, res)
   }
 });
 
+app.post("/debug/reset/:conversationId", requireDebugKey, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    conversationStates.delete(conversationId);
+    conversationHistory.delete(conversationId);
+    if (dbEnabled()) {
+      await getPool().query("DELETE FROM conversations WHERE conversation_id = $1", [conversationId]);
+      await getPool().query("DELETE FROM conversation_messages WHERE conversation_id = $1", [conversationId]);
+    }
+    console.log(`RESET conversation ${conversationId}`);
+    return res.json({ ok: true, reset: conversationId });
+  } catch (error) {
+    console.error("ERROR /debug/reset:", error.message);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 app.get("/debug/health", requireDebugKey, async (req, res) => {
   try {
     const pool = getDebugPool();
