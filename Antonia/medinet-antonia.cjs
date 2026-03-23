@@ -1447,8 +1447,37 @@ async function searchAndBook() {
       });
 
       if (isCompactStoredPatientForm) {
+        // Fill email/fono, then wait and verify AJAX didn't overwrite them
         await fillIfVisible('#paciente_email', patientEmail);
         await fillIfVisible('#paciente_fono', patientFono);
+        await page.waitForTimeout(1500);
+        await page.waitForLoadState('networkidle').catch(() => {});
+
+        // Force-overwrite via nativeSetter in case AJAX reset the values
+        if (patientEmail || patientFono) {
+          await page.evaluate(({ email, fono }) => {
+            const forceSet = (id, value) => {
+              if (!value) return;
+              const el = document.querySelector(`#${id}`);
+              if (!el) return;
+              if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+                || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+              if (nativeSetter) nativeSetter.call(el, value);
+              else el.value = value;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+            forceSet('paciente_email', email);
+            forceSet('paciente_fono', fono);
+          }, { email: patientEmail, fono: patientFono });
+        }
+
+        // Log what was actually set for diagnosis
+        const actualEmail = await page.locator('#paciente_email').inputValue().catch(() => '');
+        const actualFono = await page.locator('#paciente_fono').inputValue().catch(() => '');
+        console.error('COMPACT_FORM_FILLED', JSON.stringify({ patientEmail, actualEmail, patientFono, actualFono }));
+
         await pauseStep();
         return;
       }
