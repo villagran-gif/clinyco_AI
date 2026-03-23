@@ -2728,6 +2728,15 @@ function buildAntoniaFastPathCandidate(text, state) {
     }
   }
 
+  // If user shows schedule intent and we already have a pendingProfessional from a prior search,
+  // re-use that professional instead of searching for generic words like "agendar"
+  if (hasIntent && state.booking?.pendingProfessional) {
+    const pendingQuery = extractKnownProfessionalAlias(state.booking.pendingProfessional)
+      || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
+      || state.booking.pendingProfessional;
+    return { shouldTry: true, reason: "schedule_intent_with_pending_professional", query: pendingQuery, trigger: "pending_professional" };
+  }
+
   return noFastPath;
 }
 
@@ -3997,6 +4006,15 @@ app.post("/messages", async (req, res) => {
     }
 
     // --- Antonia booking slot choice interceptor ---
+    // Resilience: if pendingSlots exist but awaitingSlotChoice was lost (e.g. after deploy),
+    // re-activate if the user text looks like a slot choice number
+    if (!state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
+      const tentative = detectBookingSlotChoice(userText, state.booking.pendingSlots);
+      if (tentative) {
+        console.log("Booking state recovery: re-activating awaitingSlotChoice for slot choice", tentative.index + 1);
+        state.booking.awaitingSlotChoice = true;
+      }
+    }
     if (state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
       const choice = detectBookingSlotChoice(userText, state.booking.pendingSlots);
       if (choice) {
@@ -4261,6 +4279,31 @@ app.post("/messages", async (req, res) => {
       }
     }
     // --- End Antonia booking interceptor ---
+
+    // --- Re-show pending slots if user shows schedule intent and slots exist ---
+    if (state.booking.pendingSlots?.length && !state.booking.awaitingSlotChoice && !state.booking.chosenSlot) {
+      const hasIntent = hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText);
+      if (hasIntent) {
+        const professional = state.booking.pendingProfessional || "el profesional";
+        const specialty = state.booking.pendingSpecialty || "";
+        const slotLines = state.booking.pendingSlots.map((s, i) => `${i + 1}- ${s.date || s.dataDia} a las ${s.time}`).join("\n");
+        const reshowReply = `Estas son las horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:\n${slotLines}\n\nIndícame el número de la hora que prefieres.`;
+        state.booking.awaitingSlotChoice = true;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: reshowReply,
+          kind: "antonia_reshow_slots",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "reshow_pending_slots",
+            reason: "User showed schedule intent with existing pending slots"
+          }
+        }));
+      }
+    }
 
     // --- Antonia fast-path (Step 8) ---
     let antoniaFastPathAttempted = false;
@@ -4731,7 +4774,13 @@ app.post("/messages", async (req, res) => {
 
     if (!antoniaFastPathAttempted && resolverContext.stage === "agenda_without_direct_access") {
       try {
-        const medinetQuery = extractMedinetQuery(userText);
+        // Prefer pendingProfessional from prior search over extracting from raw text
+        // (avoids searching for generic words like "agendar")
+        const medinetQuery = (state.booking?.pendingProfessional
+          ? (extractKnownProfessionalAlias(state.booking.pendingProfessional)
+             || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
+             || state.booking.pendingProfessional)
+          : extractMedinetQuery(userText));
         const antoniaResponse = await runMedinetAntonia({
           query: medinetQuery,
           patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
