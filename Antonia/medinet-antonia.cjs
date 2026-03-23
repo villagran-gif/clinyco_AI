@@ -254,6 +254,14 @@ async function openBookingStepOne(page, rut, branchName) {
       return !!button && !button.hasAttribute('disabled');
     }, undefined, { timeout: 10000 });
     await nextButton.click();
+    // Wait for step-1 to become active after the transition
+    await page.waitForFunction(() => {
+      const step1 = document.querySelector('#step-1, #step_1, [data-step="1"]');
+      if (step1) return step1.offsetHeight > 0;
+      // Fallback: check if the professional tab is visible
+      const profTab = document.querySelector('a[href="#profesional-tab"]');
+      return profTab && profTab.offsetParent !== null;
+    }, undefined, { timeout: 30000 });
   } catch (error) {
     const diagnostic = await collectPageDiagnostic(page, {
       stage: 'openBookingStepOne',
@@ -267,7 +275,9 @@ async function openBookingStepOne(page, rut, branchName) {
 }
 
 async function openProfessionalAgenda(page, professionalId) {
-  await page.locator('a[href="#profesional-tab"]').click();
+  const profTab = page.locator('a[href="#profesional-tab"]');
+  await profTab.waitFor({ state: 'visible', timeout: 30000 });
+  await profTab.click();
   await waitForProfessionalResults(page);
 
   const targetRow = page.locator(`li.fila-profesional[data-id-profesional="${professionalId}"]`).first();
@@ -448,7 +458,9 @@ async function main() {
 
   try {
     await openBookingStepOne(page, rut, branchName);
-    await page.locator('a[href="#profesional-tab"]').click();
+    const profTab = page.locator('a[href="#profesional-tab"]');
+    await profTab.waitFor({ state: 'visible', timeout: 30000 });
+    await profTab.click();
     await waitForProfessionalResults(page);
 
     const memory = await page.locator('ul.doctor-professional-results').evaluate((list) => {
@@ -658,7 +670,9 @@ async function main() {
 
 
 async function scrapeBranchProfessionals(page) {
-  await page.locator('a[href="#profesional-tab"]').click();
+  const profTab = page.locator('a[href="#profesional-tab"]');
+  await profTab.waitFor({ state: 'visible', timeout: 30000 });
+  await profTab.click();
   await waitForProfessionalResults(page);
 
   return page.locator('ul.doctor-professional-results').evaluate((list) => {
