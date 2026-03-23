@@ -839,8 +839,7 @@ async function searchAndBook() {
     // Tables are pre-loaded in the DOM with display:none — click the matching day cell to activate.
     if (!slotFound) {
       const dayNum = parseInt(slotDate.split('-')[2], 10);
-      const monthNum = parseInt(slotDate.split('-')[1], 10);
-      console.error('SEARCH_AND_BOOK_NAVIGATING', JSON.stringify({ slotDate, dayNum, monthNum }));
+      console.error('SEARCH_AND_BOOK_NAVIGATING', JSON.stringify({ slotDate, dayNum }));
 
       // Check if the table for the requested date exists in the DOM
       const targetTableExists = await page.locator(`.table-horarios[data-dia="${slotDate}"]`).count() > 0;
