@@ -32,6 +32,18 @@ import {
   extractRut as extractValidatedRut,
   formatRutHuman as formatValidatedRutHuman
 } from "./extraction/identity-normalizers.js";
+import {
+  fetchActiveProfessionals, fetchProfessionalsFull, getProfessionalDetails,
+  fetchProfessionalsBySpecialtyAndBranch,
+  fetchAvailableSlots, fetchNextSlotsChatbot, checkProfessionalAvailable,
+  bookChatbot, bookOverschedule, bookAppointmentForPatient,
+  fetchAllAppointments, fetchAppointmentDetail, updateAppointmentState,
+  fetchSpecialties, fetchAppointmentTypes, fetchAppointmentTypesByContext,
+  fetchBranches, fetchPrevisiones,
+  checkPatientByRut, fetchPatientById, searchPatients,
+  buildProfessionalsCache, findProfessional, searchAvailableSlots,
+  findSpecialtyId,
+} from "./Antonia/medinet-api.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -81,6 +93,9 @@ const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
+const MEDINET_API_TOKEN = process.env.MEDINET_API_TOKEN || "";
+const MEDINET_BRANCH_ID = Number(process.env.MEDINET_BRANCH_ID || 39);
+const MEDINET_USE_API = MEDINET_API_TOKEN.length > 0;
 function firstExistingPath(paths) {
   for (const p of paths) {
     try { accessSync(p, fsConstants.R_OK); return p; } catch { /* skip */ }
@@ -180,6 +195,24 @@ function matchProfessionalFromCache(text) {
 }
 
 async function runMedinetAntoniaCache() {
+  // --- API path (fast, ~1s) ---
+  if (MEDINET_USE_API) {
+    try {
+      const professionals = await buildProfessionalsCache();
+      if (professionals.length) {
+        const { mkdirSync, existsSync } = await import("node:fs");
+        const cacheDir = fileURLToPath(new URL("./data/", import.meta.url));
+        if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
+        const payload = { cachedAt: new Date().toISOString(), branch: process.env.MEDINET_BRANCH_NAME || "API", professionals };
+        writeFileSync(MEDINET_CACHE_FILE, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        console.log(`MEDINET CACHE REFRESH (API) completed: ${professionals.length} professionals`);
+        return true;
+      }
+    } catch (error) {
+      console.error("MEDINET CACHE REFRESH (API) ERROR:", error.message, "— falling back");
+    }
+  }
+
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
   if (process.env.MEDINET_REMOTE_URL) {
     try {
@@ -220,8 +253,10 @@ const MEDINET_DISCARD_TOKENS = new Set([
   "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
   "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
   "POR", "FAVOR", "DOCTOR", "DOCTORA", "DR", "DRA", "EL", "LA", "LOS", "LAS", "DE",
-  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "TENGO", "TENER",
-  "RESERVAR", "SOLICITAR", "PEDIR",
+  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "PUEDES", "PUEDO",
+  "TENGO", "TENER", "TIENES", "TIENE", "HAY",
+  "DISPONIBLE", "DISPONIBLES", "DISPONIBILIDAD",
+  "RESERVAR", "SOLICITAR", "PEDIR", "TU", "SI", "NO", "HOY", "MANANA",
   // títulos profesionales que contaminan la búsqueda
   "PSICOLOGA", "PSICOLOGO", "NUTRICIONISTA", "NUTRIOLOGA", "NUTRIOLOGO",
   "KINESIOLOGOA", "KINESIOLOGA", "KINESIOLOGO", "PEDIATRA", "CIRUJANO", "CIRUJANA",
@@ -264,20 +299,20 @@ const FIRST_NAME_ALIASES = {
   ZIEDE: "edmundo ziede",
   ROSIRYS: "rosirys ruiz",
   // Nutrición
-  CERQUERA: "magaly cerquera",
-  SAAVEDRA: "katherine saavedra",
+  MAGALY: "magaly cerquera", CERQUERA: "magaly cerquera",
+  KATHERINE: "katherine saavedra", SAAVEDRA: "katherine saavedra",
   // Psicología
   PEGGY: "peggy huerta", HUERTA: "peggy huerta",
-  NARITELLI: "francisca naritelli",
+  FRANCISCA: "francisca naritelli", NARITELLI: "francisca naritelli",
   // Nutriología
-  YEVENES: "ingrid yevenes",
-  MOYA: "fernando moya",
+  INGRID: "ingrid yevenes", YEVENES: "ingrid yevenes",
+  FERNANDO: "fernando moya", MOYA: "fernando moya",
   // Medicina Deportiva
-  RAMOS: "pablo ramos",
+  PABLO: "pablo ramos", RAMOS: "pablo ramos",
   // Medicina General
-  NUNEZ: "carlos nunez",
+  CARLOS: "carlos nunez", NUNEZ: "carlos nunez",
   // Pediatría
-  JALDIN: "daniza jaldin",
+  DANIZA: "daniza jaldin", JALDIN: "daniza jaldin",
   // Endocrinología Infantil
   BANCALARI: "rodrigo bancalari",
   // Otros
@@ -310,14 +345,53 @@ function extractMedinetQuery(text = "") {
   return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
 }
 
-async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
+async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
+  const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
+
+  // --- API path (preferred, fast ~2-5s) ---
+  if (MEDINET_USE_API) {
+    try {
+      const prof = await findProfessional(safeQuery);
+      if (!prof) {
+        console.log("MEDINET API: no professional match for", safeQuery);
+      } else {
+        const profId = prof.id;
+        const profName = prof.display || `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+        const detail = await getProfessionalDetails(profId);
+        const suc_esps = detail?.sucursal_especialidades || [];
+        const tipos_cita = detail?.tipos_cita || [];
+        const branchMatch = suc_esps.find((se) => se.ubicacion?.id === MEDINET_BRANCH_ID) || suc_esps[0];
+        const ubicacionId = branchMatch?.ubicacion?.id || MEDINET_BRANCH_ID;
+        const especialidadId = branchMatch?.especialidad?.id || "";
+        const specialty = branchMatch?.especialidad?.nombre || "";
+        const tipoCitaMatch = tipos_cita.find((tc) => (tc.sucursales || []).includes(MEDINET_BRANCH_ID)) || tipos_cita[0];
+        const tipocitaId = tipoCitaMatch?.id || "";
+        const duration = tipoCitaMatch?.duracion || 30;
+        let slots = [];
+        if (ubicacionId && especialidadId && tipocitaId) {
+          slots = await searchAvailableSlots({ professionalId: profId, ubicacionId, especialidadId, tipocitaId, daysAhead: 14 });
+        }
+        for (const slot of slots) {
+          slot.professional = slot.professional || profName;
+          slot.professionalId = slot.professionalId || String(profId);
+          slot.specialty = slot.specialty || specialty;
+          slot.duration = slot.duration || duration;
+        }
+        const patientReply = buildPatientReplyFromSlots(profName, specialty, slots);
+        console.log("MEDINET API MATCH:", JSON.stringify({ id: profId, professional: profName, specialty, slotsFound: slots.length }));
+        return { source: "antonia_api_medinet", specialty, professional: profName, first_available: null, available_slots: slots, patient_reply: patientReply, patient_phone: patientPhone };
+      }
+    } catch (error) {
+      console.error("MEDINET API SEARCH ERROR:", error.message, "— falling back");
+    }
+  }
 
   if (process.env.MEDINET_REMOTE_URL) {
     try {
-      const result = await callRemoteMedinetWorker("search", { query: safeQuery, patientPhone, patientMessage }, timeoutMs);
+      const result = await callRemoteMedinetWorker("search", { query: safeQuery, patientPhone, patientMessage, patientRut: rut }, timeoutMs);
       return result.error ? null : result;
     } catch (error) {
       console.error("MEDINET SEARCH ERROR (remote):", error.message);
@@ -328,7 +402,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
-      MEDINET_RUT,
+      MEDINET_RUT: rut,
       MEDINET_QUERY: safeQuery,
       MEDINET_PATIENT_PHONE: String(patientPhone || ""),
       MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
@@ -352,6 +426,19 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
 async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 120000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  // --- API path (fast, ~1-2s) ---
+  if (MEDINET_USE_API) {
+    try {
+      console.log("MEDINET BOOKING (API): attempting...", JSON.stringify({ profId: slot.professionalId, date: slot.dataDia, time: slot.time }));
+      const result = await bookAppointmentForPatient({ slot, patientData, branchId: MEDINET_BRANCH_ID, scheduleTypeId: 1 });
+      console.log("MEDINET BOOKING (API) result:", JSON.stringify({ success: result.success, message: result.message }));
+      if (result.success) return result;
+      console.warn("MEDINET BOOKING (API) failed — falling back");
+    } catch (error) {
+      console.error("MEDINET BOOKING (API) ERROR:", error.message, "— falling back");
+    }
+  }
 
   if (process.env.MEDINET_REMOTE_URL) {
     try {
@@ -413,6 +500,23 @@ function detectBookingSlotChoice(text, availableSlots) {
   if (index < 0 || index >= availableSlots.length) return null;
 
   return { index, slot: availableSlots[index] };
+}
+
+function buildPatientReplyFromSlots(professional, specialty, slots) {
+  if (!slots.length) {
+    return [
+      `No encontré disponibilidad visible con ${professional || "la búsqueda solicitada"}${specialty ? ` en ${specialty}` : ""}.`,
+      "Te comparto la dirección para que puedas revisar directamente:",
+      `URL: ${MEDINET_AGENDA_WEB_URL}`,
+      "Gracias",
+    ].join(" ");
+  }
+  return [
+    `Tengo estas horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:`,
+    ...slots.map((slot, i) => `${i + 1}- ${slot.date} a las ${slot.time}`),
+    "",
+    "Si deseas agendar, indícame el número de la hora que prefieres y te ayudo a reservar.",
+  ].join("\n");
 }
 
 function splitApellidos(apellidos) {
@@ -1437,7 +1541,64 @@ function detectProcedure(text) {
   if (/\b(COLECISTECTOMIA|COLECISTECTOMIA|VESICULA|Vesícula|HERNIA|CIRUGIA GENERAL|ENDOSCOPIA|ENDOSCOPÍA)\b/i.test(text)) {
     return { key: "GENERAL", label: "Cirugía general", pipelineId: 5049979 };
   }
+  if (/\b(NUTRICION|NUTRICIONISTA|NUTRI)\b/.test(normalized)) {
+    return { key: "CONSULTA_NUTRICION", label: "Consulta nutrición", pipelineId: null };
+  }
+  if (/\b(PSICOLOGIA|PSICOLOGA|PSICOLOGO|PSICOLOGICA)\b/.test(normalized)) {
+    return { key: "CONSULTA_PSICOLOGIA", label: "Consulta psicología", pipelineId: null };
+  }
+  if (/\b(KINESIOLOGIA|KINESIOLOGO|KINESIOLOGA|KINE)\b/.test(normalized)) {
+    return { key: "CONSULTA_KINESIOLOGIA", label: "Consulta kinesiología", pipelineId: null };
+  }
+  if (/\b(MEDICINA GENERAL|MEDICO GENERAL|MEDICA GENERAL|MEDICINA INTERNA)\b/.test(normalized)) {
+    return { key: "CONSULTA_MEDICINA", label: "Consulta medicina", pipelineId: null };
+  }
   return null;
+}
+
+const SPECIALTY_TO_DEAL_INTERES = {
+  NUTRICION: "Consulta nutrición", NUTRICIONISTA: "Consulta nutrición",
+  PSICOLOGIA: "Consulta psicología", PSICOLOGO: "Consulta psicología", PSICOLOGA: "Consulta psicología",
+  KINESIOLOGIA: "Consulta kinesiología", KINESIOLOGO: "Consulta kinesiología", KINESIOLOGA: "Consulta kinesiología",
+  CIRUGIA: "Cirugía bariátrica", "CIRUGIA DIGESTIVA": "Cirugía bariátrica", "CIRUGIA BARIATRICA": "Cirugía bariátrica",
+  "CIRUGIA PLASTICA": "Cirugía plástica",
+  ENDOCRINOLOGIA: "Consulta medicina", "MEDICINA GENERAL": "Consulta medicina",
+  PEDIATRIA: "Consulta medicina", "ENDOCRINOLOGIA INFANTIL": "Consulta medicina",
+  NUTRIOLOGIA: "Consulta nutrición", "MEDICINA DEPORTIVA": "Consulta medicina"
+};
+
+const PROFESSIONAL_ALIAS_TO_DEAL_INTERES = {
+  "magaly cerquera": "Consulta nutrición",
+  "katherine saavedra": "Consulta nutrición",
+  "peggy huerta": "Consulta psicología",
+  "francisca naritelli": "Consulta psicología",
+  "rodrigo villagran": "Cirugía bariátrica",
+  "nelson aros": "Cirugía bariátrica",
+  "alberto sirabo": "Cirugía bariátrica",
+  "edmundo ziede": "Cirugía plástica",
+  "rosirys ruiz": "Cirugía plástica",
+  "ingrid yevenes": "Consulta nutrición",
+  "fernando moya": "Consulta nutrición",
+  "pablo ramos": "Consulta medicina",
+  "carlos nunez": "Consulta medicina",
+  "daniza jaldin": "Consulta medicina",
+  "rodrigo bancalari": "Consulta medicina",
+  "francisco bencina": "Consulta medicina"
+};
+
+function deriveDealInteresFromSpecialty(specialty, alias) {
+  if (alias) {
+    const fromAlias = PROFESSIONAL_ALIAS_TO_DEAL_INTERES[alias.toLowerCase()];
+    if (fromAlias) return fromAlias;
+  }
+  if (specialty) {
+    const key = normalizeKey(specialty);
+    if (SPECIALTY_TO_DEAL_INTERES[key]) return SPECIALTY_TO_DEAL_INTERES[key];
+    for (const [k, v] of Object.entries(SPECIALTY_TO_DEAL_INTERES)) {
+      if (key.includes(k) || k.includes(key)) return v;
+    }
+  }
+  return "Consulta médica";
 }
 
 function isCoverageInsuranceQuestion(normalizedText) {
@@ -2410,6 +2571,8 @@ function hasExplicitScheduleIntent(text) {
     "AGENDAR CON",
     "AGENDAR PARA",
     "DISPONIBILIDAD CON",
+    "DISPONIBLES CON",
+    "DISPONIBLE CON",
     "AGENDA CON",
     "RESERVAR HORA CON",
     "CAMBIO DE HORA",
@@ -2433,7 +2596,7 @@ function extractProfessionalReference(text) {
     return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
 
-  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){1,3})\b/i);
+  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})\b/i);
   if (withConMatch) {
     return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
   }
@@ -2494,11 +2657,14 @@ function buildAntoniaFastPathCandidate(text, state) {
   const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
 
   const alias = extractKnownProfessionalAlias(text);
-  if (alias && hasIntent) {
+  // Trigger fast-path if professional is named AND (has schedule intent OR we're already in schedule_request stage)
+  const inScheduleStage = state.identity?.lastResolvedStage === "schedule_request" ||
+    state.booking?.awaitingSlotChoice || state.booking?.pendingProfessional;
+  if (alias && (hasIntent || inScheduleStage)) {
     return { shouldTry: true, reason: "known_professional_alias", query: alias, trigger: "alias" };
   }
 
-  if (!hasIntent) return noFastPath;
+  if (!hasIntent && !inScheduleStage) return noFastPath;
 
   const specialty = extractCanonicalSpecialtyQuery(text);
   if (specialty) {
@@ -2646,6 +2812,20 @@ function updateDraftsFromText(state, text, info) {
     }
   }
 
+  // Derive dealInteres from professional name when not already set
+  if (!state.dealDraft.dealInteres) {
+    const alias = extractKnownProfessionalAlias(cleanText);
+    if (alias) {
+      const cachedProf = matchProfessionalFromCache(alias);
+      const specialty = cachedProf?.specialty || null;
+      const derived = deriveDealInteresFromSpecialty(specialty, alias);
+      if (derived) {
+        state.dealDraft.dealInteres = derived;
+        console.log(`Derived dealInteres="${derived}" from professional="${alias}" specialty="${specialty}"`);
+      }
+    }
+  }
+
   if (detectExistingPatientIntent(cleanText)) {
     state.identity.saysExistingPatient = true;
   }
@@ -2709,6 +2889,11 @@ function shouldAskOpenHelpQuestion(state, userText) {
   if (state.openHelp.asked) return false;
   if (state.system.botMessagesSent < 5) return false;
   if (hasClearTopLevelIntent(userText)) return false;
+  if (state.dealDraft?.dealInteres || state.booking?.pendingProfessional || state.booking?.pendingSpecialty) return false;
+  const resolvedStage = state.identity?.lastResolvedStage;
+  if (resolvedStage === "schedule_request" || resolvedStage === "missing_insurance" || resolvedStage === "missing_modality" || resolvedStage === "missing_interest") return false;
+  const insuranceInfo = parseAseguradora(userText);
+  if (insuranceInfo?.aseguradora || insuranceInfo?.isIsapreGeneric) return false;
   return true;
 }
 
@@ -3945,6 +4130,30 @@ app.post("/messages", async (req, res) => {
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
 
+      // RUT is required to access MediNet agenda — ask for it if missing
+      const patientRut = state.contactDraft?.c_rut;
+      if (!patientRut) {
+        // Store the professional/query so we can resume after getting RUT
+        if (fastPathCandidate.query) {
+          state.booking.pendingProfessional = state.booking.pendingProfessional || fastPathCandidate.query;
+        }
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        const profName = fastPathCandidate.query || "el profesional";
+        const rutReply = `Para buscar horas disponibles con ${profName} necesito tu RUT. ¿Me lo puedes indicar?`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: rutReply,
+          kind: "antonia_fast_path_need_rut",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_fast_path",
+            nextAction: "need_rut_for_medinet",
+            reason: `Fast-path needs RUT to search MediNet: ${fastPathCandidate.reason}`
+          }
+        }));
+      }
+
       // Cache TTL check: refresh if stale (>30 min)
       if (isCacheStale()) {
         console.log("Medinet cache stale (>30 min), refreshing before fast-path...");
@@ -3963,7 +4172,8 @@ app.post("/messages", async (req, res) => {
         const antoniaResponse = await runMedinetAntonia({
           query: fastPathCandidate.query,
           patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
-          patientMessage: userText
+          patientMessage: userText,
+          patientRut: state.contactDraft?.c_rut || ""
         });
 
         if (antoniaResponse?.patient_reply) {
