@@ -55,6 +55,7 @@ export function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
       caseType: null,

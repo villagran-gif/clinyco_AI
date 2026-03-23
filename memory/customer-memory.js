@@ -14,6 +14,10 @@ function cleanText(value) {
   return text || null;
 }
 
+function isWhatsappSource(value) {
+  return /whatsapp/i.test(String(value || ""));
+}
+
 function setIfEmpty(target, key, value) {
   if (!target || !key) return;
   if (!value) return;
@@ -135,28 +139,35 @@ export function enrichStateFromCustomer(state, customer, summaries = [], options
   return state;
 }
 
-export function buildCustomerContextBlock(customer, summaries = []) {
+export function buildCustomerContextBlock(customer, summaries = [], options = {}) {
   if (!customer) return null;
 
   const limitedSummaries = summaries.slice(0, 3);
+  const includeSensitiveIdentity = options.includeSensitiveIdentity !== false;
   const lines = [
     "[MEMORIA_CLIENTE]"
   ];
 
-  const displayName = buildDisplayName(customer);
-  if (displayName) lines.push(`Nombre: ${displayName}`);
+  if (includeSensitiveIdentity) {
+    const displayName = buildDisplayName(customer);
+    if (displayName) lines.push(`Nombre: ${displayName}`);
 
-  const idLineParts = [];
-  if (customer.whatsapp_phone) idLineParts.push(`WhatsApp: ${customer.whatsapp_phone}`);
-  if (customer.rut) idLineParts.push(`RUT: ${customer.rut}`);
-  if (idLineParts.length) lines.push(idLineParts.join(" | "));
+    const idLineParts = [];
+    if (customer.whatsapp_phone) idLineParts.push(`WhatsApp: ${customer.whatsapp_phone}`);
+    if (customer.rut) idLineParts.push(`RUT: ${customer.rut}`);
+    if (idLineParts.length) lines.push(idLineParts.join(" | "));
+  } else {
+    lines.push("Contexto tentativo por numero de WhatsApp.");
+    lines.push("No asumas identidad ni reveles datos personales o historicos como hechos confirmados.");
+    lines.push("Usa este contexto solo para formular una pregunta breve de verificacion.");
+  }
 
-  if (limitedSummaries.length > 0) {
+  if (includeSensitiveIdentity && limitedSummaries.length > 0) {
     const latestDate = formatSummaryDate(limitedSummaries[0].created_at);
     if (latestDate) lines.push(`Ultima conversacion: ${latestDate}`);
   }
 
-  for (const summary of limitedSummaries) {
+  for (const summary of includeSensitiveIdentity ? limitedSummaries : []) {
     const items = [];
     if (summary.procedimiento) items.push(summary.procedimiento);
     if (summary.outcome) items.push(summary.outcome);
@@ -175,7 +186,11 @@ export function buildCustomerContextBlock(customer, summaries = []) {
     }
   }
 
-  if (summaries.length > 0) {
+  if (!includeSensitiveIdentity && summaries.length > 0) {
+    lines.push("Hay historial previo asociado a este numero, pero sigue siendo contexto tentativo.");
+  }
+
+  if (includeSensitiveIdentity && summaries.length > 0) {
     lines.push(`Cliente recurrente (${summaries.length} conversaciones previas resumidas)`);
   }
 
@@ -194,7 +209,11 @@ export async function saveConversationToCustomer(customerId, conversationId, sta
   if (!customer) return null;
 
   const identity = state.identity || {};
-  const verified = Boolean(identity.verifiedPairAt || identity.verifiedWhatsappAt || identity.verifiedRutAt);
+  const verified = Boolean(identity.verifiedPairAt || identity.verifiedRutAt);
+  const canAttachWhatsapp = Boolean(
+    customerProfile.whatsappPhone ||
+    (isWhatsappSource(identity.channelSourceType) && identity.channelExternalId)
+  );
 
   await linkConversationToCustomer(conversationId, customer.id, {
     channel,
@@ -204,15 +223,15 @@ export async function saveConversationToCustomer(customerId, conversationId, sta
     whatsappPhone: customerProfile.whatsappPhone
   });
 
-  if (customerProfile.whatsappPhone || identity.channelExternalId) {
+  if (canAttachWhatsapp) {
     await addCustomerChannel({
       customerId: customer.id,
       channelType: "whatsapp",
       channelValue: customerProfile.whatsappPhone,
       isPrimary: true,
       verified,
-      sourceSystem: identity.channelSourceType || "sunco",
-      externalId: identity.channelExternalId || null,
+      sourceSystem: isWhatsappSource(identity.channelSourceType) ? identity.channelSourceType || "sunco" : "sunco",
+      externalId: isWhatsappSource(identity.channelSourceType) ? identity.channelExternalId || null : null,
       metadata: {
         conversationId,
         channel,

@@ -1744,6 +1744,7 @@ function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
       caseType: null,
@@ -1911,16 +1912,16 @@ function updateIdentityChannelContext(state, info = null, channelLabel = null) {
     state.identity.channelSourceType = info?.sourceType || channelLabel;
   }
 
-  const whatsappPhone = normalizePhone(
-    state.identity.channelExternalId ||
-    state.identity.whatsappPhone ||
-    state.contactDraft?.c_tel1 ||
-    null
-  );
+  const isWhatsappChannel = /whatsapp/i.test(String(info?.sourceType || channelLabel || state.identity.channelSourceType || ""));
+  const whatsappPhone = isWhatsappChannel
+    ? normalizePhone(state.identity.channelExternalId || state.identity.whatsappPhone || null)
+    : normalizePhone(state.identity.whatsappPhone || null);
 
   if (whatsappPhone) {
     state.identity.whatsappPhone = whatsappPhone;
-    state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || new Date().toISOString();
+    if (isWhatsappChannel) {
+      state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || new Date().toISOString();
+    }
   }
 }
 
@@ -1977,17 +1978,19 @@ async function syncCustomerChannelsFromState(customerId, conversationId, state, 
 
   const profile = buildCustomerProfile(state);
   const identity = state.identity || {};
-  const verified = Boolean(identity.verifiedPairAt || identity.verifiedWhatsappAt || identity.verifiedRutAt);
+  const verified = Boolean(identity.verifiedPairAt || identity.verifiedRutAt);
+  const isWhatsappChannel = /whatsapp/i.test(String(identity.channelSourceType || channelLabel || ""));
+  const canAttachWhatsapp = Boolean(profile.whatsappPhone || (isWhatsappChannel && identity.channelExternalId));
 
-  if (profile.whatsappPhone || identity.channelExternalId) {
+  if (canAttachWhatsapp) {
     await addCustomerChannel({
       customerId,
       channelType: "whatsapp",
       channelValue: profile.whatsappPhone,
       isPrimary: true,
       verified,
-      sourceSystem: identity.channelSourceType || "sunco",
-      externalId: identity.channelExternalId || null,
+      sourceSystem: isWhatsappChannel ? identity.channelSourceType || "sunco" : "sunco",
+      externalId: isWhatsappChannel ? identity.channelExternalId || null : null,
       metadata: {
         conversationId,
         channel: channelLabel,
@@ -2079,7 +2082,9 @@ async function ensureCustomerContext({ conversationId, state, info = null, chann
   return {
     customer,
     summaries,
-    customerContextBlock: buildCustomerContextBlock(customer, summaries)
+    customerContextBlock: buildCustomerContextBlock(customer, summaries, {
+      includeSensitiveIdentity: Boolean(state.identity.safeToUseHistoricalContext)
+    })
   };
 }
 
@@ -3054,8 +3059,8 @@ async function maybeRunIdentitySearch(state, info) {
       }
     }
 
-    if (!state.contactDraft.c_rut && supportHints.rut) {
-      state.contactDraft.c_rut = supportHints.rut;
+    if (supportHints.rut) {
+      state.identity.supportInferredRut = supportHints.rut;
     }
   } catch (error) {
     console.error("SUPPORT SEARCH ERROR:", error.message);
@@ -3180,6 +3185,8 @@ Reglas operativas:
 - si el usuario solo responde con una palabra, interpreta usando el contexto
 - si el usuario pide hora, agenda, control, cambio de hora, cita o escribe "horita", entiende que está hablando de agenda aunque no use palabras perfectas
 - si la persona pregunta por un doctor, una doctora, una especialidad o un control, no respondas con "¿Qué procedimiento o evaluación te interesa?" salvo que de verdad no haya contexto
+- si recibes un bloque [MEMORIA_CLIENTE] tentativo, úsalo solo para orientar una pregunta breve de verificación
+- mientras la identidad no esté confirmada, no reveles ni cites nombre, RUT, WhatsApp ni detalles históricos como si fueran datos confirmados del usuario actual
 - no pidas RUT, correo o teléfono al inicio si todavía puedes orientar primero
 - si el usuario ya entregó peso y estatura confirmados, usa el IMC disponible en el historial
 - si el usuario pregunta por cirugía y aún no sabemos previsión, puedes preguntar si es Fonasa, Isapre o Particular

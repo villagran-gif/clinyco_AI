@@ -40,17 +40,16 @@ function buildCustomerProfile(state = {}) {
   const deal = state?.dealDraft || {};
   const measurements = state?.measurements || {};
   const identity = state?.identity || {};
-
-  const whatsappPhone = normalizePhone(
-    firstNonEmpty(
-      identity.whatsappPhone,
-      identity.channelExternalId,
-      null
-    )
+  const whatsappPhone = normalizePhone(identity.whatsappPhone);
+  const normalizedRut = normalizeRut(contact.c_rut);
+  const canPersistRut = Boolean(
+    identity.verifiedRutAt ||
+    identity.verifiedPairAt ||
+    identity.safeToUseHistoricalContext
   );
 
   return {
-    rut: normalizeRut(contact.c_rut),
+    rut: canPersistRut ? normalizedRut : null,
     whatsappPhone,
     nombres: cleanText(contact.c_nombres),
     apellidos: cleanText(contact.c_apellidos),

@@ -28,6 +28,10 @@ function normalizeEmail(value) {
   return cleanText(value)?.toLowerCase() || null;
 }
 
+function isWhatsappSource(value) {
+  return /whatsapp/i.test(String(value || ""));
+}
+
 function firstNonEmpty(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && String(value).trim() !== "") {
@@ -43,6 +47,7 @@ function buildSeedProfile(row) {
   const deal = state.dealDraft || {};
   const measurements = state.measurements || {};
   const identity = state.identity || {};
+  const isWhatsapp = isWhatsappSource(row.channel || row.canal || identity.channelSourceType);
 
   return {
     rut: normalizeRut(firstNonEmpty(contact.c_rut, row.rut)),
@@ -50,7 +55,7 @@ function buildSeedProfile(row) {
       firstNonEmpty(
         row.whatsapp_phone,
         identity.whatsappPhone,
-        row.channel_external_id,
+        isWhatsapp ? row.channel_external_id : null,
         row.telefono,
         contact.c_tel1
       )
@@ -220,14 +225,14 @@ async function main() {
           whatsappPhone: profile.whatsappPhone
         });
 
-        if (profile.whatsappPhone || row.channel_external_id) {
+        if (profile.whatsappPhone || (isWhatsappSource(row.channel || row.canal) && row.channel_external_id)) {
           await addCustomerChannel({
             customerId: customer.id,
             channelType: "whatsapp",
             channelValue: profile.whatsappPhone,
             isPrimary: true,
             sourceSystem: row.channel || "sunco",
-            externalId: row.channel_external_id || null,
+            externalId: isWhatsappSource(row.channel || row.canal) ? row.channel_external_id || null : null,
             metadata: {
               conversationId: row.conversation_id,
               channelDisplayName: row.channel_display_name || null,
