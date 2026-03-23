@@ -26,7 +26,7 @@ function resolveScript() {
 
 const SCRIPT = resolveScript();
 
-const TIMEOUTS = { cache: 60000, search: 45000, book: 60000 };
+const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 60000 };
 
 const app = express();
 app.use(express.json());
@@ -89,7 +89,8 @@ app.post("/medinet/run", authMiddleware, async (req, res) => {
   }
 
   const env = buildEnv(action, payload);
-  const timeoutMs = TIMEOUTS[action] || 60000;
+  const configuredTimeout = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 0);
+  const timeoutMs = payload.timeoutMs || configuredTimeout || DEFAULT_TIMEOUTS[action] || 60000;
 
   try {
     const { stdout } = await execFileAsync("node", [SCRIPT], {
@@ -98,12 +99,9 @@ app.post("/medinet/run", authMiddleware, async (req, res) => {
       maxBuffer: 10 * 1024 * 1024,
     });
 
-    if (action === "cache") {
-      return res.json({ success: true });
-    }
-
     const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
     if (!match) {
+      if (action === "cache") return res.json({ success: true });
       return res.status(500).json({ error: "No ANTONIA_RESPONSE found in output" });
     }
 

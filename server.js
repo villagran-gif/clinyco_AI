@@ -2,7 +2,7 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { accessSync, readFileSync, constants as fsConstants } from "node:fs";
+import { accessSync, readFileSync, writeFileSync, constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
@@ -183,8 +183,14 @@ async function runMedinetAntoniaCache() {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
   if (process.env.MEDINET_REMOTE_URL) {
     try {
-      await callRemoteMedinetWorker("cache", {}, timeoutMs);
-      console.log("MEDINET CACHE REFRESH completed (remote)");
+      const result = await callRemoteMedinetWorker("cache", {}, timeoutMs);
+      if (result && Array.isArray(result.professionals)) {
+        const cachePayload = { cachedAt: result.cachedAt || new Date().toISOString(), branch: result.branch || "", professionals: result.professionals };
+        writeFileSync(MEDINET_CACHE_FILE, JSON.stringify(cachePayload, null, 2) + "\n", "utf8");
+        console.log(`MEDINET CACHE REFRESH completed (remote): ${result.professionals.length} professionals`);
+      } else {
+        console.log("MEDINET CACHE REFRESH completed (remote, no professionals returned)");
+      }
       return true;
     } catch (error) {
       console.error("MEDINET CACHE REFRESH ERROR (remote):", error.message);
