@@ -1059,9 +1059,36 @@ async function bookSlot() {
   }
 }
 
+async function scrapeBranchProfessionals(page) {
+  await page.locator('a[href="#profesional-tab"]').click();
+  await waitForProfessionalResults(page);
+
+  return page.locator('ul.doctor-professional-results').evaluate((list) => {
+    const rows = Array.from(list.querySelectorAll('li.fila-profesional'));
+    return rows.map((row) => {
+      const getText = (selector) => (row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
+      const reserveButton = row.querySelector('button.btn-option');
+      const name = reserveButton?.getAttribute('profesional-name') || row.getAttribute('data-nombre-profesional') || getText('.doctor-title');
+      const specialty = reserveButton?.getAttribute('profesional-especialidad') || getText('.doctor-title strong');
+      const specialtyId = reserveButton?.getAttribute('profesional-especialidad_id') || '';
+      const alertText = getText('.doctor-alert');
+      const img = row.querySelector('img');
+      return {
+        id: row.getAttribute('data-id-profesional') || '',
+        name,
+        specialty,
+        specialtyId,
+        tipocita: row.getAttribute('data-tipocita') || '',
+        duracion: row.getAttribute('data-duracion') || '',
+        alert_text: alertText,
+        avatarUrl: img?.getAttribute('src') || '',
+      };
+    });
+  });
+}
+
 async function cacheAllProfessionals() {
   const rut = process.env.MEDINET_RUT;
-  const branchName = DEFAULT_BRANCH_NAME;
   const headed = process.env.MEDINET_HEADED !== 'false';
 
   if (!rut) throw new Error('Define MEDINET_RUT para ejecutar cache.');
@@ -1070,41 +1097,52 @@ async function cacheAllProfessionals() {
   const page = await browser.newPage();
 
   try {
-    await openBookingStepOne(page, rut, branchName);
-    await page.locator('a[href="#profesional-tab"]').click();
-    await waitForProfessionalResults(page);
-
-    const professionals = await page.locator('ul.doctor-professional-results').evaluate((list) => {
-      const rows = Array.from(list.querySelectorAll('li.fila-profesional'));
-      return rows.map((row) => {
-        const getText = (selector) => (row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
-        const reserveButton = row.querySelector('button.btn-option');
-        const name = reserveButton?.getAttribute('profesional-name') || row.getAttribute('data-nombre-profesional') || getText('.doctor-title');
-        const specialty = reserveButton?.getAttribute('profesional-especialidad') || getText('.doctor-title strong');
-        const specialtyId = reserveButton?.getAttribute('profesional-especialidad_id') || '';
-        const alertText = getText('.doctor-alert');
-        const img = row.querySelector('img');
-        return {
-          id: row.getAttribute('data-id-profesional') || '',
-          name,
-          specialty,
-          specialtyId,
-          tipocita: row.getAttribute('data-tipocita') || '',
-          duracion: row.getAttribute('data-duracion') || '',
-          alert_text: alertText,
-          avatarUrl: img?.getAttribute('src') || '',
-        };
-      });
+    // First, discover all available branches
+    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+    const allBranches = await page.locator('#ubicacion option').evaluateAll((options) => {
+      return options
+        .map((o) => ({ value: o.value, label: (o.textContent || '').trim() }))
+        .filter((o) => o.value && o.label);
     });
 
-    writeProfessionalsCache(professionals, branchName);
+    console.error(`CACHE: Found ${allBranches.length} branches: ${allBranches.map((b) => b.label).join(', ')}`);
+
+    const allProfessionals = [];
+    const branchDetails = [];
+
+    for (const branch of allBranches) {
+      console.error(`CACHE: Scraping branch "${branch.label}" ...`);
+      await openBookingStepOne(page, rut, branch.label);
+      const professionals = await scrapeBranchProfessionals(page);
+
+      // Tag each professional with their branch
+      const tagged = professionals.map((p) => ({ ...p, branch: branch.label, branchId: branch.value }));
+      allProfessionals.push(...tagged);
+      branchDetails.push({ branch: branch.label, branchId: branch.value, count: professionals.length });
+
+      console.error(`CACHE: ${professionals.length} professionals in "${branch.label}"`);
+
+      // Navigate back to step 0 for next branch
+      await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+    }
+
+    // Deduplicate by id+branch (same professional may appear in multiple branches)
+    const seen = new Set();
+    const uniqueProfessionals = allProfessionals.filter((p) => {
+      const key = `${p.id}_${p.branchId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    writeProfessionalsCache(uniqueProfessionals, 'all');
 
     const cacheResponse = {
       source: 'antonia_cache_professionals',
       cachedAt: new Date().toISOString(),
-      branch: branchName,
-      count: professionals.length,
-      professionals,
+      branches: branchDetails,
+      count: uniqueProfessionals.length,
+      professionals: uniqueProfessionals,
     };
 
     console.log('ANTONIA_RESPONSE', JSON.stringify(cacheResponse, null, 2));
@@ -1119,7 +1157,7 @@ async function searchAndBook() {
   const professionalId = process.env.MEDINET_PROFESSIONAL_ID;
   const slotDate = process.env.MEDINET_SLOT_DATE;
   const slotTime = process.env.MEDINET_SLOT_TIME;
-  const branchName = DEFAULT_BRANCH_NAME;
+  const branchName = process.env.MEDINET_BRANCH_NAME || DEFAULT_BRANCH_NAME;
   const headed = process.env.MEDINET_HEADED !== 'false';
 
   const patientRut = process.env.MEDINET_PATIENT_RUT || '';
