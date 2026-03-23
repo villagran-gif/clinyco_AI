@@ -44,7 +44,8 @@ function authMiddleware(req, res, next) {
 }
 
 function buildEnv(action, payload) {
-  const base = { ...process.env, MEDINET_RUT, MEDINET_HEADED: "false" };
+  const rutFromPayload = String(payload?.patientRut || "").trim();
+  const base = { ...process.env, MEDINET_RUT: rutFromPayload || MEDINET_RUT, MEDINET_HEADED: "false" };
 
   if (action === "cache") {
     return { ...base, MEDINET_MODE: "cache" };

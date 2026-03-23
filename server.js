@@ -345,10 +345,11 @@ function extractMedinetQuery(text = "") {
   return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
 }
 
-async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
+async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
+  const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
   // --- API path (preferred, fast ~2-5s) ---
   if (MEDINET_USE_API) {
@@ -390,7 +391,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
 
   if (process.env.MEDINET_REMOTE_URL) {
     try {
-      const result = await callRemoteMedinetWorker("search", { query: safeQuery, patientPhone, patientMessage }, timeoutMs);
+      const result = await callRemoteMedinetWorker("search", { query: safeQuery, patientPhone, patientMessage, patientRut: rut }, timeoutMs);
       return result.error ? null : result;
     } catch (error) {
       console.error("MEDINET SEARCH ERROR (remote):", error.message);
@@ -401,7 +402,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
-      MEDINET_RUT,
+      MEDINET_RUT: rut,
       MEDINET_QUERY: safeQuery,
       MEDINET_PATIENT_PHONE: String(patientPhone || ""),
       MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
@@ -4129,6 +4130,30 @@ app.post("/messages", async (req, res) => {
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
 
+      // RUT is required to access MediNet agenda — ask for it if missing
+      const patientRut = state.contactDraft?.c_rut;
+      if (!patientRut) {
+        // Store the professional/query so we can resume after getting RUT
+        if (fastPathCandidate.query) {
+          state.booking.pendingProfessional = state.booking.pendingProfessional || fastPathCandidate.query;
+        }
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        const profName = fastPathCandidate.query || "el profesional";
+        const rutReply = `Para buscar horas disponibles con ${profName} necesito tu RUT. ¿Me lo puedes indicar?`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: rutReply,
+          kind: "antonia_fast_path_need_rut",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_fast_path",
+            nextAction: "need_rut_for_medinet",
+            reason: `Fast-path needs RUT to search MediNet: ${fastPathCandidate.reason}`
+          }
+        }));
+      }
+
       // Cache TTL check: refresh if stale (>30 min)
       if (isCacheStale()) {
         console.log("Medinet cache stale (>30 min), refreshing before fast-path...");
@@ -4147,7 +4172,8 @@ app.post("/messages", async (req, res) => {
         const antoniaResponse = await runMedinetAntonia({
           query: fastPathCandidate.query,
           patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
-          patientMessage: userText
+          patientMessage: userText,
+          patientRut: state.contactDraft?.c_rut || ""
         });
 
         if (antoniaResponse?.patient_reply) {
