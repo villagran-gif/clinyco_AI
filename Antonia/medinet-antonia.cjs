@@ -1171,6 +1171,23 @@ async function searchAndBook() {
         await fillIfVisible('#paciente_fono', patientFono);
         await fillIfVisible('#paciente_direccion', patientDireccion);
       }
+
+      // Force-fill email if still empty — this field is often resistant to programmatic fills
+      const emailActual = await page.locator('#paciente_email').inputValue().catch(() => '');
+      if (!emailActual && patientEmail) {
+        console.error('EMAIL_FORCE_FILL: email field empty, forcing with click+type');
+        const emailField = page.locator('#paciente_email:visible').first();
+        const emailVisible = await emailField.isVisible().catch(() => false);
+        if (emailVisible) {
+          await emailField.click().catch(() => {});
+          await emailField.fill('');
+          await emailField.type(patientEmail, { delay: 50 });
+          await emailField.dispatchEvent('change');
+        }
+        const emailAfter = await page.locator('#paciente_email').inputValue().catch(() => '');
+        console.error('EMAIL_FORCE_FILL_RESULT', JSON.stringify({ patientEmail, emailAfter }));
+      }
+
       await pauseStep();
     };
 
