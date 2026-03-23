@@ -1093,10 +1093,44 @@ async function searchAndBook() {
     await pauseStep();
     await page.waitForTimeout(1500);
 
+    // Diagnostic: capture full calendar state for debugging
+    const calendarDiagnostic = await page.evaluate(() => {
+      const allCells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
+      const allTables = Array.from(document.querySelectorAll('.table-horarios'));
+      const hiddenInput = document.querySelector('#dia_hidden');
+      return {
+        pickerExists: !!document.querySelector('#div_picker'),
+        totalCells: allCells.length,
+        cells: allCells.map((cell, i) => ({
+          index: i,
+          text: (cell.textContent || '').trim(),
+          className: (cell.className || ''),
+        })),
+        totalTables: allTables.length,
+        tables: allTables.map((t) => ({
+          dataDia: t.getAttribute('data-dia') || '',
+          display: getComputedStyle(t).display,
+          visibility: getComputedStyle(t).visibility,
+          buttons: t.querySelectorAll('button.btn-reservar[data-hora]').length,
+        })),
+        hiddenDate: hiddenInput?.value || '',
+        dateLabel: (document.querySelector('#dia-fecha')?.textContent || '').trim(),
+      };
+    }).catch(() => ({ error: 'failed to collect diagnostic' }));
+    console.error('SEARCH_AND_BOOK_DIAGNOSTIC', JSON.stringify(calendarDiagnostic, null, 2));
+
     // Check if the currently active table already has the requested date
     let initialTable = await readActiveCalendarTable(page);
     let slotFound = initialTable.dataDia === slotDate;
     const availableSlots = [];
+
+    console.error('SEARCH_AND_BOOK_INITIAL', JSON.stringify({
+      initialDataDia: initialTable.dataDia,
+      initialTimes: initialTable.times,
+      requestedDate: slotDate,
+      requestedTime: slotTime,
+      slotFound,
+    }));
 
     if (initialTable.dataDia) {
       availableSlots.push({ dataDia: initialTable.dataDia, times: initialTable.times });
@@ -1120,6 +1154,12 @@ async function searchAndBook() {
           .filter((item) => /^\d+$/.test(item.text) && !/disabled|date-disabled|not-notable/i.test(item.className))
           .map((item) => item.index);
       });
+
+      console.error('SEARCH_AND_BOOK_DAY_INDICES', JSON.stringify({
+        selectedDayIndex,
+        availableDayIndices,
+        totalIndices: availableDayIndices.length,
+      }));
 
       // Prioritize unselected days first (selected day was already read above)
       const prioritizedIndices = [
