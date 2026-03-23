@@ -366,21 +366,25 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
 }
 
 async function runMedinetAntoniaBooking({ slot, patientData }) {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 120000);
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  // Use search_and_book: searches for the slot first, then books in the same browser session.
+  // This avoids the "date not found in calendar" error that occurs with blind booking.
+  const medinetMode = "search_and_book";
 
   // Try remote worker first
   if (useRemoteWorker()) {
-    console.log("[medinet] Booking via remote worker:", slot.professionalId, slot.dataDia, slot.time);
-    const result = await callMedinetWorker("book", { slot, patientData }, timeoutMs);
+    console.log("[medinet] search_and_book via remote worker:", slot.professionalId, slot.dataDia, slot.time);
+    const result = await callMedinetWorker(medinetMode, { slot, patientData }, timeoutMs);
     if (result !== null) return result;
-    console.warn("[medinet] Remote worker booking failed, falling back to local");
+    console.warn("[medinet] Remote worker search_and_book failed, falling back to local");
   }
 
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
-      MEDINET_MODE: "book",
+      MEDINET_MODE: medinetMode,
       MEDINET_RUT,
       MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
       MEDINET_SLOT_DATE: String(slot.dataDia || ""),
