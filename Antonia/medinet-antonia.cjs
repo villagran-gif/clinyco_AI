@@ -583,14 +583,17 @@ async function bookSlot() {
       const appointmentType = page.locator('#id_appointment_type:visible').first();
       const isVisible = await appointmentType.isVisible().catch(() => false);
       if (!isVisible) return false;
-      await appointmentType.evaluate((select) => {
+      // Get the first valid option value
+      const firstValue = await appointmentType.evaluate((select) => {
         const options = Array.from(select.querySelectorAll('option'));
         const firstValid = options.find((o) => o.value && !o.disabled);
-        if (firstValid) {
-          select.value = firstValid.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-        }
+        return firstValid ? firstValid.value : null;
       });
+      if (firstValue) {
+        // Use Playwright's selectOption for reliable event triggering
+        await appointmentType.selectOption(firstValue);
+        await appointmentType.dispatchEvent('change');
+      }
       return true;
     };
     const fillIfVisible = async (selector, value) => {
