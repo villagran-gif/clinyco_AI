@@ -371,6 +371,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
       MEDINET_SLOT_DATE: String(slot.dataDia || ""),
       MEDINET_SLOT_TIME: String(slot.time || ""),
+      MEDINET_PATIENT_RUT: String(patientData.rut || ""),
       MEDINET_PATIENT_NOMBRES: String(patientData.nombres || ""),
       MEDINET_PATIENT_AP_PATERNO: String(patientData.apPaterno || ""),
       MEDINET_PATIENT_AP_MATERNO: String(patientData.apMaterno || ""),
