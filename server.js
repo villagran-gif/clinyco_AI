@@ -1074,11 +1074,21 @@ function formatRutHuman(raw) {
   return formatValidatedRutHuman(raw);
 }
 
+const NOT_A_PERSON_NAME = new Set([
+  "FONASA", "ISAPRE", "BANMEDICA", "COLMENA", "CONSALUD", "CRUZ BLANCA",
+  "ESENCIAL", "DIPRECA", "PARTICULAR", "MASVIDA", "VIDATRES", "MEDIMEL",
+  "PACIENTE", "CLIENTE", "USUARIO", "HOMBRE", "MUJER", "MAMA", "PAPA",
+  "DOCTOR", "DOCTORA", "NUTRIOLOGA", "NUTRICIONISTA", "KINESIOLOGA"
+]);
+
 function extractName(text) {
   const source = normalizeSpaces(String(text || ""));
   const match = source.match(/(?:me llamo|mi nombre es|soy)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
   if (!match) return null;
-  return titleCaseWords(match[1]);
+  const candidate = match[1].trim();
+  const firstWord = candidate.split(/\s+/)[0].toUpperCase();
+  if (NOT_A_PERSON_NAME.has(firstWord)) return null;
+  return titleCaseWords(candidate);
 }
 
 function isUsablePersonName(value) {
@@ -1824,7 +1834,11 @@ function buildInitialConversationState() {
       lastResolvedContext: null,
       verifiedRutAt: null,
       verifiedWhatsappAt: null,
-      verifiedPairAt: null
+      verifiedPairAt: null,
+      savedDataConfirmed: false,
+      savedDataShown: false,
+      awaitingMissingDataCompletion: false,
+      awaitingFinalConfirmation: false
     },
     measurements: {
       weightKg: null,
@@ -2041,6 +2055,118 @@ function applyCustomerResolutionToState(state, resolved, options = {}) {
   state.identity.matchStatus = "no_context";
   state.identity.requiresUserConfirmation = false;
   state.identity.safeToUseHistoricalContext = false;
+}
+
+function shouldConfirmSavedData(state) {
+  if (state.identity.savedDataConfirmed || state.identity.savedDataShown) return false;
+  if (state.identity.awaitingMissingDataCompletion || state.identity.awaitingFinalConfirmation) return false;
+  if (!state.identity.safeToUseHistoricalContext) return false;
+  if (!state.identity.customerId) return false;
+  const cd = state.contactDraft || {};
+  // Trigger confirmation when we have ANY patient data (not just names/insurance)
+  const hasRelevantData = cd.c_nombres || cd.c_aseguradora || cd.c_modalidad || cd.c_rut || cd.c_email || cd.c_tel1;
+  return Boolean(hasRelevantData);
+}
+
+function buildSavedDataSummary(state) {
+  const cd = state.contactDraft || {};
+  const hasAnyData = cd.c_nombres || cd.c_rut || cd.c_aseguradora || cd.c_email || cd.c_tel1;
+  if (!hasAnyData) return null;
+
+  const nombre = cd.c_nombres
+    ? `${cd.c_nombres}${cd.c_apellidos ? " " + cd.c_apellidos : ""}`
+    : null;
+  const prevision = cd.c_aseguradora
+    ? (cd.c_modalidad ? `${cd.c_aseguradora} - ${cd.c_modalidad}` : cd.c_aseguradora)
+    : null;
+
+  const lines = [
+    `👤 Nombre completo: ${nombre || "(falta)"}`,
+    `🆔 RUT: ${cd.c_rut || "(falta)"}`,
+    `🎂 Fecha de nacimiento: ${cd.c_fecha || "(falta)"}`,
+    `📧 Correo electrónico: ${cd.c_email || "(falta)"}`,
+    `🏥 Previsión: ${prevision || "(falta)"}`,
+    `🏡 Dirección: ${cd.c_direccion || "(falta)"}`,
+    `🏙️ Ciudad: ${cd.c_comuna || "(falta)"}`,
+    `📱 Número de celular: ${cd.c_tel1 || cd.c_tel2 || "(falta)"}`
+  ];
+  return lines.join("\n");
+}
+
+function getMissingPatientDataFields(state) {
+  const cd = state.contactDraft || {};
+  const missing = [];
+  if (!cd.c_fecha) missing.push({ key: "c_fecha", label: "🎂 Fecha de nacimiento:", emoji: "🎂" });
+  if (!cd.c_email) missing.push({ key: "c_email", label: "📧 Correo electrónico:", emoji: "📧" });
+  if (!cd.c_aseguradora) missing.push({ key: "c_aseguradora", label: "🏥 Previsión:", emoji: "🏥" });
+  if (cd.c_aseguradora === "FONASA" && !cd.c_modalidad) missing.push({ key: "c_modalidad", label: "🩺 Tramo Fonasa:", emoji: "🩺" });
+  if (!cd.c_direccion) missing.push({ key: "c_direccion", label: "🏡 Dirección:", emoji: "🏡" });
+  if (!cd.c_comuna) missing.push({ key: "c_comuna", label: "🏙️ Ciudad:", emoji: "🏙️" });
+  if (!cd.c_tel1 && !cd.c_tel2) missing.push({ key: "c_tel1", label: "📱 Número de celular:", emoji: "📱" });
+  if (!cd.c_nombres) missing.push({ key: "c_nombres", label: "👤 Nombre completo:", emoji: "👤" });
+  if (!cd.c_rut) missing.push({ key: "c_rut", label: "🆔 RUT:", emoji: "🆔" });
+  return missing;
+}
+
+function buildSavedDataConfirmationMessage(state) {
+  const summary = buildSavedDataSummary(state);
+  if (!summary) return null;
+
+  const missing = getMissingPatientDataFields(state);
+
+  if (missing.length > 0) {
+    const missingBlock = missing.map((f) => `${f.label}`).join("\n");
+    return `Para agendar correctamente, necesito confirmar tus datos:\n\n📋 *Datos del Paciente*\n${summary}\n\n` +
+      `¿Están correctos? Si hay datos incorrectos indícamelo.\n\n` +
+      `Además, me faltan estos datos. Copia y pega este bloque y complétalo:\n\n${missingBlock}`;
+  }
+
+  return `Para agendar correctamente, necesito confirmar tus datos:\n\n📋 *Datos del Paciente*\n${summary}\n\nConfirma con *1=Sí* o *2=No*`;
+}
+
+function handleSavedDataConfirmationResponse(state, userText) {
+  const normalized = (userText || "").toUpperCase().replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim();
+  const confirmsData = /^(SI|SÍ|OK|CORRECTO|CORRECTOS|ESTA BIEN|ESTAN BIEN|ESTÁN BIEN|DALE|PERFECTO|TODO BIEN|CONFIRMO|CONFIRMADO|1)\b/.test(normalized);
+  const rejectsData = /^(NO|CAMBIAR|CORREGIR|MODIFICAR|ACTUALIZAR|MAL|INCORRECTO|INCORRECTOS|ESTAN MAL|ESTÁN MAL|2)\b/.test(normalized);
+
+  if (confirmsData) {
+    state.identity.savedDataConfirmed = true;
+    // Check if there are still missing fields — ask for them
+    const missing = getMissingPatientDataFields(state);
+    if (missing.length > 0) {
+      const missingBlock = missing.map((f) => `${f.label}`).join("\n");
+      return {
+        confirmed: true,
+        needsCompletion: true,
+        message: `OK, datos confirmados ✅\n\nAhora necesito que completes los datos que faltan. Copia y pega este bloque con tus datos:\n\n${missingBlock}`
+      };
+    }
+    return { confirmed: true, message: null };
+  }
+
+  if (rejectsData) {
+    // Clear saved data so the bot asks fresh questions
+    state.contactDraft.c_nombres = null;
+    state.contactDraft.c_apellidos = null;
+    state.contactDraft.c_aseguradora = null;
+    state.contactDraft.c_modalidad = null;
+    state.contactDraft.c_email = null;
+    state.contactDraft.c_direccion = null;
+    state.contactDraft.c_comuna = null;
+    state.dealDraft.dealInteres = null;
+    state.dealDraft.dealPeso = null;
+    state.dealDraft.dealEstatura = null;
+    state.measurements.weightKg = null;
+    state.measurements.heightCm = null;
+    state.measurements.bmi = null;
+    state.measurements.bmiCategory = null;
+    state.identity.savedDataConfirmed = true;
+    return { confirmed: true, cleared: true, message: "Perfecto, borro los datos anteriores. Cuéntame, ¿en qué te puedo ayudar?" };
+  }
+
+  // User might be giving corrections inline — mark as confirmed and let the normal flow extract new data
+  state.identity.savedDataConfirmed = true;
+  return { confirmed: true, message: null };
 }
 
 async function syncCustomerChannelsFromState(customerId, conversationId, state, channelLabel) {
@@ -3966,7 +4092,22 @@ app.post("/messages", async (req, res) => {
 
     // --- Antonia fast-path (Step 8) ---
     let antoniaFastPathAttempted = false;
-    const fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
+    let fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
+
+    // Resume pending Medinet search: if RUT just arrived and there's a pendingProfessional waiting
+    if (!fastPathCandidate.shouldTry && state.booking.pendingProfessional && state.contactDraft?.c_rut) {
+      const rutJustProvided = extractRut(userText);
+      if (rutJustProvided) {
+        console.log("Antonia resume: RUT provided, resuming pending search for", state.booking.pendingProfessional);
+        fastPathCandidate = {
+          shouldTry: true,
+          reason: "resume_pending_after_rut",
+          query: state.booking.pendingProfessional,
+          trigger: "rut_resume"
+        };
+      }
+    }
+
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
 
@@ -4223,6 +4364,120 @@ app.post("/messages", async (req, res) => {
       channelLabel,
       loadSummaries: true
     });
+
+    // --- Saved data confirmation layer ---
+    if (state.identity.savedDataShown && !state.identity.savedDataConfirmed) {
+      const confirmResult = handleSavedDataConfirmationResponse(state, userText);
+      if (confirmResult.needsCompletion && confirmResult.message) {
+        // Data confirmed but missing fields remain — ask to complete
+        state.identity.awaitingMissingDataCompletion = true;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmResult.message,
+          kind: "saved_data_needs_completion",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_needs_completion")
+        }));
+      }
+      if (confirmResult.message) {
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmResult.message,
+          kind: "saved_data_cleared",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_cleared")
+        }));
+      }
+      // confirmed or inline correction — continue normal flow
+    }
+
+    // --- Awaiting missing data completion ---
+    if (state.identity.awaitingMissingDataCompletion) {
+      // updateDraftsFromText already ran above and extracted new fields from the user's reply
+      const stillMissing = getMissingPatientDataFields(state);
+      if (stillMissing.length > 0) {
+        // Still missing some fields — ask again
+        const missingBlock = stillMissing.map((f) => `${f.label}`).join("\n");
+        const reply = `Gracias. Aún me faltan estos datos:\n\n${missingBlock}\n\nPor favor envíamelos para continuar.`;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "saved_data_still_missing",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_still_missing")
+        }));
+      }
+      // All fields complete — show final confirmation
+      state.identity.awaitingMissingDataCompletion = false;
+      const finalSummary = buildSavedDataSummary(state);
+      const finalReply = `Perfecto, estos son tus datos completos:\n\n📋 *Datos del Paciente*\n${finalSummary}\n\nConfirma con *1=Sí* o *2=No*`;
+      state.identity.awaitingFinalConfirmation = true;
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      addToHistory(conversationId, "user", userText);
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText,
+        reply: finalReply,
+        kind: "saved_data_final_confirm",
+        state, info, channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "saved_data_final_confirm")
+      }));
+    }
+
+    // --- Final data confirmation ---
+    if (state.identity.awaitingFinalConfirmation) {
+      const normalized = (userText || "").toUpperCase().replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim();
+      const isConfirm = /^(SI|SÍ|OK|CORRECTO|CORRECTOS|DALE|PERFECTO|CONFIRMO|1)\b/.test(normalized);
+      const isReject = /^(NO|CAMBIAR|CORREGIR|MAL|INCORRECTO|2)\b/.test(normalized);
+      state.identity.awaitingFinalConfirmation = false;
+      if (isConfirm) {
+        state.identity.savedDataConfirmed = true;
+        // Continue to normal flow
+      } else if (isReject) {
+        // Re-enter missing data completion to let them correct
+        state.identity.awaitingMissingDataCompletion = true;
+        const allFields = [
+          "👤 Nombre completo:",
+          "🆔 RUT:",
+          "🎂 Fecha de nacimiento:",
+          "📧 Correo electrónico:",
+          "🏥 Previsión:",
+          "🏡 Dirección:",
+          "🏙️ Ciudad:",
+          "📱 Número de celular:"
+        ].join("\n");
+        const reply = `OK, envíame los datos que quieres corregir. Copia y pega este bloque:\n\n${allFields}`;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "saved_data_correction",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_correction")
+        }));
+      }
+      // Unclear response — treat as confirmed and continue
+      state.identity.savedDataConfirmed = true;
+    }
+
+    if (shouldConfirmSavedData(state)) {
+      const confirmMsg = buildSavedDataConfirmationMessage(state);
+      if (confirmMsg) {
+        state.identity.savedDataShown = true;
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmMsg,
+          kind: "confirm_saved_data",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "confirm_saved_data")
+        }));
+      }
+    }
+    // --- End saved data confirmation layer ---
 
     if (shouldTriggerCaseE(state)) {
       state.identity.likelyClinicalRecordOnly = true;
