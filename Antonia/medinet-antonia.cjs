@@ -491,7 +491,18 @@ async function main() {
       .sort((left, right) => candidatePriority(left, query) - candidatePriority(right, query))[0];
 
     if (!bestCandidate || candidatePriority(bestCandidate, query) >= 99) {
-      throw new Error(`No encontre match real para ${query}`);
+      // Return gracefully instead of crashing — let the orchestrator handle the no-match
+      const noMatchResult = {
+        source: 'antonia_search_completed',
+        success: false,
+        message: `No encontré profesional para "${query}".`,
+        professionals: memory.professionals.map((p) => ({
+          id: p.id, name: p.name, specialty: p.specialty,
+        })),
+        patient_reply: `No encontré un profesional que coincida con "${query}". ¿Podrías indicarme el nombre del profesional o la especialidad?`,
+      };
+      console.log('ANTONIA_RESPONSE', JSON.stringify(noMatchResult, null, 2));
+      return;
     }
 
     await openProfessionalAgenda(page, bestCandidate.id);

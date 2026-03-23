@@ -2640,7 +2640,13 @@ function extractProfessionalReference(text) {
 
   const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})\b/i);
   if (withConMatch) {
-    return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
+    // Reject time/date expressions mistakenly captured as professional names
+    // e.g. "para la segunda semana de abril" should NOT extract "segunda semana"
+    const candidateNorm = normalizeKey(withConMatch[1]);
+    const isTimeExpression = /\b(PRIMERA|SEGUNDA|TERCERA|CUARTA|ULTIMA|PROXIMA|SIGUIENTE|ESTA|ESA|OTRA|SEMANA|MES|LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO|ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE|MANANA|HOY|AYER|TARDE|NOCHE)\b/.test(candidateNorm);
+    if (!isTimeExpression) {
+      return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
+    }
   }
 
   return { professionalName: null, matchType: null };
@@ -4334,11 +4340,16 @@ app.post("/messages", async (req, res) => {
       const patientRut = state.contactDraft?.c_rut;
       if (!patientRut) {
         // Store the professional/query so we can resume after getting RUT
+        // Guard against storing time expressions as pendingProfessional
         if (fastPathCandidate.query) {
-          state.booking.pendingProfessional = state.booking.pendingProfessional || fastPathCandidate.query;
+          const qLower = fastPathCandidate.query.toLowerCase();
+          const isTemporalQuery = /\b(primera|segunda|tercera|cuarta|ultima|proxima|siguiente|semana|mes)\b/.test(qLower);
+          if (!isTemporalQuery) {
+            state.booking.pendingProfessional = state.booking.pendingProfessional || fastPathCandidate.query;
+          }
         }
         await persistConversationSnapshot(conversationId, state, channelLabel);
-        const profName = fastPathCandidate.query || "el profesional";
+        const profName = state.booking.pendingProfessional || fastPathCandidate.query || "el profesional";
         const rutReply = `Para buscar horas disponibles con ${profName} necesito tu RUT. ¿Me lo puedes indicar?`;
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
