@@ -283,28 +283,146 @@ async function selectCalendarDate(page, slotDate) {
   let activeTable = await readActiveCalendarTable(page);
   if (activeTable.dataDia === slotDate) return;
 
-  const dayCells = page.locator('#div_picker li.days-cell.cell');
-  const dayCount = await dayCells.count();
+  // Try navigating forward up to MAX_WEEK_NAV weeks if the date is not in the current view
+  const MAX_WEEK_NAV = 8;
 
-  for (let i = 0; i < dayCount; i++) {
-    const cell = dayCells.nth(i);
-    if (!(await cell.isVisible().catch(() => false))) continue;
+  for (let weekAttempt = 0; weekAttempt <= MAX_WEEK_NAV; weekAttempt++) {
+    // Iterate all available day cells in the current picker view (same approach as search flow)
+    const dayCells = page.locator('#div_picker li.days-cell.cell');
+    const dayCount = await dayCells.count();
 
-    const className = (await cell.getAttribute('class').catch(() => '')) || '';
-    const text = normalizeSpaces(await cell.textContent().catch(() => ''));
-    if (!/^\d+$/.test(text)) continue;
-    if (/disabled|date-disabled|not-notable/i.test(className)) continue;
+    for (let i = 0; i < dayCount; i++) {
+      const cell = dayCells.nth(i);
+      if (!(await cell.isVisible().catch(() => false))) continue;
 
-    await cell.scrollIntoViewIfNeeded().catch(() => {});
-    await cell.click({ force: true });
-    await page.waitForTimeout(900);
-    await waitForSlotsVisible(page, 10000).catch(() => {});
+      const className = (await cell.getAttribute('class').catch(() => '')) || '';
+      const text = normalizeSpaces(await cell.textContent().catch(() => ''));
+      if (!/^\d+$/.test(text)) continue;
+      if (/disabled|date-disabled|not-notable/i.test(className)) continue;
 
-    activeTable = await readActiveCalendarTable(page);
-    if (activeTable.dataDia === slotDate) return;
+      const previousHiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
+      const previousDateLabel = normalizeSpaces(await page.locator('#dia-fecha').textContent().catch(() => ''));
+      const previousActiveTable = await readActiveCalendarTable(page);
+
+      await cell.scrollIntoViewIfNeeded().catch(() => {});
+      await cell.click({ force: true });
+
+      // Wait for calendar to update using the same robust detection as the search flow
+      await page.waitForFunction(({ dayIndex, previousHiddenDateValue, previousDateLabelValue, previousActiveDataDiaValue, previousTimesValue }) => {
+        const hiddenInput = document.querySelector('#dia_hidden');
+        const hiddenDate = hiddenInput?.value || '';
+        const dateLabel = ((document.querySelector('#dia-fecha')?.textContent) || '').replace(/\s+/g, ' ').trim();
+        const selectedCell = document.querySelector('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date');
+        const selectedIndex = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell')).indexOf(selectedCell);
+        const visibleTables = Array.from(document.querySelectorAll('.table-horarios'))
+          .map((table) => {
+            const element = table;
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+            return visible ? element : null;
+          })
+          .filter(Boolean);
+        const activeTableEl = visibleTables[0] || null;
+        const activeDate = activeTableEl?.getAttribute('data-dia') || '';
+        const visibleTimes = Array.from((activeTableEl || document).querySelectorAll('button.btn-reservar[data-hora]'))
+          .map((button) => {
+            const element = button;
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+            return visible ? element.getAttribute('data-hora') || '' : '';
+          })
+          .filter(Boolean);
+
+        const timeChanged = JSON.stringify(visibleTimes) !== JSON.stringify(previousTimesValue || []);
+        const dayChanged = selectedIndex === Number(dayIndex);
+        const dateChanged = hiddenDate !== String(previousHiddenDateValue || '')
+          || dateLabel !== String(previousDateLabelValue || '')
+          || activeDate !== String(previousActiveDataDiaValue || '');
+        return dayChanged && (dateChanged || timeChanged);
+      }, {
+        dayIndex: i,
+        previousHiddenDateValue: previousHiddenDate,
+        previousDateLabelValue: previousDateLabel,
+        previousActiveDataDiaValue: previousActiveTable.dataDia,
+        previousTimesValue: previousActiveTable.times,
+      }, { timeout: 10000 }).catch(() => {});
+
+      await page.waitForTimeout(1000);
+      await waitForSlotsVisible(page, 10000).catch(() => {});
+
+      activeTable = await readActiveCalendarTable(page);
+      if (activeTable.dataDia === slotDate) return;
+    }
+
+    // Date not found in current view — try navigating to the next week
+    if (weekAttempt < MAX_WEEK_NAV) {
+      const navigated = await navigateCalendarForward(page);
+      if (!navigated) break; // No forward button found, stop trying
+      await page.waitForTimeout(1500);
+      await waitForSlotsVisible(page, 10000).catch(() => {});
+    }
   }
 
-  throw new Error(`No se encontro la fecha ${slotDate} en el calendario.`);
+  // Collect diagnostic info for debugging
+  const allTables = await readVisibleCalendarTables(page);
+  const hiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
+  const dateLabel = normalizeSpaces(await page.locator('#dia-fecha').textContent().catch(() => ''));
+  const availableDates = allTables.map((t) => t.dataDia).join(', ');
+
+  throw new Error(
+    `No se encontro la fecha ${slotDate} en el calendario. ` +
+    `Fechas visibles: [${availableDates}], hiddenDate: ${hiddenDate}, dateLabel: ${dateLabel}`
+  );
+}
+
+async function navigateCalendarForward(page) {
+  // Try common selectors for "next week/month" navigation buttons in MediNet's date picker
+  const nextSelectors = [
+    '#div_picker .next',
+    '#div_picker .arrow-right',
+    '#div_picker .fa-chevron-right',
+    '#div_picker .fa-angle-right',
+    '#div_picker [class*="next"]',
+    '#div_picker [class*="right"]',
+    '.picker-nav-next',
+    '.datepicker .next',
+    '.datepicker .right',
+    'button.next-week',
+    '[data-action="next"]',
+    '#div_picker li.next-arrow',
+    '#div_picker .owl-next',
+    '#div_picker .slick-next',
+  ];
+
+  for (const selector of nextSelectors) {
+    const btn = page.locator(selector).first();
+    const isVisible = await btn.isVisible().catch(() => false);
+    if (isVisible) {
+      await btn.click({ force: true }).catch(() => {});
+      return true;
+    }
+  }
+
+  // Fallback: try to find any clickable element that looks like a forward arrow
+  const fallbackNav = await page.evaluate(() => {
+    const picker = document.querySelector('#div_picker');
+    if (!picker) return false;
+    const candidates = Array.from(picker.querySelectorAll('a, button, span, li, div'));
+    for (const el of candidates) {
+      const text = (el.textContent || '').trim();
+      const cls = (el.className || '').toLowerCase();
+      const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+      if (text === '›' || text === '»' || text === '>' || cls.includes('next') || cls.includes('forward') || aria.includes('next')) {
+        el.click();
+        return true;
+      }
+    }
+    return false;
+  });
+
+  return fallbackNav;
 }
 
 async function main() {
@@ -614,7 +732,9 @@ async function bookSlot() {
 
     await selectAnyAppointmentType();
 
+    // Wait for AJAX triggered by appointment type change to settle
     await page.waitForTimeout(500);
+    await page.waitForLoadState('networkidle').catch(() => {});
     await pauseStep();
 
     const isCompactStoredPatientForm = await page.evaluate(() => {
@@ -645,6 +765,10 @@ async function bookSlot() {
       return;
     }
 
+    // Wait for the full form to be ready before filling
+    await page.waitForSelector('#paciente_nombres:visible', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(300);
+
     // Fill patient RUT if the field is visible and editable (new patient)
     if (patientRut) {
       const rutField = page.locator('#paciente_rut:visible:not([disabled])').first();
@@ -657,38 +781,93 @@ async function bookSlot() {
       }
     }
 
-    await fillIfVisible('#paciente_nombres', patientNombres);
-    await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
-    await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+    // Fill all patient fields atomically via page.evaluate to avoid AJAX race conditions
+    await page.evaluate(({ nombres, apPaterno, apMaterno, prevision, nacimiento, email, fono, direccion }) => {
+      const setInput = (id, value) => {
+        if (!value) return;
+        const el = document.querySelector(`#${id}`);
+        if (!el) return;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        // Remove readonly for date fields
+        if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+        // Use native setter to trigger React/jQuery bindings
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+          || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        if (nativeSetter) nativeSetter.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const setSelect = (id, value) => {
+        if (!value) return;
+        const el = document.querySelector(`#${id}`);
+        if (!el) return;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        // Find matching option
+        const options = Array.from(el.querySelectorAll('option'));
+        const match = options.find((o) => o.value === value)
+          || options.find((o) => (o.textContent || '').trim().toUpperCase().includes(value.toUpperCase()));
+        if (match) {
+          el.value = match.value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      };
 
-    await selectIfVisible('#paciente_sexo', '3');
+      setInput('paciente_nombres', nombres);
+      setInput('paciente_ap_paterno', apPaterno);
+      setInput('paciente_ap_materno', apMaterno);
+      setSelect('paciente_sexo', '3'); // Always Indeterminado
+      setSelect('paciente_prevision', prevision);
+      setInput('paciente_nacimiento', nacimiento);
+      setInput('paciente_email', email);
+      setInput('paciente_fono', fono);
+      setInput('paciente_direccion', direccion);
+    }, {
+      nombres: patientNombres,
+      apPaterno: patientApPaterno,
+      apMaterno: patientApMaterno,
+      prevision: patientPrevision,
+      nacimiento: patientNacimiento,
+      email: patientEmail,
+      fono: patientFono,
+      direccion: patientDireccion,
+    });
 
-    if (patientPrevision) {
-      const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
-        return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
-      });
-      const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
-        || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
-      if (matchedPrevision) {
-        await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+    // Verify fields were filled; retry with Playwright fill as fallback
+    const nombresSet = await page.locator('#paciente_nombres').inputValue().catch(() => '');
+    if (!nombresSet && patientNombres) {
+      console.error('FILL_FALLBACK: atomic fill missed fields, retrying with Playwright fill');
+      await fillIfVisible('#paciente_nombres', patientNombres);
+      await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
+      await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+      await selectIfVisible('#paciente_sexo', '3');
+      if (patientPrevision) {
+        const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
+          return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
+        });
+        const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
+          || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
+        if (matchedPrevision) {
+          await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+        }
       }
-    }
-
-    if (patientNacimiento) {
-      const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
-      const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
-      if (nacimientoVisible) {
-        await nacimientoLocator.evaluate((input, dob) => {
-          input.removeAttribute('readonly');
-          input.value = dob;
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        }, patientNacimiento);
+      if (patientNacimiento) {
+        const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
+        const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
+        if (nacimientoVisible) {
+          await nacimientoLocator.evaluate((input, dob) => {
+            input.removeAttribute('readonly');
+            input.value = dob;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          }, patientNacimiento);
+        }
       }
+      await fillIfVisible('#paciente_email', patientEmail);
+      await fillIfVisible('#paciente_fono', patientFono);
+      await fillIfVisible('#paciente_direccion', patientDireccion);
     }
-
-    await fillIfVisible('#paciente_email', patientEmail);
-    await fillIfVisible('#paciente_fono', patientFono);
-    await fillIfVisible('#paciente_direccion', patientDireccion);
     await pauseStep();
   };
 
@@ -880,9 +1059,36 @@ async function bookSlot() {
   }
 }
 
+async function scrapeBranchProfessionals(page) {
+  await page.locator('a[href="#profesional-tab"]').click();
+  await waitForProfessionalResults(page);
+
+  return page.locator('ul.doctor-professional-results').evaluate((list) => {
+    const rows = Array.from(list.querySelectorAll('li.fila-profesional'));
+    return rows.map((row) => {
+      const getText = (selector) => (row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
+      const reserveButton = row.querySelector('button.btn-option');
+      const name = reserveButton?.getAttribute('profesional-name') || row.getAttribute('data-nombre-profesional') || getText('.doctor-title');
+      const specialty = reserveButton?.getAttribute('profesional-especialidad') || getText('.doctor-title strong');
+      const specialtyId = reserveButton?.getAttribute('profesional-especialidad_id') || '';
+      const alertText = getText('.doctor-alert');
+      const img = row.querySelector('img');
+      return {
+        id: row.getAttribute('data-id-profesional') || '',
+        name,
+        specialty,
+        specialtyId,
+        tipocita: row.getAttribute('data-tipocita') || '',
+        duracion: row.getAttribute('data-duracion') || '',
+        alert_text: alertText,
+        avatarUrl: img?.getAttribute('src') || '',
+      };
+    });
+  });
+}
+
 async function cacheAllProfessionals() {
   const rut = process.env.MEDINET_RUT;
-  const branchName = DEFAULT_BRANCH_NAME;
   const headed = process.env.MEDINET_HEADED !== 'false';
 
   if (!rut) throw new Error('Define MEDINET_RUT para ejecutar cache.');
@@ -891,41 +1097,52 @@ async function cacheAllProfessionals() {
   const page = await browser.newPage();
 
   try {
-    await openBookingStepOne(page, rut, branchName);
-    await page.locator('a[href="#profesional-tab"]').click();
-    await waitForProfessionalResults(page);
-
-    const professionals = await page.locator('ul.doctor-professional-results').evaluate((list) => {
-      const rows = Array.from(list.querySelectorAll('li.fila-profesional'));
-      return rows.map((row) => {
-        const getText = (selector) => (row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
-        const reserveButton = row.querySelector('button.btn-option');
-        const name = reserveButton?.getAttribute('profesional-name') || row.getAttribute('data-nombre-profesional') || getText('.doctor-title');
-        const specialty = reserveButton?.getAttribute('profesional-especialidad') || getText('.doctor-title strong');
-        const specialtyId = reserveButton?.getAttribute('profesional-especialidad_id') || '';
-        const alertText = getText('.doctor-alert');
-        const img = row.querySelector('img');
-        return {
-          id: row.getAttribute('data-id-profesional') || '',
-          name,
-          specialty,
-          specialtyId,
-          tipocita: row.getAttribute('data-tipocita') || '',
-          duracion: row.getAttribute('data-duracion') || '',
-          alert_text: alertText,
-          avatarUrl: img?.getAttribute('src') || '',
-        };
-      });
+    // First, discover all available branches
+    await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+    const allBranches = await page.locator('#ubicacion option').evaluateAll((options) => {
+      return options
+        .map((o) => ({ value: o.value, label: (o.textContent || '').trim() }))
+        .filter((o) => o.value && o.label);
     });
 
-    writeProfessionalsCache(professionals, branchName);
+    console.error(`CACHE: Found ${allBranches.length} branches: ${allBranches.map((b) => b.label).join(', ')}`);
+
+    const allProfessionals = [];
+    const branchDetails = [];
+
+    for (const branch of allBranches) {
+      console.error(`CACHE: Scraping branch "${branch.label}" ...`);
+      await openBookingStepOne(page, rut, branch.label);
+      const professionals = await scrapeBranchProfessionals(page);
+
+      // Tag each professional with their branch
+      const tagged = professionals.map((p) => ({ ...p, branch: branch.label, branchId: branch.value }));
+      allProfessionals.push(...tagged);
+      branchDetails.push({ branch: branch.label, branchId: branch.value, count: professionals.length });
+
+      console.error(`CACHE: ${professionals.length} professionals in "${branch.label}"`);
+
+      // Navigate back to step 0 for next branch
+      await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
+    }
+
+    // Deduplicate by id+branch (same professional may appear in multiple branches)
+    const seen = new Set();
+    const uniqueProfessionals = allProfessionals.filter((p) => {
+      const key = `${p.id}_${p.branchId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    writeProfessionalsCache(uniqueProfessionals, 'all');
 
     const cacheResponse = {
       source: 'antonia_cache_professionals',
       cachedAt: new Date().toISOString(),
-      branch: branchName,
-      count: professionals.length,
-      professionals,
+      branches: branchDetails,
+      count: uniqueProfessionals.length,
+      professionals: uniqueProfessionals,
     };
 
     console.log('ANTONIA_RESPONSE', JSON.stringify(cacheResponse, null, 2));
@@ -935,8 +1152,618 @@ async function cacheAllProfessionals() {
   }
 }
 
+async function searchAndBook() {
+  const rut = process.env.MEDINET_RUT;
+  const professionalId = process.env.MEDINET_PROFESSIONAL_ID;
+  const slotDate = process.env.MEDINET_SLOT_DATE;
+  const slotTime = process.env.MEDINET_SLOT_TIME;
+  const branchName = process.env.MEDINET_BRANCH_NAME || DEFAULT_BRANCH_NAME;
+  const headed = process.env.MEDINET_HEADED !== 'false';
+
+  const patientRut = process.env.MEDINET_PATIENT_RUT || '';
+  const patientNombres = process.env.MEDINET_PATIENT_NOMBRES || '';
+  const patientApPaterno = process.env.MEDINET_PATIENT_AP_PATERNO || '';
+  const patientApMaterno = process.env.MEDINET_PATIENT_AP_MATERNO || '';
+  const patientPrevision = process.env.MEDINET_PATIENT_PREVISION || '';
+  const patientNacimiento = process.env.MEDINET_PATIENT_NACIMIENTO || '';
+  const patientEmail = process.env.MEDINET_PATIENT_EMAIL || '';
+  const patientFono = process.env.MEDINET_PATIENT_FONO || '';
+  const patientDireccion = process.env.MEDINET_PATIENT_DIRECCION || '';
+  const bookingStepPauseMs = Number(process.env.MEDINET_BOOK_STEP_PAUSE_MS || 2000);
+
+  if (!rut || !professionalId || !slotDate || !slotTime) {
+    throw new Error('Define MEDINET_RUT, MEDINET_PROFESSIONAL_ID, MEDINET_SLOT_DATE, MEDINET_SLOT_TIME.');
+  }
+
+  const browser = await chromium.launch({ headless: !headed });
+  const page = await browser.newPage();
+  const pauseStep = async () => {
+    if (bookingStepPauseMs > 0) {
+      await page.waitForTimeout(bookingStepPauseMs);
+    }
+  };
+
+  try {
+    // ── Phase 1: Search — navigate to the professional's agenda and find the requested slot ──
+    await openBookingStepOne(page, rut, branchName);
+    await pauseStep();
+
+    await openProfessionalAgenda(page, professionalId);
+    await pauseStep();
+    await page.waitForTimeout(1500);
+
+    // Diagnostic: capture full calendar state for debugging
+    const calendarDiagnostic = await page.evaluate(() => {
+      const allCells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
+      const allTables = Array.from(document.querySelectorAll('.table-horarios'));
+      const hiddenInput = document.querySelector('#dia_hidden');
+      return {
+        pickerExists: !!document.querySelector('#div_picker'),
+        totalCells: allCells.length,
+        cells: allCells.map((cell, i) => ({
+          index: i,
+          text: (cell.textContent || '').trim(),
+          className: (cell.className || ''),
+        })),
+        totalTables: allTables.length,
+        tables: allTables.map((t) => ({
+          dataDia: t.getAttribute('data-dia') || '',
+          display: getComputedStyle(t).display,
+          visibility: getComputedStyle(t).visibility,
+          buttons: t.querySelectorAll('button.btn-reservar[data-hora]').length,
+        })),
+        hiddenDate: hiddenInput?.value || '',
+        dateLabel: (document.querySelector('#dia-fecha')?.textContent || '').trim(),
+      };
+    }).catch(() => ({ error: 'failed to collect diagnostic' }));
+    console.error('SEARCH_AND_BOOK_DIAGNOSTIC', JSON.stringify(calendarDiagnostic, null, 2));
+
+    // Check if the currently active table already has the requested date
+    let initialTable = await readActiveCalendarTable(page);
+    let slotFound = initialTable.dataDia === slotDate;
+    let timeFound = slotFound && initialTable.times.includes(slotTime);
+    const availableSlots = [];
+
+    console.error('SEARCH_AND_BOOK_INITIAL', JSON.stringify({
+      initialDataDia: initialTable.dataDia,
+      initialTimes: initialTable.times,
+      requestedDate: slotDate,
+      requestedTime: slotTime,
+      slotFound,
+      timeFound,
+    }));
+
+    if (initialTable.dataDia) {
+      availableSlots.push({ dataDia: initialTable.dataDia, times: initialTable.times });
+    }
+
+    // If the active table doesn't match the requested date, iterate day cells
+    if (!slotFound) {
+      const selectedDayIndex = await page.locator('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date').evaluate((cell) => {
+        if (!cell) return -1;
+        const cells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
+        return cells.indexOf(cell);
+      }).catch(() => -1);
+
+      const availableDayIndices = await page.locator('#div_picker li.days-cell.cell').evaluateAll((cells) => {
+        return cells
+          .map((cell, index) => ({
+            index,
+            className: cell.className || '',
+            text: (cell.textContent || '').trim(),
+          }))
+          .filter((item) => /^\d+$/.test(item.text) && !/disabled|date-disabled|not-notable/i.test(item.className))
+          .map((item) => item.index);
+      });
+
+      console.error('SEARCH_AND_BOOK_DAY_INDICES', JSON.stringify({
+        selectedDayIndex,
+        availableDayIndices,
+        totalIndices: availableDayIndices.length,
+      }));
+
+      // Prioritize unselected days first (selected day was already read above)
+      const prioritizedIndices = [
+        ...availableDayIndices.filter((index) => index !== selectedDayIndex),
+        ...availableDayIndices.filter((index) => index === selectedDayIndex),
+      ];
+
+      for (const index of prioritizedIndices) {
+        const dayCell = page.locator('#div_picker li.days-cell.cell').nth(index);
+        if (!(await dayCell.isVisible().catch(() => false))) continue;
+        await dayCell.scrollIntoViewIfNeeded().catch(() => {});
+        const previousHiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
+        const previousDateLabel = normalizeSpaces(await page.locator('#dia-fecha').textContent().catch(() => ''));
+        const previousActiveTable = await readActiveCalendarTable(page);
+        const clicked = await dayCell.click({ force: true }).then(() => true).catch(() => false);
+        if (!clicked) continue;
+
+        await page.waitForFunction(({ dayIndex, previousHiddenDateValue, previousDateLabelValue, previousActiveDataDiaValue, previousTimesValue }) => {
+          const hiddenInput = document.querySelector('#dia_hidden');
+          const hiddenDate = hiddenInput?.value || '';
+          const dateLabel = ((document.querySelector('#dia-fecha')?.textContent) || '').replace(/\s+/g, ' ').trim();
+          const selectedCell = document.querySelector('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date');
+          const selectedIndex = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell')).indexOf(selectedCell);
+          const visibleTables = Array.from(document.querySelectorAll('.table-horarios'))
+            .map((table) => {
+              const element = table;
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+              return visible ? element : null;
+            })
+            .filter(Boolean);
+          const activeTableEl = visibleTables[0] || null;
+          const activeDate = activeTableEl?.getAttribute('data-dia') || '';
+          const visibleTimes = Array.from((activeTableEl || document).querySelectorAll('button.btn-reservar[data-hora]'))
+            .map((button) => {
+              const element = button;
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+              return visible ? element.getAttribute('data-hora') || '' : '';
+            })
+            .filter(Boolean);
+
+          const timeChanged = JSON.stringify(visibleTimes) !== JSON.stringify(previousTimesValue || []);
+          const dayChanged = selectedIndex === Number(dayIndex);
+          const dateChanged = hiddenDate !== String(previousHiddenDateValue || '')
+            || dateLabel !== String(previousDateLabelValue || '')
+            || activeDate !== String(previousActiveDataDiaValue || '');
+          return dayChanged && (dateChanged || timeChanged);
+        }, {
+          dayIndex: index,
+          previousHiddenDateValue: previousHiddenDate,
+          previousDateLabelValue: previousDateLabel,
+          previousActiveDataDiaValue: previousActiveTable.dataDia,
+          previousTimesValue: previousActiveTable.times,
+        }, { timeout: 10000 }).catch(() => {});
+
+        await page.waitForTimeout(1000);
+
+        const activeTable = await readActiveCalendarTable(page);
+        const hiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
+        const activeDate = activeTable.dataDia || hiddenDate;
+
+        if (activeDate) {
+          availableSlots.push({ dataDia: activeDate, times: activeTable.times });
+        }
+
+        if (activeDate === slotDate) {
+          slotFound = true;
+          timeFound = activeTable.times.includes(slotTime);
+          break;
+        }
+      }
+    }
+
+    if (!slotFound) {
+      const availableDatesInfo = availableSlots.map((s) => `${s.dataDia} [${s.times.join(',')}]`).join('; ');
+      throw new Error(
+        `No se encontro el slot ${slotDate} ${slotTime} en la agenda del profesional ${professionalId}. ` +
+        `Slots disponibles: ${availableDatesInfo || 'ninguno'}`
+      );
+    }
+
+    // Date found but the specific time is not available
+    if (!timeFound) {
+      const dateSlot = availableSlots.find((s) => s.dataDia === slotDate);
+      const timesOnDate = dateSlot ? dateSlot.times : [];
+      throw new Error(
+        `La hora ${slotTime} no esta disponible para ${slotDate} del profesional ${professionalId}. ` +
+        `Horas disponibles en ${slotDate}: ${timesOnDate.length > 0 ? timesOnDate.join(', ') : 'ninguna'}`
+      );
+    }
+
+    // Pause to let the portal settle before booking
+    await pauseStep();
+
+    // ── Phase 2: Book — the calendar is already on the correct date, proceed to reserve ──
+    const clickRequestedSlot = async () => {
+      const clickedReservar = await page.evaluate(({ requestedDate, requestedTime }) => {
+        const tables = Array.from(document.querySelectorAll(`.table-horarios[data-dia="${requestedDate}"]`));
+        for (const table of tables) {
+          const tableStyle = getComputedStyle(table);
+          if (tableStyle.display === 'none' || tableStyle.visibility === 'hidden') continue;
+          const buttons = Array.from(table.querySelectorAll('button.btn-reservar[data-hora]'));
+          const button = buttons.find((item) => {
+            const buttonStyle = getComputedStyle(item);
+            return buttonStyle.display !== 'none'
+              && buttonStyle.visibility !== 'hidden'
+              && (item.getAttribute('data-hora') || '').trim() === requestedTime;
+          });
+          if (button) {
+            button.click();
+            return true;
+          }
+        }
+        return false;
+      }, { requestedDate: slotDate, requestedTime: slotTime });
+      if (!clickedReservar) {
+        throw new Error(`No se encontro un boton visible para ${slotDate} ${slotTime}.`);
+      }
+      await pauseStep();
+      await page.waitForTimeout(2000);
+      await pauseStep();
+    };
+
+    const fillPatientForm = async () => {
+      const selectAnyAppointmentType = async () => {
+        const appointmentType = page.locator('#id_appointment_type:visible').first();
+        const isVisible = await appointmentType.isVisible().catch(() => false);
+        if (!isVisible) return false;
+        const firstValue = await appointmentType.evaluate((select) => {
+          const options = Array.from(select.querySelectorAll('option'));
+          const firstValid = options.find((o) => o.value && !o.disabled);
+          return firstValid ? firstValid.value : null;
+        });
+        if (firstValue) {
+          await appointmentType.selectOption(firstValue);
+          await appointmentType.dispatchEvent('change');
+        }
+        return true;
+      };
+      const fillIfVisible = async (selector, value) => {
+        if (!value) return false;
+        const locator = page.locator(`${selector}:visible`).first();
+        const isVisible = await locator.isVisible().catch(() => false);
+        if (!isVisible) return false;
+        await locator.fill(value);
+        return true;
+      };
+      const selectIfVisible = async (selector, value) => {
+        const locator = page.locator(`${selector}:visible`).first();
+        const isVisible = await locator.isVisible().catch(() => false);
+        if (!isVisible) return false;
+        await locator.selectOption(value);
+        return true;
+      };
+
+      await selectAnyAppointmentType();
+
+      // Wait for AJAX triggered by appointment type change to settle
+      await page.waitForTimeout(500);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await pauseStep();
+
+      const isCompactStoredPatientForm = await page.evaluate(() => {
+        const visible = (selector) => {
+          const el = document.querySelector(selector);
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          return style.display !== 'none' && style.visibility !== 'hidden' && el.getBoundingClientRect().height > 0;
+        };
+        return visible('#id_appointment_type')
+          && visible('#paciente_rut[disabled]')
+          && visible('#paciente_email')
+          && visible('#paciente_fono')
+          && !visible('#paciente_nombres')
+          && !visible('#paciente_ap_paterno')
+          && !visible('#paciente_ap_materno')
+          && !visible('#paciente_sexo')
+          && !visible('#paciente_prevision')
+          && !visible('#paciente_nacimiento')
+          && !visible('#paciente_direccion');
+      });
+
+      if (isCompactStoredPatientForm) {
+        // Fill email/fono, then wait and verify AJAX didn't overwrite them
+        await fillIfVisible('#paciente_email', patientEmail);
+        await fillIfVisible('#paciente_fono', patientFono);
+        await page.waitForTimeout(1500);
+        await page.waitForLoadState('networkidle').catch(() => {});
+
+        // Force-overwrite via nativeSetter in case AJAX reset the values
+        if (patientEmail || patientFono) {
+          await page.evaluate(({ email, fono }) => {
+            const forceSet = (id, value) => {
+              if (!value) return;
+              const el = document.querySelector(`#${id}`);
+              if (!el) return;
+              if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+                || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+              if (nativeSetter) nativeSetter.call(el, value);
+              else el.value = value;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+            forceSet('paciente_email', email);
+            forceSet('paciente_fono', fono);
+          }, { email: patientEmail, fono: patientFono });
+        }
+
+        // Log what was actually set for diagnosis
+        const actualEmail = await page.locator('#paciente_email').inputValue().catch(() => '');
+        const actualFono = await page.locator('#paciente_fono').inputValue().catch(() => '');
+        console.error('COMPACT_FORM_FILLED', JSON.stringify({ patientEmail, actualEmail, patientFono, actualFono }));
+
+        await pauseStep();
+        return;
+      }
+
+      // Wait for the full form to be ready before filling
+      await page.waitForSelector('#paciente_nombres:visible', { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(300);
+
+      if (patientRut) {
+        const rutField = page.locator('#paciente_rut:visible:not([disabled])').first();
+        const rutVisible = await rutField.isVisible().catch(() => false);
+        if (rutVisible) {
+          await rutField.fill(patientRut);
+          await rutField.dispatchEvent('input');
+          await rutField.dispatchEvent('change');
+          await page.waitForTimeout(500);
+        }
+      }
+
+      // Fill all patient fields atomically via page.evaluate to avoid AJAX race conditions
+      await page.evaluate(({ nombres, apPaterno, apMaterno, prevision, nacimiento, email, fono, direccion }) => {
+        const setInput = (id, value) => {
+          if (!value) return;
+          const el = document.querySelector(`#${id}`);
+          if (!el) return;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return;
+          if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+          const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+            || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+          if (nativeSetter) nativeSetter.call(el, value);
+          else el.value = value;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const setSelect = (id, value) => {
+          if (!value) return;
+          const el = document.querySelector(`#${id}`);
+          if (!el) return;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return;
+          const options = Array.from(el.querySelectorAll('option'));
+          const match = options.find((o) => o.value === value)
+            || options.find((o) => (o.textContent || '').trim().toUpperCase().includes(value.toUpperCase()));
+          if (match) {
+            el.value = match.value;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        };
+
+        setInput('paciente_nombres', nombres);
+        setInput('paciente_ap_paterno', apPaterno);
+        setInput('paciente_ap_materno', apMaterno);
+        setSelect('paciente_sexo', '3'); // Always Indeterminado
+        setSelect('paciente_prevision', prevision);
+        setInput('paciente_nacimiento', nacimiento);
+        setInput('paciente_email', email);
+        setInput('paciente_fono', fono);
+        setInput('paciente_direccion', direccion);
+      }, {
+        nombres: patientNombres,
+        apPaterno: patientApPaterno,
+        apMaterno: patientApMaterno,
+        prevision: patientPrevision,
+        nacimiento: patientNacimiento,
+        email: patientEmail,
+        fono: patientFono,
+        direccion: patientDireccion,
+      });
+
+      // Verify fields were filled; retry with Playwright fill as fallback
+      const nombresSet = await page.locator('#paciente_nombres').inputValue().catch(() => '');
+      if (!nombresSet && patientNombres) {
+        console.error('FILL_FALLBACK: atomic fill missed fields, retrying with Playwright fill');
+        await fillIfVisible('#paciente_nombres', patientNombres);
+        await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
+        await fillIfVisible('#paciente_ap_materno', patientApMaterno);
+        await selectIfVisible('#paciente_sexo', '3');
+        if (patientPrevision) {
+          const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
+            return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
+          });
+          const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
+            || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
+          if (matchedPrevision) {
+            await selectIfVisible('#paciente_prevision', matchedPrevision.value);
+          }
+        }
+        if (patientNacimiento) {
+          const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
+          const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
+          if (nacimientoVisible) {
+            await nacimientoLocator.evaluate((input, dob) => {
+              input.removeAttribute('readonly');
+              input.value = dob;
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+            }, patientNacimiento);
+          }
+        }
+        await fillIfVisible('#paciente_email', patientEmail);
+        await fillIfVisible('#paciente_fono', patientFono);
+        await fillIfVisible('#paciente_direccion', patientDireccion);
+      }
+      await pauseStep();
+    };
+
+    const confirmEvidence = [];
+    const onResponse = async (response) => {
+      try {
+        const request = response.request();
+        const method = request.method();
+        const url = response.url();
+        if (method !== 'POST') return;
+        if (!/clinyco\.medinetapp\.com/i.test(url)) return;
+        if (/analytics|google-analytics|g\/collect/i.test(url)) return;
+        if (!/(agenda|reserv|cita|appointment|medinet)/i.test(url)) return;
+        const status = response.status();
+        const contentType = (response.headers()['content-type'] || '').toLowerCase();
+        let excerpt = '';
+        if (contentType.includes('application/json') || contentType.includes('text/')) {
+          const text = await response.text().catch(() => '');
+          excerpt = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+        }
+        confirmEvidence.push({ method, status, url, excerpt });
+      } catch (_) {
+        // noop
+      }
+    };
+    page.on('response', onResponse);
+    let confirmClicked = false;
+    let successResult = {
+      success: false,
+      message: 'No se completo la confirmacion.',
+      emailSent: '',
+      reservationId: '',
+      explicitError: false,
+    };
+    const maxAttempts = 2;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      await clickRequestedSlot();
+      await fillPatientForm();
+
+      await page.locator('button.btn-comprobar-cita:visible').first().click();
+      await pauseStep();
+      await page.waitForTimeout(3000);
+
+      const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
+      const hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
+      if (hasConfirmButton) {
+        await confirmarButton.click();
+      } else {
+        const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
+          hasNotText: 'Volver',
+        }).first();
+        const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
+        if (!hasFallbackButton) {
+          const formErrors = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger'))
+              .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+              .filter(Boolean)
+              .slice(0, 5);
+          }).catch(() => []);
+          throw new Error(`No apareció un botón util para confirmar reserva. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : ''}`.trim());
+        }
+        await fallbackButton.click();
+      }
+      confirmClicked = true;
+      await pauseStep();
+
+      await page.waitForTimeout(3000);
+
+      successResult = await page.evaluate(({ expectedEmail }) => {
+        const successDiv = document.querySelector('.validacion-completada');
+        const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+        const fallbackSuccess = /reserva se ha realizado con e[xé]ito|reserva confirmada|cita agendada|agendada con e[xé]ito/i.test(bodyText);
+        const explicitError = /ocurri[oó] un error|por favor intenta nuevamente/i.test(bodyText);
+        const retryButton = document.querySelector('button.btn.btn-primary[onclick="controlStepper(2, 0); loadCupos();"]');
+        const retryVisible = !!retryButton && (() => {
+          const style = window.getComputedStyle(retryButton);
+          return style.display !== 'none' && style.visibility !== 'hidden' && retryButton.getBoundingClientRect().height > 0;
+        })();
+        const reservationMatch = bodyText.match(/(?:cita|reserva)\s*#?\s*(\d{5,})/i);
+        const reservationId = reservationMatch ? reservationMatch[1] : '';
+
+        if (!successDiv) {
+          return {
+            success: !explicitError && fallbackSuccess,
+            message: explicitError
+              ? 'La pagina mostro un error al confirmar la reserva.'
+              : (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'No se encontro pantalla de confirmacion.'),
+            emailSent: '',
+            reservationId,
+            explicitError,
+            retryVisible,
+          };
+        }
+
+        const style = window.getComputedStyle(successDiv);
+        const successVisible = style.display !== 'none' && style.visibility !== 'hidden' && successDiv.getBoundingClientRect().height > 0;
+        const subtitle = (successDiv.querySelector('.validacion-completada-subtitle')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const emailSpan = (successDiv.querySelector('#email-text')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const successBySubtitle = subtitle.includes('reserva se ha realizado con éxito') || subtitle.includes('reserva se ha realizado con exito');
+        const expected = String(expectedEmail || '').trim().toLowerCase();
+        const shown = String(emailSpan || '').trim().toLowerCase();
+        const successByEmail = !!shown && (!expected || shown === expected);
+
+        return {
+          success: !explicitError && successVisible && successBySubtitle && successByEmail && (fallbackSuccess || !!subtitle),
+          message: explicitError
+            ? 'La pagina mostro un error al confirmar la reserva.'
+            : (subtitle || (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'Pantalla de confirmacion no visible.')),
+          emailSent: emailSpan,
+          reservationId,
+          explicitError,
+          retryVisible,
+          successVisible,
+        };
+      }, { expectedEmail: patientEmail });
+
+      if (!successResult.explicitError || !successResult.retryVisible || attempt === maxAttempts) {
+        break;
+      }
+
+      await page.locator('button.btn.btn-primary[onclick="controlStepper(2, 0); loadCupos();"]:visible').first().click();
+      await pauseStep();
+      await page.waitForTimeout(3000);
+      await selectCalendarDate(page, slotDate);
+      await pauseStep();
+    }
+
+    page.off('response', onResponse);
+    const confirmApiOk = confirmEvidence.some((e) => e.status >= 200 && e.status < 300);
+
+    await page.locator('button.btn-primary[onclick="controlStepper(0, 0)"]:visible').first().click().catch(() => {});
+
+    const reservationIdFromEvidence = (() => {
+      for (const ev of confirmEvidence) {
+        const match = String(ev.excerpt || '').match(/(?:cita|reserva)?\s*#?\s*(\d{5,})/i);
+        if (match) return match[1];
+      }
+      return '';
+    })();
+    const apiBookingAccepted = confirmEvidence.some((ev) => {
+      return /\/api\/agenda\/citas\/agendaweb-add\//i.test(ev.url || '')
+        && ev.status >= 200
+        && ev.status < 300
+        && /agendado_correctamente/i.test(ev.excerpt || '');
+    });
+    const finalReservationId = successResult.reservationId || reservationIdFromEvidence;
+    const strictSuccess = (successResult.success && confirmApiOk && !!finalReservationId) || apiBookingAccepted;
+
+    const finalMessage = strictSuccess
+      ? successResult.message
+      : (
+        successResult.explicitError
+          ? 'La pagina mostro un error al confirmar la reserva.'
+          : 'Medinet no devolvio una reserva verificable despues de confirmar.'
+      );
+
+    const bookingResponse = {
+      source: 'antonia_search_and_book_completed',
+      success: strictSuccess,
+      message: finalMessage,
+      emailSent: successResult.emailSent || '',
+      reservationId: finalReservationId,
+      confirmClicked,
+      confirmApiOk,
+      apiBookingAccepted,
+      confirmEvidence: confirmEvidence.slice(-6),
+      slotDate,
+      slotTime,
+      patient_reply: strictSuccess
+        ? 'Su cita ha sido asignada. Revisar email.'
+        : `Hubo un problema al confirmar la reserva: ${finalMessage}. Por favor intenta directamente en ${AGENDA_URL}`,
+    };
+
+    console.log('ANTONIA_RESPONSE', JSON.stringify(bookingResponse, null, 2));
+  } finally {
+    await page.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
 const mode = process.env.MEDINET_MODE || 'search';
-const entrypoint = mode === 'book' ? bookSlot : mode === 'cache' ? cacheAllProfessionals : main;
+const entrypoint = mode === 'book' ? bookSlot : mode === 'search_and_book' ? searchAndBook : mode === 'cache' ? cacheAllProfessionals : main;
 
 entrypoint().catch((error) => {
   console.error('MEDINET_ANTONIA_ERROR', error?.stack || error?.message || String(error));

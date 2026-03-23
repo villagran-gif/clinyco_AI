@@ -26,7 +26,7 @@ function resolveScript() {
 
 const SCRIPT = resolveScript();
 
-const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 120000 };
+const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 120000, search_and_book: 180000 };
 
 const app = express();
 app.use(express.json());
@@ -60,14 +60,15 @@ function buildEnv(action, payload) {
     };
   }
 
-  if (action === "book") {
+  if (action === "book" || action === "search_and_book") {
     const { slot = {}, patientData = {} } = payload;
     return {
       ...base,
-      MEDINET_MODE: "book",
+      MEDINET_MODE: action,
       MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
       MEDINET_SLOT_DATE: String(slot.dataDia || ""),
       MEDINET_SLOT_TIME: String(slot.time || ""),
+      MEDINET_BRANCH_NAME: String(slot.branch || ""),
       MEDINET_PATIENT_RUT: String(patientData.rut || ""),
       MEDINET_PATIENT_NOMBRES: String(patientData.nombres || ""),
       MEDINET_PATIENT_AP_PATERNO: String(patientData.apPaterno || ""),
@@ -86,7 +87,7 @@ function buildEnv(action, payload) {
 app.post("/medinet/run", authMiddleware, async (req, res) => {
   const { action, payload = {} } = req.body || {};
 
-  if (!["search", "book", "cache"].includes(action)) {
+  if (!["search", "book", "cache", "search_and_book"].includes(action)) {
     return res.status(400).json({ error: `Invalid action: ${action}` });
   }
 

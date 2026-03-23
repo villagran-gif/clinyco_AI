@@ -97,6 +97,43 @@ function resolveMedinetAntoniaScript() {
 const MEDINET_ANTONIA_SCRIPT = resolveMedinetAntoniaScript();
 const execFileAsync = promisify(execFile);
 
+// Remote worker support: when MEDINET_WORKER_URL is set, delegate to the remote worker
+// instead of running Playwright locally (useful when Medinet blocks the server's IP)
+const MEDINET_WORKER_URL = (process.env.MEDINET_WORKER_URL || "").replace(/\/+$/, "");
+const MEDINET_WORKER_TOKEN = process.env.MEDINET_WORKER_TOKEN || "";
+
+async function callMedinetWorker(action, payload = {}, timeoutMs = 60000) {
+  if (!MEDINET_WORKER_URL || !MEDINET_WORKER_TOKEN) return null; // fallback to local
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs + 5000);
+  try {
+    const res = await fetch(`${MEDINET_WORKER_URL}/medinet/run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${MEDINET_WORKER_TOKEN}`
+      },
+      body: JSON.stringify({ action, payload: { ...payload, timeoutMs } }),
+      signal: controller.signal
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`[medinet-worker-remote] ${action} HTTP ${res.status}:`, body.slice(0, 300));
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    console.error(`[medinet-worker-remote] ${action} error:`, err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function useRemoteWorker() {
+  return !!(MEDINET_WORKER_URL && MEDINET_WORKER_TOKEN);
+}
+
 
 const MEDINET_CACHE_FILE = fileURLToPath(new URL("./data/medinet_professionals_cache.json", import.meta.url));
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -158,6 +195,18 @@ function matchProfessionalFromCache(text) {
 
 async function runMedinetAntoniaCache() {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+
+  // Try remote worker first
+  if (useRemoteWorker()) {
+    console.log("[medinet] Cache refresh via remote worker:", MEDINET_WORKER_URL);
+    const result = await callMedinetWorker("cache", {}, timeoutMs);
+    if (result !== null) {
+      console.log("MEDINET CACHE REFRESH completed (remote worker)");
+      return true;
+    }
+    console.warn("[medinet] Remote worker cache failed, falling back to local");
+  }
+
   try {
     const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
       env: {
@@ -279,6 +328,19 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
+  // Try remote worker first
+  if (useRemoteWorker()) {
+    console.log("[medinet] Search via remote worker:", safeQuery);
+    const result = await callMedinetWorker("search", {
+      query: safeQuery,
+      patientPhone: String(patientPhone || ""),
+      patientMessage: String(patientMessage || ""),
+      patientRut: rut
+    }, timeoutMs);
+    if (result !== null) return result;
+    console.warn("[medinet] Remote worker search failed, falling back to local");
+  }
+
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
@@ -304,13 +366,25 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
 }
 
 async function runMedinetAntoniaBooking({ slot, patientData }) {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 120000);
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  // Use search_and_book: searches for the slot first, then books in the same browser session.
+  // This avoids the "date not found in calendar" error that occurs with blind booking.
+  const medinetMode = "search_and_book";
+
+  // Try remote worker first
+  if (useRemoteWorker()) {
+    console.log("[medinet] search_and_book via remote worker:", slot.professionalId, slot.dataDia, slot.time);
+    const result = await callMedinetWorker(medinetMode, { slot, patientData }, timeoutMs);
+    if (result !== null) return result;
+    console.warn("[medinet] Remote worker search_and_book failed, falling back to local");
+  }
 
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
-      MEDINET_MODE: "book",
+      MEDINET_MODE: medinetMode,
       MEDINET_RUT,
       MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
       MEDINET_SLOT_DATE: String(slot.dataDia || ""),
@@ -1869,6 +1943,7 @@ function buildInitialConversationState() {
       pendingSpecialty: null,
       awaitingSlotChoice: false,
       awaitingPatientData: false,
+      awaitingConfirmation: false,
       chosenSlot: null,
       missingFields: null
     },
@@ -4690,4 +4765,9 @@ await initDb();
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);
   console.log(`Database persistence: ${dbEnabled() ? "enabled" : "disabled"}`);
+  if (useRemoteWorker()) {
+    console.log(`Medinet remote worker: ${MEDINET_WORKER_URL}`);
+  } else {
+    console.log(`Medinet: local execution (no MEDINET_WORKER_URL configured)`);
+  }
 });
