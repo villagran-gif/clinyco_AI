@@ -42,8 +42,10 @@ export const MODALIDAD_FROM_ASEGURADORA = {
 
 export function parseAseguradora(text) {
   const normalized = normalizeKey(text);
-  for (const [alias, canonical] of Object.entries(ASEGURADORA_ALIASES)) {
-    if (normalized.includes(alias)) {
+  const sortedAliases = Object.entries(ASEGURADORA_ALIASES).sort((a, b) => b[0].length - a[0].length);
+  for (const [alias, canonical] of sortedAliases) {
+    const pattern = new RegExp(`(?:^|\\s)${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`);
+    if (pattern.test(normalized)) {
       return {
         aseguradora: canonical,
         modalidad: MODALIDAD_FROM_ASEGURADORA[canonical] || null,

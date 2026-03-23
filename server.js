@@ -1437,6 +1437,18 @@ function detectProcedure(text) {
   if (/\b(COLECISTECTOMIA|COLECISTECTOMIA|VESICULA|Vesícula|HERNIA|CIRUGIA GENERAL|ENDOSCOPIA|ENDOSCOPÍA)\b/i.test(text)) {
     return { key: "GENERAL", label: "Cirugía general", pipelineId: 5049979 };
   }
+  if (/\b(NUTRICION|NUTRICIONISTA|NUTRI)\b/.test(normalized)) {
+    return { key: "CONSULTA_NUTRICION", label: "Consulta nutrición", pipelineId: null };
+  }
+  if (/\b(PSICOLOGIA|PSICOLOGA|PSICOLOGO|PSICOLOGICA)\b/.test(normalized)) {
+    return { key: "CONSULTA_PSICOLOGIA", label: "Consulta psicología", pipelineId: null };
+  }
+  if (/\b(KINESIOLOGIA|KINESIOLOGO|KINESIOLOGA|KINE)\b/.test(normalized)) {
+    return { key: "CONSULTA_KINESIOLOGIA", label: "Consulta kinesiología", pipelineId: null };
+  }
+  if (/\b(MEDICINA GENERAL|MEDICO GENERAL|MEDICA GENERAL|MEDICINA INTERNA)\b/.test(normalized)) {
+    return { key: "CONSULTA_MEDICINA", label: "Consulta medicina", pipelineId: null };
+  }
   return null;
 }
 
@@ -1481,7 +1493,10 @@ function detectNegatedAseguradora(normalizedText) {
 }
 
 function findExplicitAseguradora(normalizedText) {
-  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => normalizedText.includes(alias)) || null;
+  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => {
+    const pattern = new RegExp(`(?:^|\\s|\\b)${escapeRegex(alias)}(?:\\s|\\b|$)`);
+    return pattern.test(normalizedText);
+  }) || null;
 }
 
 function parseAseguradora(text) {
@@ -2709,6 +2724,11 @@ function shouldAskOpenHelpQuestion(state, userText) {
   if (state.openHelp.asked) return false;
   if (state.system.botMessagesSent < 5) return false;
   if (hasClearTopLevelIntent(userText)) return false;
+  if (state.dealDraft?.dealInteres || state.booking?.pendingProfessional || state.booking?.pendingSpecialty) return false;
+  const resolvedStage = state.identity?.lastResolvedStage;
+  if (resolvedStage === "schedule_request" || resolvedStage === "missing_insurance" || resolvedStage === "missing_modality" || resolvedStage === "missing_interest") return false;
+  const insuranceInfo = parseAseguradora(userText);
+  if (insuranceInfo?.aseguradora || insuranceInfo?.isIsapreGeneric) return false;
   return true;
 }
 
