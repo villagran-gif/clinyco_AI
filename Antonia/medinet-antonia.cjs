@@ -1081,26 +1081,76 @@ async function searchAndBook() {
         const actualFono = await page.locator('#paciente_fono').inputValue().catch(() => '');
         console.error('COMPACT_FORM_FILLED', JSON.stringify({ patientEmail, actualEmail, patientFono, actualFono }));
 
-        // If Medinet pre-loaded a different email from their DB, force-overwrite it
-        if (patientEmail && actualEmail.trim().toLowerCase() !== patientEmail.trim().toLowerCase()) {
-          console.error('COMPACT_EMAIL_MISMATCH: Medinet loaded different email, overwriting', JSON.stringify({ stored: actualEmail, expected: patientEmail }));
-          const emailField = page.locator('#paciente_email:visible').first();
-          await emailField.click().catch(() => {});
-          await emailField.fill('');
-          await emailField.type(patientEmail, { delay: 50 });
-          await emailField.dispatchEvent('change');
-          // Also force via nativeSetter
+        // Intercept AJAX that Medinet uses to overwrite patient fields after RUT lookup
+        // We hook into XMLHttpRequest and fetch to re-force our email after any response
+        if (patientEmail) {
           await page.evaluate(({ email }) => {
-            const el = document.querySelector('#paciente_email');
-            if (!el) return;
-            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-            if (nativeSetter) nativeSetter.call(el, email);
-            else el.value = email;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
+            const forceEmail = () => {
+              const el = document.querySelector('#paciente_email');
+              if (!el) return;
+              const current = el.value.trim().toLowerCase();
+              if (current === email.trim().toLowerCase()) return;
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+              if (nativeSetter) nativeSetter.call(el, email);
+              else el.value = email;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+
+            // Patch XHR to re-force email after any AJAX completes
+            const origXhrOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(...args) {
+              this.addEventListener('load', () => setTimeout(forceEmail, 100));
+              return origXhrOpen.apply(this, args);
+            };
+
+            // Patch fetch to re-force email after any fetch completes
+            const origFetch = window.fetch;
+            window.fetch = function(...args) {
+              return origFetch.apply(this, args).then(res => {
+                setTimeout(forceEmail, 100);
+                return res;
+              });
+            };
+
+            // Also set up a MutationObserver on the email field
+            const emailEl = document.querySelector('#paciente_email');
+            if (emailEl) {
+              const observer = new MutationObserver(() => setTimeout(forceEmail, 50));
+              observer.observe(emailEl, { attributes: true, attributeFilter: ['value'] });
+              // Also watch for property changes via interval (value property changes don't trigger mutation)
+              let checkCount = 0;
+              const intervalId = setInterval(() => {
+                forceEmail();
+                checkCount++;
+                if (checkCount > 30) clearInterval(intervalId); // Stop after ~15s
+              }, 500);
+            }
+
+            // Force immediately too
+            forceEmail();
           }, { email: patientEmail });
-          const emailAfterFix = await page.locator('#paciente_email').inputValue().catch(() => '');
-          console.error('COMPACT_EMAIL_FIXED', JSON.stringify({ patientEmail, emailAfterFix }));
+        }
+
+        // Wait for any pending AJAX to complete and our hooks to fire
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForTimeout(500);
+
+        // Final verification
+        const emailFinalCompact = await page.locator('#paciente_email').inputValue().catch(() => '');
+        console.error('COMPACT_EMAIL_FINAL', JSON.stringify({ patientEmail, emailFinalCompact }));
+
+        if (patientEmail && emailFinalCompact.trim().toLowerCase() !== patientEmail.trim().toLowerCase()) {
+          console.error('COMPACT_EMAIL_STILL_WRONG: last resort click+type');
+          const emailField = page.locator('#paciente_email:visible').first();
+          await emailField.click({ clickCount: 3 }).catch(() => {});
+          await emailField.press('Backspace');
+          await emailField.type(patientEmail, { delay: 80 });
+          await emailField.dispatchEvent('change');
+          await page.waitForTimeout(200);
+          const emailVerify = await page.locator('#paciente_email').inputValue().catch(() => '');
+          console.error('COMPACT_EMAIL_LAST_RESORT_RESULT', JSON.stringify({ patientEmail, emailVerify }));
         }
 
         await pauseStep();
