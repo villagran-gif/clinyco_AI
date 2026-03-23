@@ -1221,6 +1221,7 @@ async function searchAndBook() {
     // Check if the currently active table already has the requested date
     let initialTable = await readActiveCalendarTable(page);
     let slotFound = initialTable.dataDia === slotDate;
+    let timeFound = slotFound && initialTable.times.includes(slotTime);
     const availableSlots = [];
 
     console.error('SEARCH_AND_BOOK_INITIAL', JSON.stringify({
@@ -1229,6 +1230,7 @@ async function searchAndBook() {
       requestedDate: slotDate,
       requestedTime: slotTime,
       slotFound,
+      timeFound,
     }));
 
     if (initialTable.dataDia) {
@@ -1329,6 +1331,7 @@ async function searchAndBook() {
 
         if (activeDate === slotDate) {
           slotFound = true;
+          timeFound = activeTable.times.includes(slotTime);
           break;
         }
       }
@@ -1339,6 +1342,16 @@ async function searchAndBook() {
       throw new Error(
         `No se encontro el slot ${slotDate} ${slotTime} en la agenda del profesional ${professionalId}. ` +
         `Slots disponibles: ${availableDatesInfo || 'ninguno'}`
+      );
+    }
+
+    // Date found but the specific time is not available
+    if (!timeFound) {
+      const dateSlot = availableSlots.find((s) => s.dataDia === slotDate);
+      const timesOnDate = dateSlot ? dateSlot.times : [];
+      throw new Error(
+        `La hora ${slotTime} no esta disponible para ${slotDate} del profesional ${professionalId}. ` +
+        `Horas disponibles en ${slotDate}: ${timesOnDate.length > 0 ? timesOnDate.join(', ') : 'ninguna'}`
       );
     }
 
