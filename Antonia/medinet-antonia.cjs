@@ -529,6 +529,7 @@ async function bookSlot() {
   const branchName = DEFAULT_BRANCH_NAME;
   const headed = process.env.MEDINET_HEADED !== 'false';
 
+  const patientRut = process.env.MEDINET_PATIENT_RUT || '';
   const patientNombres = process.env.MEDINET_PATIENT_NOMBRES || '';
   const patientApPaterno = process.env.MEDINET_PATIENT_AP_PATERNO || '';
   const patientApMaterno = process.env.MEDINET_PATIENT_AP_MATERNO || '';
@@ -639,6 +640,18 @@ async function bookSlot() {
       await fillIfVisible('#paciente_fono', patientFono);
       await pauseStep();
       return;
+    }
+
+    // Fill patient RUT if the field is visible and editable (new patient)
+    if (patientRut) {
+      const rutField = page.locator('#paciente_rut:visible:not([disabled])').first();
+      const rutVisible = await rutField.isVisible().catch(() => false);
+      if (rutVisible) {
+        await rutField.fill(patientRut);
+        await rutField.dispatchEvent('input');
+        await rutField.dispatchEvent('change');
+        await page.waitForTimeout(500);
+      }
     }
 
     await fillIfVisible('#paciente_nombres', patientNombres);
