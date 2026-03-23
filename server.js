@@ -1392,8 +1392,13 @@ function extractDate(text) {
 
 function extractAddress(text) {
   const source = normalizeSpaces(String(text || ""));
+  // Match explicit "dirección: ..." prefix
   const match = source.match(/(?:direccion|dirección)\s*:?\s*(.+)$/i);
-  return match ? titleCaseWords(match[1]) : null;
+  if (match) return titleCaseWords(match[1]);
+  // Match common street patterns: "Av.", "Calle", "Pasaje", etc. followed by name and number
+  const streetMatch = source.match(/^((?:av(?:enida)?|calle|pasaje|psje|pje|los|las|el|la)\b[\s.]*.+\d+.*)$/i);
+  if (streetMatch) return titleCaseWords(streetMatch[1]);
+  return null;
 }
 
 function detectComuna(text) {
@@ -3680,14 +3685,17 @@ app.post("/messages", async (req, res) => {
         // All data available — execute booking
         try {
           console.log("Antonia booking: all data ready, executing booking...");
-          const bookingResult = await runMedinetAntoniaBooking({ slot: choice.slot, patientData });
-
+          // Save slot before clearing state to prevent race condition with concurrent requests
+          const slotToBook = { ...choice.slot };
+          // Clear booking state BEFORE the slow booking call to prevent duplicate attempts
           state.booking.pendingSlots = null;
           state.booking.awaitingSlotChoice = false;
           state.booking.awaitingPatientData = false;
           state.booking.chosenSlot = null;
           state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
 
           const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
           addToHistory(conversationId, "user", userText);
@@ -3711,13 +3719,37 @@ app.post("/messages", async (req, res) => {
           state.booking.pendingSlots = null;
           state.booking.awaitingSlotChoice = false;
           state.booking.chosenSlot = null;
+          state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
+          const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web: https://clinyco.medinetapp.com/agendaweb/planned/";
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: errorReply,
+            kind: "antonia_booking_error",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "booking_error",
+              reason: `Booking error: ${error.message}`
+            }
+          }));
         }
       }
     }
 
     // --- Antonia booking: patient providing missing data ---
     if (state.booking.awaitingPatientData && state.booking.chosenSlot) {
+      // If the only missing field is "direccion" and updateDraftsFromText didn't capture it,
+      // treat the entire user text as the address (user naturally replies without "dirección:" prefix)
+      if (!state.contactDraft.c_direccion && state.booking.missingFields) {
+        const stillMissing = state.booking.missingFields;
+        const onlyDireccionMissing = stillMissing.length === 1 && stillMissing[0] === "direccion";
+        const textLooksLikeAddress = userText.trim().length >= 3 && !extractEmail(userText);
+        if (onlyDireccionMissing && textLooksLikeAddress) {
+          state.contactDraft.c_direccion = titleCaseWords(normalizeSpaces(userText.trim()));
+        }
+      }
       // Re-extract patient data (updateDraftsFromText may have captured new fields)
       const patientData = buildPatientDataFromState(state);
       const missing = getMissingBookingFields(patientData);
@@ -3745,14 +3777,17 @@ app.post("/messages", async (req, res) => {
       // All data collected — execute booking
       try {
         console.log("Antonia booking: data complete, executing booking...");
-        const bookingResult = await runMedinetAntoniaBooking({ slot: state.booking.chosenSlot, patientData });
-
+        // Save slot before clearing state to prevent race condition with concurrent requests
+        const slotToBook = { ...state.booking.chosenSlot };
+        // Clear booking state BEFORE the slow booking call to prevent duplicate attempts
         state.booking.pendingSlots = null;
         state.booking.awaitingSlotChoice = false;
         state.booking.awaitingPatientData = false;
         state.booking.chosenSlot = null;
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
 
         const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
         addToHistory(conversationId, "user", userText);
@@ -3775,7 +3810,22 @@ app.post("/messages", async (req, res) => {
         console.error("ANTONIA BOOKING ERROR:", error.message);
         state.booking.awaitingPatientData = false;
         state.booking.chosenSlot = null;
+        state.booking.pendingSlots = null;
+        state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
+        const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web: https://clinyco.medinetapp.com/agendaweb/planned/";
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: errorReply,
+          kind: "antonia_booking_error",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_error",
+            reason: `Booking error: ${error.message}`
+          }
+        }));
       }
     }
     // --- End Antonia booking interceptor ---
