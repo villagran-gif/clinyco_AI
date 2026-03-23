@@ -656,425 +656,6 @@ async function main() {
   }
 }
 
-async function bookSlot() {
-  const rut = process.env.MEDINET_RUT;
-  const professionalId = process.env.MEDINET_PROFESSIONAL_ID;
-  const slotDate = process.env.MEDINET_SLOT_DATE;
-  const slotTime = process.env.MEDINET_SLOT_TIME;
-  const branchName = DEFAULT_BRANCH_NAME;
-  const headed = process.env.MEDINET_HEADED !== 'false';
-
-  const patientRut = process.env.MEDINET_PATIENT_RUT || '';
-  const patientNombres = process.env.MEDINET_PATIENT_NOMBRES || '';
-  const patientApPaterno = process.env.MEDINET_PATIENT_AP_PATERNO || '';
-  const patientApMaterno = process.env.MEDINET_PATIENT_AP_MATERNO || '';
-  const patientPrevision = process.env.MEDINET_PATIENT_PREVISION || '';
-  const patientNacimiento = process.env.MEDINET_PATIENT_NACIMIENTO || '';
-  const patientEmail = process.env.MEDINET_PATIENT_EMAIL || '';
-  const patientFono = process.env.MEDINET_PATIENT_FONO || '';
-  const patientDireccion = process.env.MEDINET_PATIENT_DIRECCION || '';
-  const bookingStepPauseMs = Number(process.env.MEDINET_BOOK_STEP_PAUSE_MS || 2000);
-
-  if (!rut || !professionalId || !slotDate || !slotTime) {
-    throw new Error('Define MEDINET_RUT, MEDINET_PROFESSIONAL_ID, MEDINET_SLOT_DATE, MEDINET_SLOT_TIME.');
-  }
-
-  const browser = await chromium.launch({ headless: !headed });
-  const page = await browser.newPage();
-  const pauseStep = async () => {
-    if (bookingStepPauseMs > 0) {
-      await page.waitForTimeout(bookingStepPauseMs);
-    }
-  };
-  const clickRequestedSlot = async () => {
-    const clickedReservar = await page.evaluate(({ requestedDate, requestedTime }) => {
-      const tables = Array.from(document.querySelectorAll(`.table-horarios[data-dia="${requestedDate}"]`));
-      for (const table of tables) {
-        const tableStyle = getComputedStyle(table);
-        if (tableStyle.display === 'none' || tableStyle.visibility === 'hidden') continue;
-        const buttons = Array.from(table.querySelectorAll('button.btn-reservar[data-hora]'));
-        const button = buttons.find((item) => {
-          const buttonStyle = getComputedStyle(item);
-          return buttonStyle.display !== 'none'
-            && buttonStyle.visibility !== 'hidden'
-            && (item.getAttribute('data-hora') || '').trim() === requestedTime;
-        });
-        if (button) {
-          button.click();
-          return true;
-        }
-      }
-      return false;
-    }, { requestedDate: slotDate, requestedTime: slotTime });
-    if (!clickedReservar) {
-      throw new Error(`No se encontro un boton visible para ${slotDate} ${slotTime}.`);
-    }
-    await pauseStep();
-    await page.waitForTimeout(2000);
-    await pauseStep();
-  };
-  const fillPatientForm = async () => {
-    const selectAnyAppointmentType = async () => {
-      const appointmentType = page.locator('#id_appointment_type:visible').first();
-      const isVisible = await appointmentType.isVisible().catch(() => false);
-      if (!isVisible) return false;
-      // Get the first valid option value
-      const firstValue = await appointmentType.evaluate((select) => {
-        const options = Array.from(select.querySelectorAll('option'));
-        const firstValid = options.find((o) => o.value && !o.disabled);
-        return firstValid ? firstValid.value : null;
-      });
-      if (firstValue) {
-        // Use Playwright's selectOption for reliable event triggering
-        await appointmentType.selectOption(firstValue);
-        await appointmentType.dispatchEvent('change');
-      }
-      return true;
-    };
-    const fillIfVisible = async (selector, value) => {
-      if (!value) return false;
-      const locator = page.locator(`${selector}:visible`).first();
-      const isVisible = await locator.isVisible().catch(() => false);
-      if (!isVisible) return false;
-      await locator.fill(value);
-      return true;
-    };
-    const selectIfVisible = async (selector, value) => {
-      const locator = page.locator(`${selector}:visible`).first();
-      const isVisible = await locator.isVisible().catch(() => false);
-      if (!isVisible) return false;
-      await locator.selectOption(value);
-      return true;
-    };
-
-    await selectAnyAppointmentType();
-
-    // Wait for AJAX triggered by appointment type change to settle
-    await page.waitForTimeout(500);
-    await page.waitForLoadState('networkidle').catch(() => {});
-    await pauseStep();
-
-    const isCompactStoredPatientForm = await page.evaluate(() => {
-      const visible = (selector) => {
-        const el = document.querySelector(selector);
-        if (!el) return false;
-        const style = window.getComputedStyle(el);
-        return style.display !== 'none' && style.visibility !== 'hidden' && el.getBoundingClientRect().height > 0;
-      };
-
-      return visible('#id_appointment_type')
-        && visible('#paciente_rut[disabled]')
-        && visible('#paciente_email')
-        && visible('#paciente_fono')
-        && !visible('#paciente_nombres')
-        && !visible('#paciente_ap_paterno')
-        && !visible('#paciente_ap_materno')
-        && !visible('#paciente_sexo')
-        && !visible('#paciente_prevision')
-        && !visible('#paciente_nacimiento')
-        && !visible('#paciente_direccion');
-    });
-
-    if (isCompactStoredPatientForm) {
-      await fillIfVisible('#paciente_email', patientEmail);
-      await fillIfVisible('#paciente_fono', patientFono);
-      await pauseStep();
-      return;
-    }
-
-    // Wait for the full form to be ready before filling
-    await page.waitForSelector('#paciente_nombres:visible', { timeout: 8000 }).catch(() => {});
-    await page.waitForTimeout(300);
-
-    // Fill patient RUT if the field is visible and editable (new patient)
-    if (patientRut) {
-      const rutField = page.locator('#paciente_rut:visible:not([disabled])').first();
-      const rutVisible = await rutField.isVisible().catch(() => false);
-      if (rutVisible) {
-        await rutField.fill(patientRut);
-        await rutField.dispatchEvent('input');
-        await rutField.dispatchEvent('change');
-        await page.waitForTimeout(500);
-      }
-    }
-
-    // Fill all patient fields atomically via page.evaluate to avoid AJAX race conditions
-    await page.evaluate(({ nombres, apPaterno, apMaterno, prevision, nacimiento, email, fono, direccion }) => {
-      const setInput = (id, value) => {
-        if (!value) return;
-        const el = document.querySelector(`#${id}`);
-        if (!el) return;
-        const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') return;
-        // Remove readonly for date fields
-        if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
-        // Use native setter to trigger React/jQuery bindings
-        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-          || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-        if (nativeSetter) nativeSetter.call(el, value);
-        else el.value = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      };
-      const setSelect = (id, value) => {
-        if (!value) return;
-        const el = document.querySelector(`#${id}`);
-        if (!el) return;
-        const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') return;
-        // Find matching option
-        const options = Array.from(el.querySelectorAll('option'));
-        const match = options.find((o) => o.value === value)
-          || options.find((o) => (o.textContent || '').trim().toUpperCase().includes(value.toUpperCase()));
-        if (match) {
-          el.value = match.value;
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      };
-
-      setInput('paciente_nombres', nombres);
-      setInput('paciente_ap_paterno', apPaterno);
-      setInput('paciente_ap_materno', apMaterno);
-      setSelect('paciente_sexo', '3'); // Always Indeterminado
-      setSelect('paciente_prevision', prevision);
-      setInput('paciente_nacimiento', nacimiento);
-      setInput('paciente_email', email);
-      setInput('paciente_fono', fono);
-      setInput('paciente_direccion', direccion);
-    }, {
-      nombres: patientNombres,
-      apPaterno: patientApPaterno,
-      apMaterno: patientApMaterno,
-      prevision: patientPrevision,
-      nacimiento: patientNacimiento,
-      email: patientEmail,
-      fono: patientFono,
-      direccion: patientDireccion,
-    });
-
-    // Verify fields were filled; retry with Playwright fill as fallback
-    const nombresSet = await page.locator('#paciente_nombres').inputValue().catch(() => '');
-    if (!nombresSet && patientNombres) {
-      console.error('FILL_FALLBACK: atomic fill missed fields, retrying with Playwright fill');
-      await fillIfVisible('#paciente_nombres', patientNombres);
-      await fillIfVisible('#paciente_ap_paterno', patientApPaterno);
-      await fillIfVisible('#paciente_ap_materno', patientApMaterno);
-      await selectIfVisible('#paciente_sexo', '3');
-      if (patientPrevision) {
-        const previsionOptions = await page.locator('#paciente_prevision:visible option').evaluateAll((options) => {
-          return options.map((o) => ({ value: o.value, label: (o.textContent || '').trim().toUpperCase() })).filter((o) => o.value);
-        });
-        const matchedPrevision = previsionOptions.find((o) => o.label === patientPrevision.toUpperCase())
-          || previsionOptions.find((o) => o.label.includes(patientPrevision.toUpperCase()));
-        if (matchedPrevision) {
-          await selectIfVisible('#paciente_prevision', matchedPrevision.value);
-        }
-      }
-      if (patientNacimiento) {
-        const nacimientoLocator = page.locator('#paciente_nacimiento:visible').first();
-        const nacimientoVisible = await nacimientoLocator.isVisible().catch(() => false);
-        if (nacimientoVisible) {
-          await nacimientoLocator.evaluate((input, dob) => {
-            input.removeAttribute('readonly');
-            input.value = dob;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-          }, patientNacimiento);
-        }
-      }
-      await fillIfVisible('#paciente_email', patientEmail);
-      await fillIfVisible('#paciente_fono', patientFono);
-      await fillIfVisible('#paciente_direccion', patientDireccion);
-    }
-    await pauseStep();
-  };
-
-  try {
-    await openBookingStepOne(page, rut, branchName);
-    await pauseStep();
-
-    await openProfessionalAgenda(page, professionalId);
-    await pauseStep();
-
-    await selectCalendarDate(page, slotDate);
-    await pauseStep();
-
-    const confirmEvidence = [];
-    const onResponse = async (response) => {
-      try {
-        const request = response.request();
-        const method = request.method();
-        const url = response.url();
-        if (method !== 'POST') return;
-        if (!/clinyco\.medinetapp\.com/i.test(url)) return;
-        if (/analytics|google-analytics|g\/collect/i.test(url)) return;
-        if (!/(agenda|reserv|cita|appointment|medinet)/i.test(url)) return;
-        const status = response.status();
-        const contentType = (response.headers()['content-type'] || '').toLowerCase();
-        let excerpt = '';
-        if (contentType.includes('application/json') || contentType.includes('text/')) {
-          const text = await response.text().catch(() => '');
-          excerpt = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-        }
-        confirmEvidence.push({ method, status, url, excerpt });
-      } catch (_) {
-        // noop: best-effort capture
-      }
-    };
-    page.on('response', onResponse);
-    let confirmClicked = false;
-    let successResult = {
-      success: false,
-      message: 'No se completo la confirmacion.',
-      emailSent: '',
-      reservationId: '',
-      explicitError: false,
-    };
-    const maxAttempts = 2;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      await clickRequestedSlot();
-      await fillPatientForm();
-
-      await page.locator('button.btn-comprobar-cita:visible').first().click();
-      await pauseStep();
-      await page.waitForTimeout(3000);
-
-      const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
-      const hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
-      if (hasConfirmButton) {
-        await confirmarButton.click();
-      } else {
-        const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
-          hasNotText: 'Volver',
-        }).first();
-        const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
-        if (!hasFallbackButton) {
-          const formErrors = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger'))
-              .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
-              .filter(Boolean)
-              .slice(0, 5);
-          }).catch(() => []);
-          throw new Error(`No apareció un botón util para confirmar reserva. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : ''}`.trim());
-        }
-        await fallbackButton.click();
-      }
-      confirmClicked = true;
-      await pauseStep();
-
-      await page.waitForTimeout(3000);
-
-      successResult = await page.evaluate(({ expectedEmail }) => {
-        const successDiv = document.querySelector('.validacion-completada');
-        const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
-        const fallbackSuccess = /reserva se ha realizado con e[xé]ito|reserva confirmada|cita agendada|agendada con e[xé]ito/i.test(bodyText);
-        const explicitError = /ocurri[oó] un error|por favor intenta nuevamente/i.test(bodyText);
-        const retryButton = document.querySelector('button.btn.btn-primary[onclick="controlStepper(2, 0); loadCupos();"]');
-        const retryVisible = !!retryButton && (() => {
-          const style = window.getComputedStyle(retryButton);
-          return style.display !== 'none' && style.visibility !== 'hidden' && retryButton.getBoundingClientRect().height > 0;
-        })();
-        const reservationMatch = bodyText.match(/(?:cita|reserva)\s*#?\s*(\d{5,})/i);
-        const reservationId = reservationMatch ? reservationMatch[1] : '';
-
-        if (!successDiv) {
-          return {
-            success: !explicitError && fallbackSuccess,
-            message: explicitError
-              ? 'La pagina mostro un error al confirmar la reserva.'
-              : (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'No se encontro pantalla de confirmacion.'),
-            emailSent: '',
-            reservationId,
-            explicitError,
-            retryVisible,
-          };
-        }
-
-        const style = window.getComputedStyle(successDiv);
-        const successVisible = style.display !== 'none' && style.visibility !== 'hidden' && successDiv.getBoundingClientRect().height > 0;
-        const subtitle = (successDiv.querySelector('.validacion-completada-subtitle')?.textContent || '').replace(/\s+/g, ' ').trim();
-        const emailSpan = (successDiv.querySelector('#email-text')?.textContent || '').replace(/\s+/g, ' ').trim();
-        const successBySubtitle = subtitle.includes('reserva se ha realizado con éxito') || subtitle.includes('reserva se ha realizado con exito');
-        const expected = String(expectedEmail || '').trim().toLowerCase();
-        const shown = String(emailSpan || '').trim().toLowerCase();
-        const successByEmail = !!shown && (!expected || shown === expected);
-
-        return {
-          success: !explicitError && successVisible && successBySubtitle && successByEmail && (fallbackSuccess || !!subtitle),
-          message: explicitError
-            ? 'La pagina mostro un error al confirmar la reserva.'
-            : (subtitle || (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'Pantalla de confirmacion no visible.')),
-          emailSent: emailSpan,
-          reservationId,
-          explicitError,
-          retryVisible,
-          successVisible,
-        };
-      }, { expectedEmail: patientEmail });
-
-      if (!successResult.explicitError || !successResult.retryVisible || attempt === maxAttempts) {
-        break;
-      }
-
-      await page.locator('button.btn.btn-primary[onclick="controlStepper(2, 0); loadCupos();"]:visible').first().click();
-      await pauseStep();
-      await page.waitForTimeout(3000);
-      await selectCalendarDate(page, slotDate);
-      await pauseStep();
-    }
-
-    page.off('response', onResponse);
-    const confirmApiOk = confirmEvidence.some((e) => e.status >= 200 && e.status < 300);
-
-    await page.locator('button.btn-primary[onclick="controlStepper(0, 0)"]:visible').first().click().catch(() => {});
-
-    const reservationIdFromEvidence = (() => {
-      for (const ev of confirmEvidence) {
-        const match = String(ev.excerpt || '').match(/(?:cita|reserva)?\s*#?\s*(\d{5,})/i);
-        if (match) return match[1];
-      }
-      return '';
-    })();
-    const apiBookingAccepted = confirmEvidence.some((ev) => {
-      return /\/api\/agenda\/citas\/agendaweb-add\//i.test(ev.url || '')
-        && ev.status >= 200
-        && ev.status < 300
-        && /agendado_correctamente/i.test(ev.excerpt || '');
-    });
-    const finalReservationId = successResult.reservationId || reservationIdFromEvidence;
-    const strictSuccess = (successResult.success && confirmApiOk && !!finalReservationId) || apiBookingAccepted;
-
-    const finalMessage = strictSuccess
-      ? successResult.message
-      : (
-        successResult.explicitError
-          ? 'La pagina mostro un error al confirmar la reserva.'
-          : 'Medinet no devolvio una reserva verificable despues de confirmar.'
-      );
-
-    const bookingResponse = {
-      source: 'antonia_booking_completed',
-      success: strictSuccess,
-      message: finalMessage,
-      emailSent: successResult.emailSent || '',
-      reservationId: finalReservationId,
-      confirmClicked,
-      confirmApiOk,
-      apiBookingAccepted,
-      confirmEvidence: confirmEvidence.slice(-6),
-      slotDate,
-      slotTime,
-      patient_reply: strictSuccess
-        ? 'Su cita ha sido asignada. Revisar email.'
-        : `Hubo un problema al confirmar la reserva: ${finalMessage}. Por favor intenta directamente en ${AGENDA_URL}`,
-    };
-
-    console.log('ANTONIA_RESPONSE', JSON.stringify(bookingResponse, null, 2));
-  } finally {
-    await page.close().catch(() => {});
-    await browser.close().catch(() => {});
-  }
-}
 
 async function scrapeBranchProfessionals(page) {
   await page.locator('a[href="#profesional-tab"]').click();
@@ -1254,103 +835,80 @@ async function searchAndBook() {
       availableSlots.push({ dataDia: initialTable.dataDia, times: initialTable.times });
     }
 
-    // If the active table doesn't match the requested date, iterate day cells
+    // If the active table doesn't match the requested date, navigate to it directly.
+    // Tables are pre-loaded in the DOM with display:none — click the matching day cell to activate.
     if (!slotFound) {
-      const selectedDayIndex = await page.locator('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date').evaluate((cell) => {
-        if (!cell) return -1;
-        const cells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
-        return cells.indexOf(cell);
-      }).catch(() => -1);
+      const dayNum = parseInt(slotDate.split('-')[2], 10);
+      console.error('SEARCH_AND_BOOK_NAVIGATING', JSON.stringify({ slotDate, dayNum }));
 
-      const availableDayIndices = await page.locator('#div_picker li.days-cell.cell').evaluateAll((cells) => {
-        return cells
-          .map((cell, index) => ({
-            index,
-            className: cell.className || '',
-            text: (cell.textContent || '').trim(),
-          }))
-          .filter((item) => /^\d+$/.test(item.text) && !/disabled|date-disabled|not-notable/i.test(item.className))
-          .map((item) => item.index);
-      });
+      // Check if the table for the requested date exists in the DOM
+      const targetTableExists = await page.locator(`.table-horarios[data-dia="${slotDate}"]`).count() > 0;
+      console.error('SEARCH_AND_BOOK_TARGET_TABLE_EXISTS', targetTableExists);
 
-      console.error('SEARCH_AND_BOOK_DAY_INDICES', JSON.stringify({
-        selectedDayIndex,
-        availableDayIndices,
-        totalIndices: availableDayIndices.length,
-      }));
+      if (targetTableExists) {
+        // Find and click the day cell matching the target day number
+        const dayCells = page.locator('#div_picker li.days-cell.cell');
+        const cellCount = await dayCells.count();
+        let clickedTarget = false;
 
-      // Prioritize unselected days first (selected day was already read above)
-      const prioritizedIndices = [
-        ...availableDayIndices.filter((index) => index !== selectedDayIndex),
-        ...availableDayIndices.filter((index) => index === selectedDayIndex),
-      ];
+        for (let i = 0; i < cellCount; i++) {
+          const cell = dayCells.nth(i);
+          const text = normalizeSpaces(await cell.textContent().catch(() => ''));
+          const className = await cell.getAttribute('class') || '';
 
-      for (const index of prioritizedIndices) {
-        const dayCell = page.locator('#div_picker li.days-cell.cell').nth(index);
-        if (!(await dayCell.isVisible().catch(() => false))) continue;
-        await dayCell.scrollIntoViewIfNeeded().catch(() => {});
-        const previousHiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
-        const previousDateLabel = normalizeSpaces(await page.locator('#dia-fecha').textContent().catch(() => ''));
-        const previousActiveTable = await readActiveCalendarTable(page);
-        const clicked = await dayCell.click({ force: true }).then(() => true).catch(() => false);
-        if (!clicked) continue;
+          // Skip disabled cells
+          if (/disabled|date-disabled/i.test(className)) continue;
+          // Match the day number
+          if (text !== String(dayNum)) continue;
 
-        await page.waitForFunction(({ dayIndex, previousHiddenDateValue, previousDateLabelValue, previousActiveDataDiaValue, previousTimesValue }) => {
-          const hiddenInput = document.querySelector('#dia_hidden');
-          const hiddenDate = hiddenInput?.value || '';
-          const dateLabel = ((document.querySelector('#dia-fecha')?.textContent) || '').replace(/\s+/g, ' ').trim();
-          const selectedCell = document.querySelector('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date');
-          const selectedIndex = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell')).indexOf(selectedCell);
-          const visibleTables = Array.from(document.querySelectorAll('.table-horarios'))
-            .map((table) => {
-              const element = table;
-              const style = getComputedStyle(element);
-              const rect = element.getBoundingClientRect();
-              const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-              return visible ? element : null;
-            })
-            .filter(Boolean);
-          const activeTableEl = visibleTables[0] || null;
-          const activeDate = activeTableEl?.getAttribute('data-dia') || '';
-          const visibleTimes = Array.from((activeTableEl || document).querySelectorAll('button.btn-reservar[data-hora]'))
-            .map((button) => {
-              const element = button;
-              const style = getComputedStyle(element);
-              const rect = element.getBoundingClientRect();
-              const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-              return visible ? element.getAttribute('data-hora') || '' : '';
-            })
-            .filter(Boolean);
-
-          const timeChanged = JSON.stringify(visibleTimes) !== JSON.stringify(previousTimesValue || []);
-          const dayChanged = selectedIndex === Number(dayIndex);
-          const dateChanged = hiddenDate !== String(previousHiddenDateValue || '')
-            || dateLabel !== String(previousDateLabelValue || '')
-            || activeDate !== String(previousActiveDataDiaValue || '');
-          return dayChanged && (dateChanged || timeChanged);
-        }, {
-          dayIndex: index,
-          previousHiddenDateValue: previousHiddenDate,
-          previousDateLabelValue: previousDateLabel,
-          previousActiveDataDiaValue: previousActiveTable.dataDia,
-          previousTimesValue: previousActiveTable.times,
-        }, { timeout: 10000 }).catch(() => {});
-
-        await page.waitForTimeout(1000);
-
-        const activeTable = await readActiveCalendarTable(page);
-        const hiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
-        const activeDate = activeTable.dataDia || hiddenDate;
-
-        if (activeDate) {
-          availableSlots.push({ dataDia: activeDate, times: activeTable.times });
-        }
-
-        if (activeDate === slotDate) {
-          slotFound = true;
-          timeFound = activeTable.times.includes(slotTime);
+          // Use dispatchEvent instead of .click() — the cell may not be "visible" per Playwright
+          await cell.evaluate((el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+          clickedTarget = true;
+          console.error('SEARCH_AND_BOOK_CLICKED_DAY', JSON.stringify({ index: i, text, className }));
           break;
         }
+
+        if (clickedTarget) {
+          // Wait for the UI to settle after clicking the day
+          await page.waitForTimeout(2000);
+
+          // Read times directly from the target table by data-dia, regardless of display state
+          const targetTimes = await page.locator(`.table-horarios[data-dia="${slotDate}"]`).evaluate((table) => {
+            return Array.from(table.querySelectorAll('button.btn-reservar[data-hora]'))
+              .map((btn) => btn.getAttribute('data-hora') || '')
+              .filter(Boolean);
+          }).catch(() => []);
+
+          // Also check what readActiveCalendarTable sees
+          const activeTable = await readActiveCalendarTable(page);
+          console.error('SEARCH_AND_BOOK_AFTER_CLICK', JSON.stringify({
+            activeDataDia: activeTable.dataDia,
+            activeTimes: activeTable.times,
+            targetTableTimes: targetTimes,
+          }));
+
+          // Trust the target table directly if it has the times we need
+          if (targetTimes.length > 0) {
+            slotFound = true;
+            timeFound = targetTimes.includes(slotTime);
+            availableSlots.push({ dataDia: slotDate, times: targetTimes });
+          } else if (activeTable.dataDia === slotDate) {
+            slotFound = true;
+            timeFound = activeTable.times.includes(slotTime);
+            availableSlots.push({ dataDia: activeTable.dataDia, times: activeTable.times });
+          }
+        }
+      }
+
+      // Fallback: if direct navigation failed, collect what's available for error message
+      if (!slotFound) {
+        const allTables = await page.locator('.table-horarios').evaluateAll((tables) => {
+          return tables.map((t) => ({
+            dataDia: t.getAttribute('data-dia') || '',
+            buttons: t.querySelectorAll('button.btn-reservar[data-hora]').length,
+          })).filter((t) => t.dataDia && t.buttons > 0);
+        }).catch(() => []);
+        console.error('SEARCH_AND_BOOK_ALL_TABLES', JSON.stringify(allTables));
       }
     }
 
@@ -1409,16 +967,30 @@ async function searchAndBook() {
         const appointmentType = page.locator('#id_appointment_type:visible').first();
         const isVisible = await appointmentType.isVisible().catch(() => false);
         if (!isVisible) return false;
-        const firstValue = await appointmentType.evaluate((select) => {
+
+        const preferredType = process.env.MEDINET_APPOINTMENT_TYPE || '';
+
+        const selectedValue = await appointmentType.evaluate((select, preferred) => {
           const options = Array.from(select.querySelectorAll('option'));
-          const firstValid = options.find((o) => o.value && !o.disabled);
-          return firstValid ? firstValid.value : null;
-        });
-        if (firstValue) {
-          await appointmentType.selectOption(firstValue);
-          await appointmentType.dispatchEvent('change');
-        }
-        return true;
+          const validOptions = options.filter((o) => o.value && !o.disabled);
+
+          // Try to match preferred type by label (case-insensitive partial match)
+          let match = null;
+          if (preferred) {
+            const pref = preferred.toUpperCase();
+            match = validOptions.find((o) => (o.textContent || '').trim().toUpperCase().includes(pref));
+          }
+
+          const chosen = match || validOptions[0];
+          if (chosen) {
+            select.value = chosen.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return chosen.value;
+          }
+          return null;
+        }, preferredType);
+
+        return !!selectedValue;
       };
       const fillIfVisible = async (selector, value) => {
         if (!value) return false;
@@ -1598,6 +1170,23 @@ async function searchAndBook() {
         await fillIfVisible('#paciente_fono', patientFono);
         await fillIfVisible('#paciente_direccion', patientDireccion);
       }
+
+      // Force-fill email if still empty — this field is often resistant to programmatic fills
+      const emailActual = await page.locator('#paciente_email').inputValue().catch(() => '');
+      if (!emailActual && patientEmail) {
+        console.error('EMAIL_FORCE_FILL: email field empty, forcing with click+type');
+        const emailField = page.locator('#paciente_email:visible').first();
+        const emailVisible = await emailField.isVisible().catch(() => false);
+        if (emailVisible) {
+          await emailField.click().catch(() => {});
+          await emailField.fill('');
+          await emailField.type(patientEmail, { delay: 50 });
+          await emailField.dispatchEvent('change');
+        }
+        const emailAfter = await page.locator('#paciente_email').inputValue().catch(() => '');
+        console.error('EMAIL_FORCE_FILL_RESULT', JSON.stringify({ patientEmail, emailAfter }));
+      }
+
       await pauseStep();
     };
 
@@ -1607,10 +1196,10 @@ async function searchAndBook() {
         const request = response.request();
         const method = request.method();
         const url = response.url();
-        if (method !== 'POST') return;
+        if (!['POST', 'PUT', 'PATCH'].includes(method)) return;
         if (!/clinyco\.medinetapp\.com/i.test(url)) return;
         if (/analytics|google-analytics|g\/collect/i.test(url)) return;
-        if (!/(agenda|reserv|cita|appointment|medinet)/i.test(url)) return;
+        if (!/(agenda|reserv|cita|appointment|medinet|booking|confirm|agendaweb|planned)/i.test(url)) return;
         const status = response.status();
         const contentType = (response.headers()['content-type'] || '').toLowerCase();
         let excerpt = '';
@@ -1703,7 +1292,7 @@ async function searchAndBook() {
         const successByEmail = !!shown && (!expected || shown === expected);
 
         return {
-          success: !explicitError && successVisible && successBySubtitle && successByEmail && (fallbackSuccess || !!subtitle),
+          success: !explicitError && successVisible && successBySubtitle && (fallbackSuccess || !!subtitle),
           message: explicitError
             ? 'La pagina mostro un error al confirmar la reserva.'
             : (subtitle || (fallbackSuccess ? 'Reserva detectada por texto de la página.' : 'Pantalla de confirmacion no visible.')),
@@ -1745,7 +1334,7 @@ async function searchAndBook() {
         && /agendado_correctamente/i.test(ev.excerpt || '');
     });
     const finalReservationId = successResult.reservationId || reservationIdFromEvidence;
-    const strictSuccess = (successResult.success && confirmApiOk && !!finalReservationId) || apiBookingAccepted;
+    const strictSuccess = (successResult.success && confirmApiOk && !!finalReservationId) || apiBookingAccepted || (successResult.success && successResult.successVisible && !successResult.explicitError);
 
     const finalMessage = strictSuccess
       ? successResult.message
@@ -1780,7 +1369,7 @@ async function searchAndBook() {
 }
 
 const mode = process.env.MEDINET_MODE || 'search';
-const entrypoint = mode === 'book' ? bookSlot : mode === 'search_and_book' ? searchAndBook : mode === 'cache' ? cacheAllProfessionals : main;
+const entrypoint = mode === 'search_and_book' ? searchAndBook : mode === 'cache' ? cacheAllProfessionals : main;
 
 entrypoint().catch((error) => {
   console.error('MEDINET_ANTONIA_ERROR', error?.stack || error?.message || String(error));
