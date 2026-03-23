@@ -30,7 +30,8 @@ import {
 } from "./memory/customer-memory.js";
 import {
   extractRut as extractValidatedRut,
-  formatRutHuman as formatValidatedRutHuman
+  formatRutHuman as formatValidatedRutHuman,
+  normalizeRut
 } from "./extraction/identity-normalizers.js";
 
 const app = express();
@@ -3898,6 +3899,103 @@ app.post("/messages", async (req, res) => {
     });
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
+    // --- Antonia booking: RUT identity verification ---
+    if (state.booking.awaitingRutVerification && state.booking.chosenSlot) {
+      // User is providing their RUT to verify identity before booking
+      const providedRut = extractRut(userText);
+      const knownRut = normalizeRut(state.contactDraft?.c_rut || "");
+      if (providedRut) {
+        const normalizedProvided = normalizeRut(providedRut);
+        if (normalizedProvided === knownRut) {
+          // RUT matches — proceed to collect missing data or confirmation
+          state.booking.awaitingRutVerification = false;
+          const patientData = buildPatientDataFromState(state);
+          const missing = getMissingBookingFields(patientData);
+
+          if (missing.length > 0) {
+            state.booking.awaitingPatientData = true;
+            state.booking.missingFields = missing.map((f) => f.key);
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+            const missingLabels = missing.map((f) => f.label).join(", ");
+            const reply = `RUT verificado correctamente. Para completar la reserva necesito los siguientes datos: ${missingLabels}. Por favor envíamelos.`;
+            addToHistory(conversationId, "user", userText);
+            return res.json(await sendManagedReply({
+              appId, conversationId, messageId, userText,
+              reply,
+              kind: "antonia_booking_collect_data",
+              state, info, channelLabel,
+              resolverDecision: {
+                stage: "antonia_booking",
+                nextAction: "collect_patient_data",
+                reason: "RUT verified, collecting missing patient data"
+              }
+            }));
+          }
+
+          // All data available — show confirmation
+          state.booking.awaitingPatientData = false;
+          state.booking.awaitingConfirmation = true;
+          state.booking.missingFields = null;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const slot = state.booking.chosenSlot;
+          const confirmReply = `RUT verificado correctamente.\n\nAntes de confirmar, verifica tus datos:\n\n` +
+            `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
+            `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
+            `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
+            `- *Hora:* ${slot.time || "—"}\n` +
+            `- *RUT:* ${patientData.rut}\n` +
+            `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+            `- *Fecha de nacimiento:* ${patientData.nacimiento}\n` +
+            `- *Previsión:* ${patientData.prevision}\n` +
+            `- *Email:* ${patientData.email}\n` +
+            `- *Teléfono:* ${patientData.fono}\n` +
+            `- *Dirección:* ${patientData.direccion}\n\n` +
+            `¿Están correctos? (Sí / No)`;
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: confirmReply,
+            kind: "antonia_booking_confirm",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "await_confirmation",
+              reason: "RUT verified, all data available, awaiting confirmation"
+            }
+          }));
+        } else {
+          // RUT doesn't match — inform and ask again
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: "El RUT que indicaste no coincide con nuestros registros. Por favor verifica e intenta nuevamente con tu RUT correcto.",
+            kind: "antonia_booking_rut_mismatch",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "rut_verification_retry",
+              reason: "RUT mismatch during identity verification"
+            }
+          }));
+        }
+      } else {
+        // No RUT detected in the text — ask again
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "No detecté un RUT en tu mensaje. Por favor indícame tu RUT para verificar tu identidad antes de continuar con la reserva.",
+          kind: "antonia_booking_rut_retry",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "rut_verification_retry",
+            reason: "No RUT detected, asking again"
+          }
+        }));
+      }
+    }
+
     // --- Antonia booking slot choice interceptor ---
     if (state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
       const choice = detectBookingSlotChoice(userText, state.booking.pendingSlots);
@@ -3905,6 +4003,26 @@ app.post("/messages", async (req, res) => {
         console.log("Antonia booking: patient chose slot", choice.index + 1, safeJson(choice.slot));
         state.booking.chosenSlot = choice.slot;
         state.booking.awaitingSlotChoice = false;
+
+        // Always verify RUT as identity double-check before proceeding with booking
+        const patientRut = state.contactDraft?.c_rut;
+        if (patientRut) {
+          state.booking.awaitingRutVerification = true;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          const reply = `Perfecto, seleccionaste la hora ${choice.slot.time} del ${choice.slot.date}. Para verificar tu identidad, por favor indícame tu RUT.`;
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply,
+            kind: "antonia_booking_verify_rut",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "verify_rut_identity",
+              reason: "Booking: asking RUT for identity verification before proceeding"
+            }
+          }));
+        }
 
         const patientData = buildPatientDataFromState(state);
         const missing = getMissingBookingFields(patientData);
@@ -3930,58 +4048,37 @@ app.post("/messages", async (req, res) => {
           }));
         }
 
-        // All data available — execute booking
-        try {
-          console.log("Antonia booking: all data ready, executing booking...");
-          // Save slot before clearing state to prevent race condition with concurrent requests
-          const slotToBook = { ...choice.slot };
-          // Clear booking state BEFORE the slow booking call to prevent duplicate attempts
-          state.booking.pendingSlots = null;
-          state.booking.awaitingSlotChoice = false;
+        // All data available — always show confirmation before booking (never skip)
+        {
           state.booking.awaitingPatientData = false;
-          state.booking.awaitingConfirmation = false;
-          state.booking.chosenSlot = null;
+          state.booking.awaitingConfirmation = true;
           state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
-          const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
-
-          const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+          const slot = choice.slot;
+          const confirmReply = `Antes de confirmar, verifica tus datos:\n\n` +
+            `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
+            `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
+            `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
+            `- *Hora:* ${slot.time || "—"}\n` +
+            `- *RUT:* ${patientData.rut}\n` +
+            `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+            `- *Fecha de nacimiento:* ${patientData.nacimiento}\n` +
+            `- *Previsión:* ${patientData.prevision}\n` +
+            `- *Email:* ${patientData.email}\n` +
+            `- *Teléfono:* ${patientData.fono}\n` +
+            `- *Dirección:* ${patientData.direccion}\n\n` +
+            `¿Están correctos? (Sí / No)`;
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
             appId, conversationId, messageId, userText,
-            reply,
-            kind: "antonia_booking_result",
+            reply: confirmReply,
+            kind: "antonia_booking_confirm",
             state, info, channelLabel,
             resolverDecision: {
               stage: "antonia_booking",
-              nextAction: "booking_completed",
-              reason: "Booking completed by Antonia",
-              bookingResult
-            }
-          }));
-        } catch (error) {
-          if (error.message?.includes("Executable doesn't exist")) {
-            console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
-          }
-          console.error("ANTONIA BOOKING ERROR:", error.message);
-          state.booking.pendingSlots = null;
-          state.booking.awaitingSlotChoice = false;
-          state.booking.awaitingConfirmation = false;
-          state.booking.chosenSlot = null;
-          state.booking.missingFields = null;
-          await persistConversationSnapshot(conversationId, state, channelLabel);
-          const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web: https://clinyco.medinetapp.com/agendaweb/planned/";
-          addToHistory(conversationId, "user", userText);
-          return res.json(await sendManagedReply({
-            appId, conversationId, messageId, userText,
-            reply: errorReply,
-            kind: "antonia_booking_error",
-            state, info, channelLabel,
-            resolverDecision: {
-              stage: "antonia_booking",
-              nextAction: "booking_error",
-              reason: `Booking error: ${error.message}`
+              nextAction: "await_confirmation",
+              reason: "Booking: all data available, awaiting user confirmation before booking"
             }
           }));
         }
@@ -3995,23 +4092,21 @@ app.post("/messages", async (req, res) => {
       const isCancel = /^(no|cancel|cancelar|nop|nope|2)\b/i.test(normalized);
 
       if (isCancel) {
-        state.booking.pendingSlots = null;
-        state.booking.awaitingSlotChoice = false;
-        state.booking.awaitingPatientData = false;
+        // Don't cancel — ask which data needs correction and go back to data collection
         state.booking.awaitingConfirmation = false;
-        state.booking.chosenSlot = null;
-        state.booking.missingFields = null;
+        state.booking.awaitingPatientData = true;
+        // Keep chosenSlot and other booking state intact so user can correct and re-confirm
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
-          reply: "Reserva cancelada. Si necesitas agendar otra hora, solo avísame.",
-          kind: "antonia_booking_cancelled",
+          reply: "Entendido — ¿qué dato no está correcto? Indícame cuál necesitas corregir (nombre, RUT, fecha de nacimiento, previsión, email, teléfono o dirección) y el valor correcto.",
+          kind: "antonia_booking_correction",
           state, info, channelLabel,
           resolverDecision: {
             stage: "antonia_booking",
-            nextAction: "booking_cancelled",
-            reason: "User cancelled booking"
+            nextAction: "collect_patient_data",
+            reason: "User indicated data is incorrect, asking which field to correct"
           }
         }));
       }
@@ -4115,6 +4210,7 @@ app.post("/messages", async (req, res) => {
         // Clear booking state BEFORE the slow booking call to prevent duplicate attempts
         state.booking.pendingSlots = null;
         state.booking.awaitingSlotChoice = false;
+        state.booking.awaitingRutVerification = false;
         state.booking.awaitingPatientData = false;
         state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
@@ -4142,6 +4238,7 @@ app.post("/messages", async (req, res) => {
           console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
         }
         console.error("ANTONIA BOOKING ERROR:", error.message);
+        state.booking.awaitingRutVerification = false;
         state.booking.awaitingPatientData = false;
         state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
@@ -4239,6 +4336,7 @@ app.post("/messages", async (req, res) => {
             state.booking.pendingProfessional = antoniaResponse.professional || null;
             state.booking.pendingSpecialty = antoniaResponse.specialty || null;
             state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingRutVerification = false;
             state.booking.awaitingPatientData = false;
             state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
@@ -4647,6 +4745,7 @@ app.post("/messages", async (req, res) => {
             state.booking.pendingProfessional = antoniaResponse.professional || null;
             state.booking.pendingSpecialty = antoniaResponse.specialty || null;
             state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingRutVerification = false;
             state.booking.awaitingPatientData = false;
             state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;

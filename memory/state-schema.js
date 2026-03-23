@@ -95,6 +95,7 @@ export function buildInitialConversationState() {
       pendingProfessional: null,
       pendingSpecialty: null,
       awaitingSlotChoice: false,
+      awaitingRutVerification: false,
       awaitingPatientData: false,
       awaitingConfirmation: false,
       chosenSlot: null,
