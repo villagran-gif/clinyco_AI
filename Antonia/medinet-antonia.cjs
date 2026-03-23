@@ -1090,6 +1090,7 @@ async function searchAndBook() {
     await pauseStep();
 
     await openProfessionalAgenda(page, professionalId);
+    await pauseStep();
     await page.waitForTimeout(1500);
 
     // Check if the currently active table already has the requested date
@@ -1201,6 +1202,9 @@ async function searchAndBook() {
         `Slots disponibles: ${availableDatesInfo || 'ninguno'}`
       );
     }
+
+    // Pause to let the portal settle before booking
+    await pauseStep();
 
     // ── Phase 2: Book — the calendar is already on the correct date, proceed to reserve ──
     const clickRequestedSlot = async () => {
