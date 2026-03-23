@@ -220,8 +220,10 @@ const MEDINET_DISCARD_TOKENS = new Set([
   "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
   "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
   "POR", "FAVOR", "DOCTOR", "DOCTORA", "DR", "DRA", "EL", "LA", "LOS", "LAS", "DE",
-  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "TENGO", "TENER",
-  "RESERVAR", "SOLICITAR", "PEDIR",
+  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "PUEDES", "PUEDO",
+  "TENGO", "TENER", "TIENES", "TIENE", "HAY",
+  "DISPONIBLE", "DISPONIBLES", "DISPONIBILIDAD",
+  "RESERVAR", "SOLICITAR", "PEDIR", "TU", "SI", "NO", "HOY", "MANANA",
   // títulos profesionales que contaminan la búsqueda
   "PSICOLOGA", "PSICOLOGO", "NUTRICIONISTA", "NUTRIOLOGA", "NUTRIOLOGO",
   "KINESIOLOGOA", "KINESIOLOGA", "KINESIOLOGO", "PEDIATRA", "CIRUJANO", "CIRUJANA",
@@ -264,20 +266,20 @@ const FIRST_NAME_ALIASES = {
   ZIEDE: "edmundo ziede",
   ROSIRYS: "rosirys ruiz",
   // Nutrición
-  CERQUERA: "magaly cerquera",
-  SAAVEDRA: "katherine saavedra",
+  MAGALY: "magaly cerquera", CERQUERA: "magaly cerquera",
+  KATHERINE: "katherine saavedra", SAAVEDRA: "katherine saavedra",
   // Psicología
   PEGGY: "peggy huerta", HUERTA: "peggy huerta",
-  NARITELLI: "francisca naritelli",
+  FRANCISCA: "francisca naritelli", NARITELLI: "francisca naritelli",
   // Nutriología
-  YEVENES: "ingrid yevenes",
-  MOYA: "fernando moya",
+  INGRID: "ingrid yevenes", YEVENES: "ingrid yevenes",
+  FERNANDO: "fernando moya", MOYA: "fernando moya",
   // Medicina Deportiva
-  RAMOS: "pablo ramos",
+  PABLO: "pablo ramos", RAMOS: "pablo ramos",
   // Medicina General
-  NUNEZ: "carlos nunez",
+  CARLOS: "carlos nunez", NUNEZ: "carlos nunez",
   // Pediatría
-  JALDIN: "daniza jaldin",
+  DANIZA: "daniza jaldin", JALDIN: "daniza jaldin",
   // Endocrinología Infantil
   BANCALARI: "rodrigo bancalari",
   // Otros
@@ -1452,6 +1454,51 @@ function detectProcedure(text) {
   return null;
 }
 
+const SPECIALTY_TO_DEAL_INTERES = {
+  NUTRICION: "Consulta nutrición", NUTRICIONISTA: "Consulta nutrición",
+  PSICOLOGIA: "Consulta psicología", PSICOLOGO: "Consulta psicología", PSICOLOGA: "Consulta psicología",
+  KINESIOLOGIA: "Consulta kinesiología", KINESIOLOGO: "Consulta kinesiología", KINESIOLOGA: "Consulta kinesiología",
+  CIRUGIA: "Cirugía bariátrica", "CIRUGIA DIGESTIVA": "Cirugía bariátrica", "CIRUGIA BARIATRICA": "Cirugía bariátrica",
+  "CIRUGIA PLASTICA": "Cirugía plástica",
+  ENDOCRINOLOGIA: "Consulta medicina", "MEDICINA GENERAL": "Consulta medicina",
+  PEDIATRIA: "Consulta medicina", "ENDOCRINOLOGIA INFANTIL": "Consulta medicina",
+  NUTRIOLOGIA: "Consulta nutrición", "MEDICINA DEPORTIVA": "Consulta medicina"
+};
+
+const PROFESSIONAL_ALIAS_TO_DEAL_INTERES = {
+  "magaly cerquera": "Consulta nutrición",
+  "katherine saavedra": "Consulta nutrición",
+  "peggy huerta": "Consulta psicología",
+  "francisca naritelli": "Consulta psicología",
+  "rodrigo villagran": "Cirugía bariátrica",
+  "nelson aros": "Cirugía bariátrica",
+  "alberto sirabo": "Cirugía bariátrica",
+  "edmundo ziede": "Cirugía plástica",
+  "rosirys ruiz": "Cirugía plástica",
+  "ingrid yevenes": "Consulta nutrición",
+  "fernando moya": "Consulta nutrición",
+  "pablo ramos": "Consulta medicina",
+  "carlos nunez": "Consulta medicina",
+  "daniza jaldin": "Consulta medicina",
+  "rodrigo bancalari": "Consulta medicina",
+  "francisco bencina": "Consulta medicina"
+};
+
+function deriveDealInteresFromSpecialty(specialty, alias) {
+  if (alias) {
+    const fromAlias = PROFESSIONAL_ALIAS_TO_DEAL_INTERES[alias.toLowerCase()];
+    if (fromAlias) return fromAlias;
+  }
+  if (specialty) {
+    const key = normalizeKey(specialty);
+    if (SPECIALTY_TO_DEAL_INTERES[key]) return SPECIALTY_TO_DEAL_INTERES[key];
+    for (const [k, v] of Object.entries(SPECIALTY_TO_DEAL_INTERES)) {
+      if (key.includes(k) || k.includes(key)) return v;
+    }
+  }
+  return "Consulta médica";
+}
+
 function isCoverageInsuranceQuestion(normalizedText) {
   return [
     "COBERTURA",
@@ -2425,6 +2472,8 @@ function hasExplicitScheduleIntent(text) {
     "AGENDAR CON",
     "AGENDAR PARA",
     "DISPONIBILIDAD CON",
+    "DISPONIBLES CON",
+    "DISPONIBLE CON",
     "AGENDA CON",
     "RESERVAR HORA CON",
     "CAMBIO DE HORA",
@@ -2448,7 +2497,7 @@ function extractProfessionalReference(text) {
     return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
 
-  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){1,3})\b/i);
+  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})\b/i);
   if (withConMatch) {
     return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
   }
@@ -2509,11 +2558,14 @@ function buildAntoniaFastPathCandidate(text, state) {
   const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
 
   const alias = extractKnownProfessionalAlias(text);
-  if (alias && hasIntent) {
+  // Trigger fast-path if professional is named AND (has schedule intent OR we're already in schedule_request stage)
+  const inScheduleStage = state.identity?.lastResolvedStage === "schedule_request" ||
+    state.booking?.awaitingSlotChoice || state.booking?.pendingProfessional;
+  if (alias && (hasIntent || inScheduleStage)) {
     return { shouldTry: true, reason: "known_professional_alias", query: alias, trigger: "alias" };
   }
 
-  if (!hasIntent) return noFastPath;
+  if (!hasIntent && !inScheduleStage) return noFastPath;
 
   const specialty = extractCanonicalSpecialtyQuery(text);
   if (specialty) {
@@ -2658,6 +2710,20 @@ function updateDraftsFromText(state, text, info) {
     }
     if (procedure.key === "BARIATRICA" && !state.dealDraft.dealCirujanoBariatrico) {
       state.dealDraft.dealCirujanoBariatrico = "AUN NO LO DECIDE";
+    }
+  }
+
+  // Derive dealInteres from professional name when not already set
+  if (!state.dealDraft.dealInteres) {
+    const alias = extractKnownProfessionalAlias(cleanText);
+    if (alias) {
+      const cachedProf = matchProfessionalFromCache(alias);
+      const specialty = cachedProf?.specialty || null;
+      const derived = deriveDealInteresFromSpecialty(specialty, alias);
+      if (derived) {
+        state.dealDraft.dealInteres = derived;
+        console.log(`Derived dealInteres="${derived}" from professional="${alias}" specialty="${specialty}"`);
+      }
     }
   }
 
