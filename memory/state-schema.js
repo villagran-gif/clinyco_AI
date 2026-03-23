@@ -99,7 +99,8 @@ export function buildInitialConversationState() {
       awaitingPatientData: false,
       awaitingConfirmation: false,
       chosenSlot: null,
-      missingFields: null
+      missingFields: null,
+      slotReminderSent: false
     },
     system: {
       aiEnabled: true,
