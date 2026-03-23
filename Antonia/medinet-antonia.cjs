@@ -862,31 +862,38 @@ async function searchAndBook() {
           // Match the day number
           if (text !== String(dayNum)) continue;
 
-          await cell.scrollIntoViewIfNeeded().catch(() => {});
-          await cell.click({ force: true });
+          // Use dispatchEvent instead of .click() — the cell may not be "visible" per Playwright
+          await cell.evaluate((el) => el.dispatchEvent(new MouseEvent('click', { bubbles: true })));
           clickedTarget = true;
           console.error('SEARCH_AND_BOOK_CLICKED_DAY', JSON.stringify({ index: i, text, className }));
           break;
         }
 
         if (clickedTarget) {
-          // Wait for the table to become visible
-          await page.waitForFunction((targetDate) => {
-            const table = document.querySelector(`.table-horarios[data-dia="${targetDate}"]`);
-            if (!table) return false;
-            const style = getComputedStyle(table);
-            return style.display !== 'none' && style.visibility !== 'hidden';
-          }, slotDate, { timeout: 10000 }).catch(() => {});
+          // Wait for the UI to settle after clicking the day
+          await page.waitForTimeout(2000);
 
-          await page.waitForTimeout(1500);
+          // Read times directly from the target table by data-dia, regardless of display state
+          const targetTimes = await page.locator(`.table-horarios[data-dia="${slotDate}"]`).evaluate((table) => {
+            return Array.from(table.querySelectorAll('button.btn-reservar[data-hora]'))
+              .map((btn) => btn.getAttribute('data-hora') || '')
+              .filter(Boolean);
+          }).catch(() => []);
 
+          // Also check what readActiveCalendarTable sees
           const activeTable = await readActiveCalendarTable(page);
           console.error('SEARCH_AND_BOOK_AFTER_CLICK', JSON.stringify({
             activeDataDia: activeTable.dataDia,
             activeTimes: activeTable.times,
+            targetTableTimes: targetTimes,
           }));
 
-          if (activeTable.dataDia === slotDate) {
+          // Trust the target table directly if it has the times we need
+          if (targetTimes.length > 0) {
+            slotFound = true;
+            timeFound = targetTimes.includes(slotTime);
+            availableSlots.push({ dataDia: slotDate, times: targetTimes });
+          } else if (activeTable.dataDia === slotDate) {
             slotFound = true;
             timeFound = activeTable.times.includes(slotTime);
             availableSlots.push({ dataDia: activeTable.dataDia, times: activeTable.times });
