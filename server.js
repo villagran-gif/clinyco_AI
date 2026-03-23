@@ -3691,6 +3691,7 @@ app.post("/messages", async (req, res) => {
           state.booking.pendingSlots = null;
           state.booking.awaitingSlotChoice = false;
           state.booking.awaitingPatientData = false;
+          state.booking.awaitingConfirmation = false;
           state.booking.chosenSlot = null;
           state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
@@ -3718,6 +3719,7 @@ app.post("/messages", async (req, res) => {
           console.error("ANTONIA BOOKING ERROR:", error.message);
           state.booking.pendingSlots = null;
           state.booking.awaitingSlotChoice = false;
+          state.booking.awaitingConfirmation = false;
           state.booking.chosenSlot = null;
           state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
@@ -3738,8 +3740,56 @@ app.post("/messages", async (req, res) => {
       }
     }
 
+    // --- Antonia booking: user confirming or cancelling ---
+    if (state.booking.awaitingConfirmation && state.booking.chosenSlot) {
+      const normalized = normalizeKey(userText);
+      const isConfirm = /^(si|sí|s[ií][\s,.]|ok|dale|confirmo|confirm[oa]r|yes|ya|1)\b/i.test(normalized);
+      const isCancel = /^(no|cancel|cancelar|nop|nope|2)\b/i.test(normalized);
+
+      if (isCancel) {
+        state.booking.pendingSlots = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "Reserva cancelada. Si necesitas agendar otra hora, solo avísame.",
+          kind: "antonia_booking_cancelled",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_cancelled",
+            reason: "User cancelled booking"
+          }
+        }));
+      }
+
+      if (!isConfirm) {
+        // Not a clear yes/no — ask again
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "¿Confirmas la reserva? Responde *Sí* para confirmar o *No* para cancelar.",
+          kind: "antonia_booking_confirm_retry",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "await_confirmation",
+            reason: "Booking: unclear confirmation response"
+          }
+        }));
+      }
+
+      // User confirmed — proceed to booking execution
+      // (falls through to awaitingPatientData=false + awaitingConfirmation=true handling below)
+    }
+
     // --- Antonia booking: patient providing missing data ---
-    if (state.booking.awaitingPatientData && state.booking.chosenSlot) {
+    if ((state.booking.awaitingPatientData || state.booking.awaitingConfirmation) && state.booking.chosenSlot) {
       // If the only missing field is "direccion" and updateDraftsFromText didn't capture it,
       // treat the entire user text as the address (user naturally replies without "dirección:" prefix)
       if (!state.contactDraft.c_direccion && state.booking.missingFields) {
@@ -3774,6 +3824,38 @@ app.post("/messages", async (req, res) => {
         }));
       }
 
+      // All data collected — ask for confirmation before booking
+      if (!state.booking.awaitingConfirmation) {
+        state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = true;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const slot = state.booking.chosenSlot;
+        const confirmReply = `Antes de confirmar, verifica tus datos:\n\n` +
+          `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
+          `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
+          `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
+          `- *Hora:* ${slot.time || "—"}\n` +
+          `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+          `- *Email:* ${patientData.email}\n` +
+          `- *Teléfono:* ${patientData.fono}\n` +
+          `- *Dirección:* ${patientData.direccion}\n\n` +
+          `¿Están correctos? (Sí / No)`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmReply,
+          kind: "antonia_booking_confirm",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "await_confirmation",
+            reason: "Booking: all data collected, awaiting user confirmation"
+          }
+        }));
+      }
+
       // All data collected — execute booking
       try {
         console.log("Antonia booking: data complete, executing booking...");
@@ -3783,6 +3865,7 @@ app.post("/messages", async (req, res) => {
         state.booking.pendingSlots = null;
         state.booking.awaitingSlotChoice = false;
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
@@ -3809,6 +3892,7 @@ app.post("/messages", async (req, res) => {
         }
         console.error("ANTONIA BOOKING ERROR:", error.message);
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
         state.booking.pendingSlots = null;
         state.booking.missingFields = null;
@@ -3865,6 +3949,7 @@ app.post("/messages", async (req, res) => {
             state.booking.pendingSpecialty = antoniaResponse.specialty || null;
             state.booking.awaitingSlotChoice = true;
             state.booking.awaitingPatientData = false;
+            state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
             await persistConversationSnapshot(conversationId, state, channelLabel);
@@ -4158,6 +4243,7 @@ app.post("/messages", async (req, res) => {
             state.booking.pendingSpecialty = antoniaResponse.specialty || null;
             state.booking.awaitingSlotChoice = true;
             state.booking.awaitingPatientData = false;
+            state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
             await persistConversationSnapshot(conversationId, state, channelLabel);
