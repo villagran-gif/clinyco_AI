@@ -1081,6 +1081,28 @@ async function searchAndBook() {
         const actualFono = await page.locator('#paciente_fono').inputValue().catch(() => '');
         console.error('COMPACT_FORM_FILLED', JSON.stringify({ patientEmail, actualEmail, patientFono, actualFono }));
 
+        // If Medinet pre-loaded a different email from their DB, force-overwrite it
+        if (patientEmail && actualEmail.trim().toLowerCase() !== patientEmail.trim().toLowerCase()) {
+          console.error('COMPACT_EMAIL_MISMATCH: Medinet loaded different email, overwriting', JSON.stringify({ stored: actualEmail, expected: patientEmail }));
+          const emailField = page.locator('#paciente_email:visible').first();
+          await emailField.click().catch(() => {});
+          await emailField.fill('');
+          await emailField.type(patientEmail, { delay: 50 });
+          await emailField.dispatchEvent('change');
+          // Also force via nativeSetter
+          await page.evaluate(({ email }) => {
+            const el = document.querySelector('#paciente_email');
+            if (!el) return;
+            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (nativeSetter) nativeSetter.call(el, email);
+            else el.value = email;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }, { email: patientEmail });
+          const emailAfterFix = await page.locator('#paciente_email').inputValue().catch(() => '');
+          console.error('COMPACT_EMAIL_FIXED', JSON.stringify({ patientEmail, emailAfterFix }));
+        }
+
         await pauseStep();
         return;
       }
@@ -1185,10 +1207,10 @@ async function searchAndBook() {
         await fillIfVisible('#paciente_direccion', patientDireccion);
       }
 
-      // Force-fill email if still empty — this field is often resistant to programmatic fills
+      // Force-fill email if empty OR if Medinet pre-loaded a different email from their DB
       const emailActual = await page.locator('#paciente_email').inputValue().catch(() => '');
-      if (!emailActual && patientEmail) {
-        console.error('EMAIL_FORCE_FILL: email field empty, forcing with click+type');
+      if (patientEmail && emailActual.trim().toLowerCase() !== patientEmail.trim().toLowerCase()) {
+        console.error('EMAIL_FORCE_FILL: email mismatch, forcing with click+type', JSON.stringify({ stored: emailActual, expected: patientEmail }));
         const emailField = page.locator('#paciente_email:visible').first();
         const emailVisible = await emailField.isVisible().catch(() => false);
         if (emailVisible) {
@@ -1199,6 +1221,34 @@ async function searchAndBook() {
         }
         const emailAfter = await page.locator('#paciente_email').inputValue().catch(() => '');
         console.error('EMAIL_FORCE_FILL_RESULT', JSON.stringify({ patientEmail, emailAfter }));
+      }
+
+      // Final safety: wait for any pending AJAX, then verify email one last time
+      await page.waitForTimeout(1500);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const emailFinal = await page.locator('#paciente_email').inputValue().catch(() => '');
+      if (patientEmail && emailFinal.trim().toLowerCase() !== patientEmail.trim().toLowerCase()) {
+        console.error('EMAIL_FINAL_OVERWRITE: AJAX overwrote email again, forcing final fix', JSON.stringify({ stored: emailFinal, expected: patientEmail }));
+        await page.evaluate(({ email }) => {
+          const el = document.querySelector('#paciente_email');
+          if (!el) return;
+          if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
+          const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) nativeSetter.call(el, email);
+          else el.value = email;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }, { email: patientEmail });
+        const emailField = page.locator('#paciente_email:visible').first();
+        const emailVis = await emailField.isVisible().catch(() => false);
+        if (emailVis) {
+          await emailField.click().catch(() => {});
+          await emailField.fill('');
+          await emailField.type(patientEmail, { delay: 50 });
+          await emailField.dispatchEvent('change');
+        }
+        const emailVerify = await page.locator('#paciente_email').inputValue().catch(() => '');
+        console.error('EMAIL_FINAL_VERIFY', JSON.stringify({ patientEmail, emailVerify }));
       }
 
       await pauseStep();
