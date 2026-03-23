@@ -1074,11 +1074,21 @@ function formatRutHuman(raw) {
   return formatValidatedRutHuman(raw);
 }
 
+const NOT_A_PERSON_NAME = new Set([
+  "FONASA", "ISAPRE", "BANMEDICA", "COLMENA", "CONSALUD", "CRUZ BLANCA",
+  "ESENCIAL", "DIPRECA", "PARTICULAR", "MASVIDA", "VIDATRES", "MEDIMEL",
+  "PACIENTE", "CLIENTE", "USUARIO", "HOMBRE", "MUJER", "MAMA", "PAPA",
+  "DOCTOR", "DOCTORA", "NUTRIOLOGA", "NUTRICIONISTA", "KINESIOLOGA"
+]);
+
 function extractName(text) {
   const source = normalizeSpaces(String(text || ""));
   const match = source.match(/(?:me llamo|mi nombre es|soy)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
   if (!match) return null;
-  return titleCaseWords(match[1]);
+  const candidate = match[1].trim();
+  const firstWord = candidate.split(/\s+/)[0].toUpperCase();
+  if (NOT_A_PERSON_NAME.has(firstWord)) return null;
+  return titleCaseWords(candidate);
 }
 
 function isUsablePersonName(value) {
@@ -1824,7 +1834,9 @@ function buildInitialConversationState() {
       lastResolvedContext: null,
       verifiedRutAt: null,
       verifiedWhatsappAt: null,
-      verifiedPairAt: null
+      verifiedPairAt: null,
+      savedDataConfirmed: false,
+      savedDataShown: false
     },
     measurements: {
       weightKg: null,
@@ -2041,6 +2053,71 @@ function applyCustomerResolutionToState(state, resolved, options = {}) {
   state.identity.matchStatus = "no_context";
   state.identity.requiresUserConfirmation = false;
   state.identity.safeToUseHistoricalContext = false;
+}
+
+function shouldConfirmSavedData(state) {
+  if (state.identity.savedDataConfirmed || state.identity.savedDataShown) return false;
+  if (!state.identity.safeToUseHistoricalContext) return false;
+  if (!state.identity.customerId) return false;
+  const cd = state.contactDraft || {};
+  const hasRelevantData = cd.c_nombres || cd.c_aseguradora || cd.c_modalidad;
+  return Boolean(hasRelevantData);
+}
+
+function buildSavedDataSummary(state) {
+  const cd = state.contactDraft || {};
+  const parts = [];
+  if (cd.c_nombres) parts.push(`Nombre: ${cd.c_nombres}${cd.c_apellidos ? " " + cd.c_apellidos : ""}`);
+  if (cd.c_rut) parts.push(`RUT: ${cd.c_rut}`);
+  if (cd.c_aseguradora) {
+    let seg = cd.c_aseguradora;
+    if (cd.c_modalidad) seg += ` (${cd.c_modalidad})`;
+    parts.push(`Previsión: ${seg}`);
+  }
+  if (cd.c_email) parts.push(`Email: ${cd.c_email}`);
+  if (!parts.length) return null;
+  return parts.join("\n");
+}
+
+function buildSavedDataConfirmationMessage(state) {
+  const summary = buildSavedDataSummary(state);
+  if (!summary) return null;
+  return `Tengo estos datos tuyos de una conversación anterior:\n\n${summary}\n\n¿Están correctos o necesitas corregir algo?`;
+}
+
+function handleSavedDataConfirmationResponse(state, userText) {
+  const normalized = (userText || "").toUpperCase().replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim();
+  const confirmsData = /^(SI|SÍ|OK|CORRECTO|CORRECTOS|ESTA BIEN|ESTAN BIEN|ESTÁN BIEN|DALE|PERFECTO|TODO BIEN|CONFIRMO|CONFIRMADO)/.test(normalized);
+  const rejectsData = /^(NO|CAMBIAR|CORREGIR|MODIFICAR|ACTUALIZAR|MAL|INCORRECTO|INCORRECTOS|ESTAN MAL|ESTÁN MAL)/.test(normalized);
+
+  if (confirmsData) {
+    state.identity.savedDataConfirmed = true;
+    return { confirmed: true, message: null };
+  }
+
+  if (rejectsData) {
+    // Clear saved data so the bot asks fresh questions
+    state.contactDraft.c_nombres = null;
+    state.contactDraft.c_apellidos = null;
+    state.contactDraft.c_aseguradora = null;
+    state.contactDraft.c_modalidad = null;
+    state.contactDraft.c_email = null;
+    state.contactDraft.c_direccion = null;
+    state.contactDraft.c_comuna = null;
+    state.dealDraft.dealInteres = null;
+    state.dealDraft.dealPeso = null;
+    state.dealDraft.dealEstatura = null;
+    state.measurements.weightKg = null;
+    state.measurements.heightCm = null;
+    state.measurements.bmi = null;
+    state.measurements.bmiCategory = null;
+    state.identity.savedDataConfirmed = true;
+    return { confirmed: true, cleared: true, message: "Perfecto, borro los datos anteriores. Cuéntame, ¿en qué te puedo ayudar?" };
+  }
+
+  // User might be giving corrections inline — mark as confirmed and let the normal flow extract new data
+  state.identity.savedDataConfirmed = true;
+  return { confirmed: true, message: null };
 }
 
 async function syncCustomerChannelsFromState(customerId, conversationId, state, channelLabel) {
@@ -4223,6 +4300,36 @@ app.post("/messages", async (req, res) => {
       channelLabel,
       loadSummaries: true
     });
+
+    // --- Saved data confirmation layer ---
+    if (state.identity.savedDataShown && !state.identity.savedDataConfirmed) {
+      const confirmResult = handleSavedDataConfirmationResponse(state, userText);
+      if (confirmResult.message) {
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmResult.message,
+          kind: "saved_data_cleared",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_cleared")
+        }));
+      }
+      // confirmed or inline correction — continue normal flow
+    }
+
+    if (shouldConfirmSavedData(state)) {
+      const confirmMsg = buildSavedDataConfirmationMessage(state);
+      if (confirmMsg) {
+        state.identity.savedDataShown = true;
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmMsg,
+          kind: "confirm_saved_data",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "confirm_saved_data")
+        }));
+      }
+    }
+    // --- End saved data confirmation layer ---
 
     if (shouldTriggerCaseE(state)) {
       state.identity.likelyClinicalRecordOnly = true;
