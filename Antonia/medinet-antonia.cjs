@@ -835,103 +835,74 @@ async function searchAndBook() {
       availableSlots.push({ dataDia: initialTable.dataDia, times: initialTable.times });
     }
 
-    // If the active table doesn't match the requested date, iterate day cells
+    // If the active table doesn't match the requested date, navigate to it directly.
+    // Tables are pre-loaded in the DOM with display:none — click the matching day cell to activate.
     if (!slotFound) {
-      const selectedDayIndex = await page.locator('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date').evaluate((cell) => {
-        if (!cell) return -1;
-        const cells = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell'));
-        return cells.indexOf(cell);
-      }).catch(() => -1);
+      const dayNum = parseInt(slotDate.split('-')[2], 10);
+      const monthNum = parseInt(slotDate.split('-')[1], 10);
+      console.error('SEARCH_AND_BOOK_NAVIGATING', JSON.stringify({ slotDate, dayNum, monthNum }));
 
-      const availableDayIndices = await page.locator('#div_picker li.days-cell.cell').evaluateAll((cells) => {
-        return cells
-          .map((cell, index) => ({
-            index,
-            className: cell.className || '',
-            text: (cell.textContent || '').trim(),
-          }))
-          .filter((item) => /^\d+$/.test(item.text) && !/disabled|date-disabled|not-notable/i.test(item.className))
-          .map((item) => item.index);
-      });
+      // Check if the table for the requested date exists in the DOM
+      const targetTableExists = await page.locator(`.table-horarios[data-dia="${slotDate}"]`).count() > 0;
+      console.error('SEARCH_AND_BOOK_TARGET_TABLE_EXISTS', targetTableExists);
 
-      console.error('SEARCH_AND_BOOK_DAY_INDICES', JSON.stringify({
-        selectedDayIndex,
-        availableDayIndices,
-        totalIndices: availableDayIndices.length,
-      }));
+      if (targetTableExists) {
+        // Find and click the day cell matching the target day number
+        const dayCells = page.locator('#div_picker li.days-cell.cell');
+        const cellCount = await dayCells.count();
+        let clickedTarget = false;
 
-      // Prioritize unselected days first (selected day was already read above)
-      const prioritizedIndices = [
-        ...availableDayIndices.filter((index) => index !== selectedDayIndex),
-        ...availableDayIndices.filter((index) => index === selectedDayIndex),
-      ];
+        for (let i = 0; i < cellCount; i++) {
+          const cell = dayCells.nth(i);
+          const text = normalizeSpaces(await cell.textContent().catch(() => ''));
+          const className = await cell.getAttribute('class') || '';
 
-      for (const index of prioritizedIndices) {
-        const dayCell = page.locator('#div_picker li.days-cell.cell').nth(index);
-        if (!(await dayCell.isVisible().catch(() => false))) continue;
-        await dayCell.scrollIntoViewIfNeeded().catch(() => {});
-        const previousHiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
-        const previousDateLabel = normalizeSpaces(await page.locator('#dia-fecha').textContent().catch(() => ''));
-        const previousActiveTable = await readActiveCalendarTable(page);
-        const clicked = await dayCell.click({ force: true }).then(() => true).catch(() => false);
-        if (!clicked) continue;
+          // Skip disabled cells
+          if (/disabled|date-disabled/i.test(className)) continue;
+          // Match the day number
+          if (text !== String(dayNum)) continue;
 
-        await page.waitForFunction(({ dayIndex, previousHiddenDateValue, previousDateLabelValue, previousActiveDataDiaValue, previousTimesValue }) => {
-          const hiddenInput = document.querySelector('#dia_hidden');
-          const hiddenDate = hiddenInput?.value || '';
-          const dateLabel = ((document.querySelector('#dia-fecha')?.textContent) || '').replace(/\s+/g, ' ').trim();
-          const selectedCell = document.querySelector('#div_picker li.days-cell.cell.selected, #div_picker li.days-cell.cell.selected-date');
-          const selectedIndex = Array.from(document.querySelectorAll('#div_picker li.days-cell.cell')).indexOf(selectedCell);
-          const visibleTables = Array.from(document.querySelectorAll('.table-horarios'))
-            .map((table) => {
-              const element = table;
-              const style = getComputedStyle(element);
-              const rect = element.getBoundingClientRect();
-              const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-              return visible ? element : null;
-            })
-            .filter(Boolean);
-          const activeTableEl = visibleTables[0] || null;
-          const activeDate = activeTableEl?.getAttribute('data-dia') || '';
-          const visibleTimes = Array.from((activeTableEl || document).querySelectorAll('button.btn-reservar[data-hora]'))
-            .map((button) => {
-              const element = button;
-              const style = getComputedStyle(element);
-              const rect = element.getBoundingClientRect();
-              const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-              return visible ? element.getAttribute('data-hora') || '' : '';
-            })
-            .filter(Boolean);
-
-          const timeChanged = JSON.stringify(visibleTimes) !== JSON.stringify(previousTimesValue || []);
-          const dayChanged = selectedIndex === Number(dayIndex);
-          const dateChanged = hiddenDate !== String(previousHiddenDateValue || '')
-            || dateLabel !== String(previousDateLabelValue || '')
-            || activeDate !== String(previousActiveDataDiaValue || '');
-          return dayChanged && (dateChanged || timeChanged);
-        }, {
-          dayIndex: index,
-          previousHiddenDateValue: previousHiddenDate,
-          previousDateLabelValue: previousDateLabel,
-          previousActiveDataDiaValue: previousActiveTable.dataDia,
-          previousTimesValue: previousActiveTable.times,
-        }, { timeout: 10000 }).catch(() => {});
-
-        await page.waitForTimeout(1000);
-
-        const activeTable = await readActiveCalendarTable(page);
-        const hiddenDate = await page.locator('#dia_hidden').inputValue().catch(() => '');
-        const activeDate = activeTable.dataDia || hiddenDate;
-
-        if (activeDate) {
-          availableSlots.push({ dataDia: activeDate, times: activeTable.times });
-        }
-
-        if (activeDate === slotDate) {
-          slotFound = true;
-          timeFound = activeTable.times.includes(slotTime);
+          await cell.scrollIntoViewIfNeeded().catch(() => {});
+          await cell.click({ force: true });
+          clickedTarget = true;
+          console.error('SEARCH_AND_BOOK_CLICKED_DAY', JSON.stringify({ index: i, text, className }));
           break;
         }
+
+        if (clickedTarget) {
+          // Wait for the table to become visible
+          await page.waitForFunction((targetDate) => {
+            const table = document.querySelector(`.table-horarios[data-dia="${targetDate}"]`);
+            if (!table) return false;
+            const style = getComputedStyle(table);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+          }, slotDate, { timeout: 10000 }).catch(() => {});
+
+          await page.waitForTimeout(1500);
+
+          const activeTable = await readActiveCalendarTable(page);
+          console.error('SEARCH_AND_BOOK_AFTER_CLICK', JSON.stringify({
+            activeDataDia: activeTable.dataDia,
+            activeTimes: activeTable.times,
+          }));
+
+          if (activeTable.dataDia === slotDate) {
+            slotFound = true;
+            timeFound = activeTable.times.includes(slotTime);
+            availableSlots.push({ dataDia: activeTable.dataDia, times: activeTable.times });
+          }
+        }
+      }
+
+      // Fallback: if direct navigation failed, collect what's available for error message
+      if (!slotFound) {
+        const allTables = await page.locator('.table-horarios').evaluateAll((tables) => {
+          return tables.map((t) => ({
+            dataDia: t.getAttribute('data-dia') || '',
+            buttons: t.querySelectorAll('button.btn-reservar[data-hora]').length,
+          })).filter((t) => t.dataDia && t.buttons > 0);
+        }).catch(() => []);
+        console.error('SEARCH_AND_BOOK_ALL_TABLES', JSON.stringify(allTables));
       }
     }
 
@@ -990,16 +961,30 @@ async function searchAndBook() {
         const appointmentType = page.locator('#id_appointment_type:visible').first();
         const isVisible = await appointmentType.isVisible().catch(() => false);
         if (!isVisible) return false;
-        const firstValue = await appointmentType.evaluate((select) => {
+
+        const preferredType = process.env.MEDINET_APPOINTMENT_TYPE || '';
+
+        const selectedValue = await appointmentType.evaluate((select, preferred) => {
           const options = Array.from(select.querySelectorAll('option'));
-          const firstValid = options.find((o) => o.value && !o.disabled);
-          return firstValid ? firstValid.value : null;
-        });
-        if (firstValue) {
-          await appointmentType.selectOption(firstValue);
-          await appointmentType.dispatchEvent('change');
-        }
-        return true;
+          const validOptions = options.filter((o) => o.value && !o.disabled);
+
+          // Try to match preferred type by label (case-insensitive partial match)
+          let match = null;
+          if (preferred) {
+            const pref = preferred.toUpperCase();
+            match = validOptions.find((o) => (o.textContent || '').trim().toUpperCase().includes(pref));
+          }
+
+          const chosen = match || validOptions[0];
+          if (chosen) {
+            select.value = chosen.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return chosen.value;
+          }
+          return null;
+        }, preferredType);
+
+        return !!selectedValue;
       };
       const fillIfVisible = async (selector, value) => {
         if (!value) return false;
