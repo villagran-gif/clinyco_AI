@@ -32,6 +32,18 @@ import {
   extractRut as extractValidatedRut,
   formatRutHuman as formatValidatedRutHuman
 } from "./extraction/identity-normalizers.js";
+import {
+  fetchActiveProfessionals, fetchProfessionalsFull, getProfessionalDetails,
+  fetchProfessionalsBySpecialtyAndBranch,
+  fetchAvailableSlots, fetchNextSlotsChatbot, checkProfessionalAvailable,
+  bookChatbot, bookOverschedule, bookAppointmentForPatient,
+  fetchAllAppointments, fetchAppointmentDetail, updateAppointmentState,
+  fetchSpecialties, fetchAppointmentTypes, fetchAppointmentTypesByContext,
+  fetchBranches, fetchPrevisiones,
+  checkPatientByRut, fetchPatientById, searchPatients,
+  buildProfessionalsCache, findProfessional, searchAvailableSlots,
+  findSpecialtyId,
+} from "./Antonia/medinet-api.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -81,6 +93,9 @@ const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
+const MEDINET_API_TOKEN = process.env.MEDINET_API_TOKEN || "";
+const MEDINET_BRANCH_ID = Number(process.env.MEDINET_BRANCH_ID || 39);
+const MEDINET_USE_API = MEDINET_API_TOKEN.length > 0;
 function firstExistingPath(paths) {
   for (const p of paths) {
     try { accessSync(p, fsConstants.R_OK); return p; } catch { /* skip */ }
@@ -180,6 +195,24 @@ function matchProfessionalFromCache(text) {
 }
 
 async function runMedinetAntoniaCache() {
+  // --- API path (fast, ~1s) ---
+  if (MEDINET_USE_API) {
+    try {
+      const professionals = await buildProfessionalsCache();
+      if (professionals.length) {
+        const { mkdirSync, existsSync } = await import("node:fs");
+        const cacheDir = fileURLToPath(new URL("./data/", import.meta.url));
+        if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
+        const payload = { cachedAt: new Date().toISOString(), branch: process.env.MEDINET_BRANCH_NAME || "API", professionals };
+        writeFileSync(MEDINET_CACHE_FILE, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        console.log(`MEDINET CACHE REFRESH (API) completed: ${professionals.length} professionals`);
+        return true;
+      }
+    } catch (error) {
+      console.error("MEDINET CACHE REFRESH (API) ERROR:", error.message, "— falling back");
+    }
+  }
+
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
   if (process.env.MEDINET_REMOTE_URL) {
     try {
@@ -317,6 +350,44 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
 
+  // --- API path (preferred, fast ~2-5s) ---
+  if (MEDINET_USE_API) {
+    try {
+      const prof = await findProfessional(safeQuery);
+      if (!prof) {
+        console.log("MEDINET API: no professional match for", safeQuery);
+      } else {
+        const profId = prof.id;
+        const profName = prof.display || `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+        const detail = await getProfessionalDetails(profId);
+        const suc_esps = detail?.sucursal_especialidades || [];
+        const tipos_cita = detail?.tipos_cita || [];
+        const branchMatch = suc_esps.find((se) => se.ubicacion?.id === MEDINET_BRANCH_ID) || suc_esps[0];
+        const ubicacionId = branchMatch?.ubicacion?.id || MEDINET_BRANCH_ID;
+        const especialidadId = branchMatch?.especialidad?.id || "";
+        const specialty = branchMatch?.especialidad?.nombre || "";
+        const tipoCitaMatch = tipos_cita.find((tc) => (tc.sucursales || []).includes(MEDINET_BRANCH_ID)) || tipos_cita[0];
+        const tipocitaId = tipoCitaMatch?.id || "";
+        const duration = tipoCitaMatch?.duracion || 30;
+        let slots = [];
+        if (ubicacionId && especialidadId && tipocitaId) {
+          slots = await searchAvailableSlots({ professionalId: profId, ubicacionId, especialidadId, tipocitaId, daysAhead: 14 });
+        }
+        for (const slot of slots) {
+          slot.professional = slot.professional || profName;
+          slot.professionalId = slot.professionalId || String(profId);
+          slot.specialty = slot.specialty || specialty;
+          slot.duration = slot.duration || duration;
+        }
+        const patientReply = buildPatientReplyFromSlots(profName, specialty, slots);
+        console.log("MEDINET API MATCH:", JSON.stringify({ id: profId, professional: profName, specialty, slotsFound: slots.length }));
+        return { source: "antonia_api_medinet", specialty, professional: profName, first_available: null, available_slots: slots, patient_reply: patientReply, patient_phone: patientPhone };
+      }
+    } catch (error) {
+      console.error("MEDINET API SEARCH ERROR:", error.message, "— falling back");
+    }
+  }
+
   if (process.env.MEDINET_REMOTE_URL) {
     try {
       const result = await callRemoteMedinetWorker("search", { query: safeQuery, patientPhone, patientMessage }, timeoutMs);
@@ -354,6 +425,19 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
 async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 120000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  // --- API path (fast, ~1-2s) ---
+  if (MEDINET_USE_API) {
+    try {
+      console.log("MEDINET BOOKING (API): attempting...", JSON.stringify({ profId: slot.professionalId, date: slot.dataDia, time: slot.time }));
+      const result = await bookAppointmentForPatient({ slot, patientData, branchId: MEDINET_BRANCH_ID, scheduleTypeId: 1 });
+      console.log("MEDINET BOOKING (API) result:", JSON.stringify({ success: result.success, message: result.message }));
+      if (result.success) return result;
+      console.warn("MEDINET BOOKING (API) failed — falling back");
+    } catch (error) {
+      console.error("MEDINET BOOKING (API) ERROR:", error.message, "— falling back");
+    }
+  }
 
   if (process.env.MEDINET_REMOTE_URL) {
     try {
@@ -415,6 +499,23 @@ function detectBookingSlotChoice(text, availableSlots) {
   if (index < 0 || index >= availableSlots.length) return null;
 
   return { index, slot: availableSlots[index] };
+}
+
+function buildPatientReplyFromSlots(professional, specialty, slots) {
+  if (!slots.length) {
+    return [
+      `No encontré disponibilidad visible con ${professional || "la búsqueda solicitada"}${specialty ? ` en ${specialty}` : ""}.`,
+      "Te comparto la dirección para que puedas revisar directamente:",
+      `URL: ${MEDINET_AGENDA_WEB_URL}`,
+      "Gracias",
+    ].join(" ");
+  }
+  return [
+    `Tengo estas horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:`,
+    ...slots.map((slot, i) => `${i + 1}- ${slot.date} a las ${slot.time}`),
+    "",
+    "Si deseas agendar, indícame el número de la hora que prefieres y te ayudo a reservar.",
+  ].join("\n");
 }
 
 function splitApellidos(apellidos) {
@@ -1540,10 +1641,7 @@ function detectNegatedAseguradora(normalizedText) {
 }
 
 function findExplicitAseguradora(normalizedText) {
-  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => {
-    const pattern = new RegExp(`(?:^|\\s|\\b)${escapeRegex(alias)}(?:\\s|\\b|$)`);
-    return pattern.test(normalizedText);
-  }) || null;
+  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => normalizedText.includes(alias)) || null;
 }
 
 function parseAseguradora(text) {
