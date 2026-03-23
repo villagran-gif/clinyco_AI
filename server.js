@@ -427,6 +427,7 @@ function buildPatientDataFromState(state) {
   const cd = state?.contactDraft || {};
   const { paterno, materno } = splitApellidos(cd.c_apellidos);
   return {
+    rut: cd.c_rut || "",
     nombres: cd.c_nombres || "",
     apPaterno: paterno,
     apMaterno: materno,
@@ -440,9 +441,11 @@ function buildPatientDataFromState(state) {
 
 function getMissingBookingFields(patientData) {
   const required = [
+    { key: "rut", label: "RUT" },
     { key: "nombres", label: "nombre completo" },
     { key: "apPaterno", label: "apellido paterno" },
     { key: "prevision", label: "previsión/aseguradora" },
+    { key: "nacimiento", label: "fecha de nacimiento" },
     { key: "email", label: "correo electrónico" },
     { key: "fono", label: "teléfono" },
     { key: "direccion", label: "dirección" }
@@ -3837,7 +3840,10 @@ app.post("/messages", async (req, res) => {
           `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
           `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
           `- *Hora:* ${slot.time || "—"}\n` +
+          `- *RUT:* ${patientData.rut}\n` +
           `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+          `- *Fecha de nacimiento:* ${patientData.nacimiento}\n` +
+          `- *Previsión:* ${patientData.prevision}\n` +
           `- *Email:* ${patientData.email}\n` +
           `- *Teléfono:* ${patientData.fono}\n` +
           `- *Dirección:* ${patientData.direccion}\n\n` +
