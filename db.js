@@ -394,6 +394,24 @@ export async function insertConversationMessage({
   content = "",
   rawJson = null
 }) {
+  if (messageId) {
+    const existing = await getPool().query(
+      `
+      select id
+      from conversation_messages
+      where conversation_id = $1
+        and message_id = $2
+        and role = $3
+      limit 1
+      `,
+      [conversationId, messageId, role]
+    );
+
+    if (existing.rowCount > 0) {
+      return false;
+    }
+  }
+
   const result = await getPool().query(
     `
     insert into conversation_messages (
@@ -406,8 +424,6 @@ export async function insertConversationMessage({
       raw_json
     )
     values ($1, $2, $3, $4, $5, $6, $7::jsonb)
-    on conflict (conversation_id, message_id, role)
-    do nothing
     returning id
     `,
     [
@@ -745,35 +761,58 @@ export async function addCustomerChannel({
 
   if (!normalizedValue && !externalId) return null;
 
-  if (normalizedValue) {
+  const existing = await getPool().query(
+    `
+    select *
+    from customer_channels
+    where (
+      $1::text is not null
+      and channel_type = $2
+      and channel_value = $1
+    ) or (
+      $3::text is not null
+      and $4::text is not null
+      and source_system = $3
+      and external_id = $4
+    )
+    order by
+      case
+        when $1::text is not null and channel_type = $2 and channel_value = $1 then 0
+        else 1
+      end,
+      id asc
+    limit 1
+    `,
+    [
+      normalizedValue || null,
+      channelType,
+      sourceSystem || null,
+      externalId || null
+    ]
+  );
+
+  if (existing.rowCount > 0) {
     const { rows } = await getPool().query(
       `
-      insert into customer_channels (
-        customer_id,
-        channel_type,
-        channel_value,
-        is_primary,
-        verified,
-        source_system,
-        external_id,
-        metadata_json
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-      on conflict (channel_type, channel_value)
-      do update set
-        customer_id = excluded.customer_id,
-        is_primary = customer_channels.is_primary or excluded.is_primary,
-        verified = customer_channels.verified or excluded.verified,
-        source_system = coalesce(excluded.source_system, customer_channels.source_system),
-        external_id = coalesce(excluded.external_id, customer_channels.external_id),
-        metadata_json = customer_channels.metadata_json || excluded.metadata_json,
+      update customer_channels
+      set
+        customer_id = $2,
+        channel_type = $3,
+        channel_value = coalesce($4, channel_value),
+        is_primary = is_primary or $5,
+        verified = verified or $6,
+        source_system = coalesce($7, source_system),
+        external_id = coalesce($8, external_id),
+        metadata_json = metadata_json || $9::jsonb,
         updated_at = now()
+      where id = $1
       returning *
       `,
       [
+        existing.rows[0].id,
         customerId,
         channelType,
-        normalizedValue,
+        normalizedValue || null,
         Boolean(isPrimary),
         Boolean(verified),
         sourceSystem || null,
@@ -790,26 +829,20 @@ export async function addCustomerChannel({
     insert into customer_channels (
       customer_id,
       channel_type,
+      channel_value,
       is_primary,
       verified,
       source_system,
       external_id,
       metadata_json
     )
-    values ($1, $2, $3, $4, $5, $6, $7::jsonb)
-    on conflict (source_system, external_id)
-    do update set
-      customer_id = excluded.customer_id,
-      channel_type = excluded.channel_type,
-      is_primary = customer_channels.is_primary or excluded.is_primary,
-      verified = customer_channels.verified or excluded.verified,
-      metadata_json = customer_channels.metadata_json || excluded.metadata_json,
-      updated_at = now()
+    values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
     returning *
     `,
     [
       customerId,
       channelType,
+      normalizedValue || null,
       Boolean(isPrimary),
       Boolean(verified),
       sourceSystem || null,
