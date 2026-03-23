@@ -97,6 +97,30 @@ function resolveMedinetAntoniaScript() {
 const MEDINET_ANTONIA_SCRIPT = resolveMedinetAntoniaScript();
 const execFileAsync = promisify(execFile);
 
+async function callRemoteMedinetWorker(action, payload, timeoutMs) {
+  const url = `${process.env.MEDINET_REMOTE_URL}/medinet/run`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs + 5000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.MEDINET_REMOTE_TOKEN}`,
+      },
+      body: JSON.stringify({ action, payload }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Worker responded ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const MEDINET_CACHE_FILE = fileURLToPath(new URL("./data/medinet_professionals_cache.json", import.meta.url));
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -157,6 +181,16 @@ function matchProfessionalFromCache(text) {
 
 async function runMedinetAntoniaCache() {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+  if (process.env.MEDINET_REMOTE_URL) {
+    try {
+      await callRemoteMedinetWorker("cache", {}, timeoutMs);
+      console.log("MEDINET CACHE REFRESH completed (remote)");
+      return true;
+    } catch (error) {
+      console.error("MEDINET CACHE REFRESH ERROR (remote):", error.message);
+      return false;
+    }
+  }
   try {
     const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
       env: {
@@ -275,6 +309,16 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
 
+  if (process.env.MEDINET_REMOTE_URL) {
+    try {
+      const result = await callRemoteMedinetWorker("search", { query: safeQuery, patientPhone, patientMessage }, timeoutMs);
+      return result.error ? null : result;
+    } catch (error) {
+      console.error("MEDINET SEARCH ERROR (remote):", error.message);
+      return null;
+    }
+  }
+
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
@@ -302,6 +346,16 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
 async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
+
+  if (process.env.MEDINET_REMOTE_URL) {
+    try {
+      const result = await callRemoteMedinetWorker("book", { slot, patientData }, timeoutMs);
+      return result.error ? null : result;
+    } catch (error) {
+      console.error("MEDINET BOOKING ERROR (remote):", error.message);
+      return null;
+    }
+  }
 
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
