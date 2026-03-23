@@ -218,6 +218,12 @@ async function openBookingStepOne(page, rut, branchName) {
   try {
     await page.goto(AGENDA_URL, { waitUntil: 'domcontentloaded' });
 
+    const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+    const hasAgendaForm = await page.locator('#agendar').first().isVisible().catch(() => false);
+    if (!hasAgendaForm && /404|sin acceso/i.test(bodyText)) {
+      throw new Error(`Medinet agenda no disponible: ${bodyText.slice(0, 120).trim()}`);
+    }
+
     const bookingRunInput = page.locator('#agendar #step-0 input[name="run"]').first();
     await bookingRunInput.fill(rut);
     await bookingRunInput.dispatchEvent('input');
