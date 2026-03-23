@@ -57,6 +57,7 @@ const conversationHistory = new Map();
 const conversationStates = new Map();
 const hydratedConversations = new Set();
 const recentInboundMessageClaims = new Map();
+const conversationProcessingLocks = new Map(); // per-conversation mutex to serialize message processing
 
 // =========================
 // Config
@@ -420,6 +421,11 @@ function detectBookingSlotChoice(text, availableSlots) {
   if (!availableSlots || !availableSlots.length) return null;
   const cleaned = String(text || "").trim();
 
+  // Detect explicit "salir" / "cancelar" / "no quiero"
+  if (/^(salir|cancelar|no\s*quiero|ninguna|no\s*gracias)$/i.test(cleaned)) {
+    return { exit: true };
+  }
+
   // Match patterns: "1", "la 1", "opcion 1", "hora 1", "numero 1", "quiero la 1", etc.
   const numberMatch = cleaned.match(/(?:^|\s)(\d)(?:\s|$|[.,;!?])/);
   const directMatch = cleaned.match(/^(\d)$/);
@@ -429,6 +435,12 @@ function detectBookingSlotChoice(text, availableSlots) {
   if (!choiceStr) return null;
 
   const index = parseInt(choiceStr, 10) - 1;
+
+  // The "Salir" option is slots.length (last number in the list)
+  if (index === availableSlots.length) {
+    return { exit: true };
+  }
+
   if (index < 0 || index >= availableSlots.length) return null;
 
   return { index, slot: availableSlots[index] };
@@ -1022,6 +1034,18 @@ function cleanupRecentMap(map, ttlMs) {
       map.delete(key);
     }
   }
+}
+
+// Per-conversation mutex: ensures only one message is processed at a time per conversation.
+// Prevents race conditions when the user sends multiple messages rapidly.
+function acquireConversationLock(conversationId) {
+  const existing = conversationProcessingLocks.get(conversationId) || Promise.resolve();
+  let releaseFn;
+  const newLock = new Promise((resolve) => { releaseFn = resolve; });
+  // Chain: wait for previous processing to finish before this one starts
+  const ready = existing.then(() => {});
+  conversationProcessingLocks.set(conversationId, newLock);
+  return { ready, release: releaseFn };
 }
 
 function fingerprintReplyText(value) {
@@ -3829,6 +3853,16 @@ app.post("/messages", async (req, res) => {
       return res.json({ ok: true, skipped: "payload_not_parsed_yet" });
     }
 
+    // Serialize user message processing per conversation to prevent race conditions.
+    // Without this, multiple rapid messages (e.g. data + RUT) process concurrently,
+    // causing stale state reads and conflicting bot responses.
+    const convLock = acquireConversationLock(conversationId);
+    await convLock.ready;
+    try {
+    // Re-hydrate state after acquiring lock — a prior message may have updated it
+    await hydrateConversationCache(conversationId);
+    Object.assign(state, getConversationState(conversationId));
+
     if (isRecentOutboundEcho(state, userText)) {
       await saveConversationEvent({
         conversationId,
@@ -4027,6 +4061,29 @@ app.post("/messages", async (req, res) => {
     }
     if (state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
       const choice = detectBookingSlotChoice(userText, state.booking.pendingSlots);
+      if (choice && choice.exit) {
+        // User chose "Salir" — clear booking state entirely
+        console.log("Antonia booking: patient chose to exit slot selection");
+        state.booking.pendingSlots = null;
+        state.booking.pendingProfessional = null;
+        state.booking.pendingSpecialty = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "Entendido, cancelé la reserva. Si necesitas algo más, quedo atenta.",
+          kind: "antonia_booking_exit",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_cancelled",
+            reason: "Patient chose to exit/cancel slot selection"
+          }
+        }));
+      }
       if (choice) {
         console.log("Antonia booking: patient chose slot", choice.index + 1, safeJson(choice.slot));
         state.booking.chosenSlot = choice.slot;
@@ -4110,6 +4167,72 @@ app.post("/messages", async (req, res) => {
             }
           }));
         }
+      } else {
+        // User sent non-slot text while awaitingSlotChoice — data was already captured by updateDraftsFromText.
+        // The Playwright worker needs ALL patient data to fill the Medinet form.
+        // Check if data is complete: if yes → present slots; if no → ask for missing fields.
+        const patientData = buildPatientDataFromState(state);
+        const missing = getMissingBookingFields(patientData);
+        const professional = state.booking.pendingProfessional || "el profesional";
+
+        if (missing.length > 0) {
+          // Still missing data — ask for it within the booking context (don't fall to generic resolver)
+          console.log("Booking: awaitingSlotChoice, collecting missing data before presenting slots:", missing.map(f => f.key).join(", "));
+          // Reset reminder counter since we're still collecting data
+          state.booking.slotReminderSent = false;
+          const missingLabels = missing.map((f) => f.label).join(", ");
+          const collectReply = `Gracias por la información. Para poder agendar con ${professional} necesito además: ${missingLabels}.`;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: collectReply,
+            kind: "antonia_booking_collect_before_slots",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "collect_patient_data_before_slots",
+              reason: `Booking: awaiting slot choice but missing patient data: ${missing.map(f => f.key).join(", ")}`
+            }
+          }));
+        }
+
+        // All data complete — present or remind slots, then exit silently on 2nd non-choice text
+        if (!state.booking.slotReminderSent) {
+          // First time with complete data + non-slot text: present slots once
+          console.log("Booking: all patient data complete, presenting slots for first time");
+          state.booking.slotReminderSent = true;
+          const specialty = state.booking.pendingSpecialty || "";
+          const slotLines = state.booking.pendingSlots.map((s, i) => `${i + 1}- ${s.date || s.dataDia} a las ${s.time}`).join("\n");
+          const exitOption = `${state.booking.pendingSlots.length + 1}- Salir`;
+          const reshowReply = `Perfecto, tengo todos tus datos. Estas son las horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:\n${slotLines}\n${exitOption}\n\nElige el número de la hora que prefieres para agendar.`;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: reshowReply,
+            kind: "antonia_reshow_slots_after_data",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "reshow_pending_slots",
+              reason: "All patient data complete; presenting available slots for selection"
+            }
+          }));
+        }
+
+        // Second non-slot text after reminder — user isn't engaging with slots.
+        // Silently exit booking flow and let the normal resolver handle the message.
+        console.log("Booking: patient sent non-slot text twice after slot reminder, exiting booking flow silently");
+        state.booking.pendingSlots = null;
+        state.booking.pendingProfessional = null;
+        state.booking.pendingSpecialty = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        state.booking.slotReminderSent = false;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        // Fall through to normal resolver processing below
       }
     }
 
@@ -4297,8 +4420,10 @@ app.post("/messages", async (req, res) => {
         const professional = state.booking.pendingProfessional || "el profesional";
         const specialty = state.booking.pendingSpecialty || "";
         const slotLines = state.booking.pendingSlots.map((s, i) => `${i + 1}- ${s.date || s.dataDia} a las ${s.time}`).join("\n");
-        const reshowReply = `Estas son las horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:\n${slotLines}\n\nIndícame el número de la hora que prefieres.`;
+        const exitOption = `${state.booking.pendingSlots.length + 1}- Salir`;
+        const reshowReply = `Estas son las horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:\n${slotLines}\n${exitOption}\n\nElige el número de la hora que prefieres para agendar.`;
         state.booking.awaitingSlotChoice = true;
+        state.booking.slotReminderSent = false;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -4399,6 +4524,7 @@ app.post("/messages", async (req, res) => {
             state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
+            state.booking.slotReminderSent = false;
             await persistConversationSnapshot(conversationId, state, channelLabel);
           }
           addToHistory(conversationId, "user", userText);
@@ -4820,6 +4946,7 @@ app.post("/messages", async (req, res) => {
             state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
+            state.booking.slotReminderSent = false;
             await persistConversationSnapshot(conversationId, state, channelLabel);
           }
           return res.json(await sendManagedReply({
@@ -4923,6 +5050,10 @@ app.post("/messages", async (req, res) => {
     }
 
     return res.json(openAiResult);
+    } finally {
+      // Release per-conversation lock so the next queued message can proceed
+      convLock.release();
+    }
   } catch (error) {
     console.error("ERROR /messages:", error.message);
     return res.status(500).json({ ok: false, error: error.message });

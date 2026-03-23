@@ -88,8 +88,9 @@ function buildPatientReply(professional, specialty, slots) {
   return [
     `Tengo estas horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ''}:`,
     ...slots.map((slot, i) => `${i + 1}- ${slot.date} a las ${slot.time}`),
+    `${slots.length + 1}- Salir`,
     '',
-    'Si deseas agendar, indícame el número de la hora que prefieres y te ayudo a reservar.',
+    'Elige el número de la hora que prefieres para agendar.',
   ].join('\n');
 }
 
