@@ -3414,9 +3414,10 @@ app.post("/debug/reset/:conversationId", requireDebugKey, async (req, res) => {
     const { conversationId } = req.params;
     conversationStates.delete(conversationId);
     conversationHistory.delete(conversationId);
-    if (dbEnabled()) {
-      await getPool().query("DELETE FROM conversations WHERE conversation_id = $1", [conversationId]);
-      await getPool().query("DELETE FROM conversation_messages WHERE conversation_id = $1", [conversationId]);
+    const pool = getDebugPool();
+    if (pool) {
+      await pool.query("DELETE FROM conversations WHERE conversation_id = $1", [conversationId]);
+      await pool.query("DELETE FROM conversation_messages WHERE conversation_id = $1", [conversationId]);
     }
     console.log(`RESET conversation ${conversationId}`);
     return res.json({ ok: true, reset: conversationId });
