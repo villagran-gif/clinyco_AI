@@ -1,7 +1,51 @@
+create table if not exists customers (
+  id bigserial primary key,
+  rut text,
+  whatsapp_phone text,
+  nombres text,
+  apellidos text,
+  email text,
+  fecha_nacimiento date,
+  aseguradora text,
+  modalidad text,
+  direccion text,
+  comuna text,
+  telefono_principal text,
+  ultimo_procedimiento text,
+  peso numeric(6,2),
+  altura_cm integer,
+  imc numeric(5,2),
+  categoria_imc text,
+  total_conversaciones integer not null default 0,
+  primera_conversacion_at timestamptz,
+  ultima_conversacion_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists customer_channels (
+  id bigserial primary key,
+  customer_id bigint not null references customers(id) on delete cascade,
+  channel_type text not null,
+  channel_value text,
+  is_primary boolean not null default false,
+  verified boolean not null default false,
+  source_system text,
+  external_id text,
+  metadata_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists conversations (
   id bigserial primary key,
   conversation_id text not null unique,
+  customer_id bigint references customers(id) on delete set null,
   channel text,
+  channel_external_id text,
+  channel_display_name text,
+  source_profile_name text,
+  whatsapp_phone text,
   ai_enabled boolean not null default true,
   human_taken_over boolean not null default false,
   assignee_id text,
@@ -49,9 +93,46 @@ create table if not exists structured_leads (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists customer_conversation_summaries (
+  id bigserial primary key,
+  customer_id bigint not null references customers(id) on delete cascade,
+  conversation_id text not null references conversations(conversation_id) on delete cascade,
+  canal text,
+  procedimiento text,
+  stage_final text,
+  outcome text,
+  key_facts jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 create unique index if not exists conversation_messages_unique_message
 on conversation_messages (conversation_id, message_id, role)
 where message_id is not null;
 
 create index if not exists conversation_messages_conversation_created_idx
 on conversation_messages (conversation_id, created_at desc);
+
+create unique index if not exists customers_rut_unique_idx
+on customers (rut)
+where rut is not null;
+
+create unique index if not exists customers_whatsapp_phone_unique_idx
+on customers (whatsapp_phone)
+where whatsapp_phone is not null;
+
+create unique index if not exists customer_channels_value_unique_idx
+on customer_channels (channel_type, channel_value)
+where channel_value is not null;
+
+create unique index if not exists customer_channels_external_unique_idx
+on customer_channels (source_system, external_id)
+where source_system is not null and external_id is not null;
+
+create index if not exists conversations_customer_id_idx
+on conversations (customer_id);
+
+create index if not exists customer_conversation_summaries_customer_id_idx
+on customer_conversation_summaries (customer_id, created_at desc);
+
+create unique index if not exists customer_conversation_summaries_conversation_unique_idx
+on customer_conversation_summaries (conversation_id);

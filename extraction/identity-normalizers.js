@@ -3,8 +3,10 @@ import { normalizeKey, normalizeSpaces, titleCaseWords } from "../utils/text.js"
 export function normalizePhone(raw) {
   const value = String(raw || "").trim();
   if (!value) return null;
+
   const digits = value.replace(/\D/g, "");
   if (!digits) return null;
+
   if (digits.startsWith("56") && digits.length >= 11) return `+${digits}`;
   if (digits.startsWith("9") && digits.length === 9) return `+56${digits}`;
   if (digits.length >= 8 && digits.length <= 15) return value.startsWith("+") ? value : `+${digits}`;
@@ -23,19 +25,62 @@ export function extractPhone(text) {
   return normalizePhone(matches[0]);
 }
 
+function computeRutVerifierDigit(bodyDigits) {
+  const digits = String(bodyDigits || "").replace(/\D/g, "");
+  if (!digits) return null;
+
+  let factor = 2;
+  let total = 0;
+
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    total += Number(digits[index]) * factor;
+    factor = factor === 7 ? 2 : factor + 1;
+  }
+
+  const remainder = 11 - (total % 11);
+  if (remainder === 11) return "0";
+  if (remainder === 10) return "K";
+  return String(remainder);
+}
+
+export function validateRut(value) {
+  const raw = String(value || "").replace(/[^0-9kK]/g, "").toUpperCase();
+  if (raw.length < 8 || raw.length > 9) return false;
+
+  const body = raw.slice(0, -1);
+  const dv = raw.slice(-1);
+  if (!/^\d{7,8}$/.test(body)) return false;
+
+  return computeRutVerifierDigit(body) === dv;
+}
+
+export function normalizeRut(value) {
+  const raw = String(value || "").replace(/[^0-9kK]/g, "").toUpperCase();
+  if (!validateRut(raw)) return null;
+  return `${raw.slice(0, -1)}-${raw.slice(-1)}`;
+}
+
 export function extractRut(text) {
   const source = String(text || "").toUpperCase();
-  const match = source.match(/\b(\d{7,8})[-\s.]?([\dK])\b/);
-  if (!match) return null;
-  return `${match[1]}-${match[2]}`;
+  const matches = source.match(/\b\d{1,2}[.]?\d{3}[.]?\d{3}[-\s.]?[\dK]\b/g) || [];
+
+  for (const candidate of matches) {
+    const normalized = normalizeRut(candidate);
+    if (normalized) return normalized;
+  }
+
+  return null;
 }
 
 export function formatRutHuman(rut) {
-  const clean = String(rut || "").replace(/[^0-9Kk]/g, "").toUpperCase();
-  if (clean.length < 2) return null;
+  const normalized = normalizeRut(rut);
+  if (!normalized) return null;
+
+  const clean = normalized.replace(/[^0-9K]/g, "");
   const body = clean.slice(0, -1);
   const dv = clean.slice(-1);
-  return `${body}-${dv}`;
+  const withDots = body.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${withDots}-${dv}`;
 }
 
 export function splitNames(value) {
