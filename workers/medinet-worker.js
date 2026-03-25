@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { accessSync, constants as fsConstants } from "fs";
 import {
   checkCupos,
+  searchSlotsNoAuth,
   searchSlotsViaApi,
   bookAppointmentForPatient,
   formatRutWithDots,
@@ -105,15 +106,26 @@ app.post("/medinet/api/search", authMiddleware, async (req, res) => {
     const rut = formatRutWithDots(patientRut || MEDINET_RUT);
     const branch = Number(branchId || DEFAULT_BRANCH_ID);
 
-    // Check cupos in parallel with slot search
+    // Check cupos in parallel with no-auth slot search
     const [cuposResult, searchResult] = await Promise.all([
       checkCupos(branch, rut).catch((e) => ({ status: false, mensaje: e.message })),
-      searchSlotsViaApi({ query, branchId: branch }),
+      searchSlotsNoAuth({ query, branchId: branch }).catch((e) => {
+        console.log("[medinet-worker] noauth search failed, trying auth:", e.message);
+        return null;
+      }),
     ]);
 
+    // Fall back to auth-based search if no-auth returned no slots
+    const finalResult = (searchResult?.available_slots?.length > 0)
+      ? searchResult
+      : await searchSlotsViaApi({ query, branchId: branch }).catch((e) => {
+          console.log("[medinet-worker] auth search also failed:", e.message);
+          return searchResult || { source: "api_noauth", available_slots: [], patient_reply: null };
+        });
+
     return res.json({
-      ...searchResult,
-      source: "antonia_api_search",
+      ...finalResult,
+      source: finalResult.source || "antonia_api_search",
       cupos: cuposResult,
     });
   } catch (error) {
