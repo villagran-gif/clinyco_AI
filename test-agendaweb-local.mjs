@@ -1,12 +1,13 @@
 /**
- * Test local: bookAgendaweb con dos RUTs nuevos.
+ * Test local: bookAgendaweb con dos RUTs.
  *
  * Flujo:
- *   1. checkCupos → confirmar paciente_existe y puede_agendar
+ *   1. checkCupos → confirmar puede_agendar (paciente nuevo = sí puede)
  *   2. fetchAvailableSlots → obtener un slot libre
- *   3. bookAgendaweb → agendar
+ *   3. bookAgendaweb → agendar con campos personales vacíos
  *
- * Uso: node test-agendaweb-local.mjs
+ * Uso:
+ *   MEDINET_API_TOKEN=64c8840eeb9675d6b9427f8fe37751d007e62086 node test-agendaweb-local.mjs
  */
 import {
   checkCupos,
@@ -21,10 +22,10 @@ const PROFESIONAL = 69;      // Cerquera Magaly
 const TIPO_CITA = 6;
 const DURACION = 30;
 
-// Dos RUTs de prueba (ajustar si necesario)
+// Dos RUTs de prueba
 const TEST_RUTS = [
-  { rut: "23.754.493-5", label: "RUT A" },
-  { rut: "6.469.664-5",  label: "RUT B" },
+  { rut: "23.754.493-5", label: "RUT A (nuevo)" },
+  { rut: "6.469.664-5",  label: "RUT B (existente)" },
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -50,16 +51,28 @@ async function testRut({ rut, label }) {
   const cupos = await checkCupos(BRANCH, rut);
   console.log("   →", JSON.stringify(cupos));
 
-  if (!cupos.puede_agendar) {
-    console.log("   ✗ No puede agendar, saltando.");
-    return { rut, label, result: "no_puede_agendar", cupos };
+  // Paciente nuevo no devuelve puede_agendar, pero sí puede agendar
+  const puedeAgendar = cupos.puede_agendar === true || cupos.puede_agendar === undefined;
+  const pacienteExiste = cupos.paciente_existe === true;
+
+  if (!puedeAgendar) {
+    console.log("   ✗ No puede agendar (cupos agotados), saltando.");
+    return { rut, label, result: "no_puede_agendar", pacienteExiste, cupos };
   }
+
+  console.log(`   → paciente_existe=${pacienteExiste}, puede_agendar=true`);
 
   // 2. Buscar slots
   console.log("\n2) fetchAvailableSlots...");
-  const desde = today();
-  const hasta = futureDate(14);
-  const slots = await fetchAvailableSlots(BRANCH, ESPECIALIDAD, PROFESIONAL, desde, hasta, TIPO_CITA);
+  let slots;
+  try {
+    const desde = today();
+    const hasta = futureDate(14);
+    slots = await fetchAvailableSlots(BRANCH, ESPECIALIDAD, PROFESIONAL, desde, hasta, TIPO_CITA);
+  } catch (err) {
+    console.log("   ✗ ERROR buscando slots:", err.message);
+    return { rut, label, result: "error_slots", error: err.message, pacienteExiste };
+  }
 
   // slots suele ser un array de objetos con fecha/hora
   const allSlots = Array.isArray(slots) ? slots : (slots?.cupos || slots?.data || []);
@@ -79,7 +92,7 @@ async function testRut({ rut, label }) {
   if (flatSlots.length === 0) {
     console.log("   Raw slots response:", JSON.stringify(slots).slice(0, 500));
     console.log("   ✗ No hay slots disponibles.");
-    return { rut, label, result: "sin_slots", slots };
+    return { rut, label, result: "sin_slots", pacienteExiste };
   }
 
   // Tomar el primer slot disponible
@@ -100,19 +113,25 @@ async function testRut({ rut, label }) {
       ubicacion: BRANCH,
       email: "",
       telefono: "",
-      pacienteExiste: cupos.paciente_existe,
+      pacienteExiste,
     });
     console.log("   →", JSON.stringify(res));
     const ok = res.status === "agendado_correctamente";
     console.log(ok ? "   ✓ ÉXITO" : `   ✗ FALLO: ${res.status}`);
-    return { rut, label, result: res.status, pacienteExiste: cupos.paciente_existe };
+    return { rut, label, result: res.status, pacienteExiste };
   } catch (err) {
     console.log("   ✗ ERROR:", err.message);
-    return { rut, label, result: "error", error: err.message, pacienteExiste: cupos.paciente_existe };
+    return { rut, label, result: "error", error: err.message, pacienteExiste };
   }
 }
 
 // ─── Run ─────────────────────────────────────────────────────
+if (!process.env.MEDINET_API_TOKEN) {
+  console.error("ERROR: Falta MEDINET_API_TOKEN. Ejecuta así:");
+  console.error("  MEDINET_API_TOKEN=64c8840eeb9675d6b9427f8fe37751d007e62086 node test-agendaweb-local.mjs");
+  process.exit(1);
+}
+
 console.log("╔══════════════════════════════════════════════════════════╗");
 console.log("║  Test agendaweb-add: campos personales siempre vacíos  ║");
 console.log("╚══════════════════════════════════════════════════════════╝");
