@@ -1354,10 +1354,32 @@ async function searchAndBook() {
 
       await page.locator('button.btn-comprobar-cita:visible').first().click();
       await pauseStep();
-      await page.waitForTimeout(4000);
 
-      // Check for form validation errors after clicking Enviar
-      const postSubmitErrors = await page.evaluate(() => {
+      // Wait for confirm button to appear (Medinet loads a new screen after "Enviar")
+      // Poll up to 15 seconds for the confirm button or an error
+      let hasConfirmButton = false;
+      let postSubmitErrors = { errors: [], step: '' };
+      const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
+      const altConfirmButton = page.locator('button.btn-confirmar:visible, button:has-text("Confirmar Reserva"):visible').first();
+
+      for (let pollWait = 0; pollWait < 15; pollWait++) {
+        await page.waitForTimeout(1000);
+        hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
+        if (hasConfirmButton) break;
+        const hasAlt = await altConfirmButton.isVisible().catch(() => false);
+        if (hasAlt) { hasConfirmButton = true; break; }
+        // Check if form errors appeared (means we're still on the form screen)
+        const errCount = await page.evaluate(() => {
+          return document.querySelectorAll('.text-danger:not(:empty), .alert-danger, .has-error').length;
+        }).catch(() => 0);
+        if (errCount > 0) {
+          console.error(`FORM_ERRORS_DETECTED after ${pollWait + 1}s, stopping wait`);
+          break;
+        }
+      }
+
+      // Capture form state for debugging
+      postSubmitErrors = await page.evaluate(() => {
         const errors = Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger, .has-error, [class*="error"]'))
           .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
           .filter(Boolean);
@@ -1366,46 +1388,57 @@ async function searchAndBook() {
           .filter(Boolean);
         const currentStep = document.querySelector('.step.active, .stepper-step.active, [class*="step"][class*="active"]');
         const stepText = currentStep ? (currentStep.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 100) : 'no-active-step';
-        return { errors: [...errors, ...alerts].slice(0, 8), step: stepText };
-      }).catch(() => ({ errors: [], step: 'eval-failed' }));
+        const bodySnippet = (document.body?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+        return { errors: [...errors, ...alerts].slice(0, 8), step: stepText, bodySnippet };
+      }).catch(() => ({ errors: [], step: 'eval-failed', bodySnippet: '' }));
       if (postSubmitErrors.errors.length) {
         console.error('POST_SUBMIT_ERRORS:', JSON.stringify(postSubmitErrors));
       }
       console.error('POST_SUBMIT_STEP:', postSubmitErrors.step);
-
-      const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
-      const hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
       console.error('CONFIRM_BUTTON_VISIBLE:', hasConfirmButton);
+
       if (hasConfirmButton) {
-        await confirmarButton.click();
-      } else {
-        // Also try broader confirm button selectors
-        const altConfirmButton = page.locator('button.btn-confirmar:visible, button:has-text("Confirmar"):visible').first();
-        const hasAltConfirm = await altConfirmButton.isVisible().catch(() => false);
-        if (hasAltConfirm) {
-          console.error('ALT_CONFIRM_BUTTON_FOUND');
-          await altConfirmButton.click();
+        // Try the specific confirmar button first, then the alt
+        const specificVisible = await confirmarButton.isVisible().catch(() => false);
+        if (specificVisible) {
+          await confirmarButton.click();
         } else {
-          const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
-            hasNotText: 'Volver',
-          }).first();
-          const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
-          if (!hasFallbackButton) {
-            const formErrors = await page.evaluate(() => {
+          await altConfirmButton.click();
+        }
+      } else {
+        // No confirm button found — check for any usable button
+        const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
+          hasNotText: 'Volver',
+        }).first();
+        const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
+        if (!hasFallbackButton) {
+          const formErrors = postSubmitErrors.errors.length > 0
+            ? postSubmitErrors.errors
+            : await page.evaluate(() => {
               return Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger'))
                 .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
                 .filter(Boolean)
                 .slice(0, 5);
             }).catch(() => []);
-            throw new Error(`No apareció un botón util para confirmar reserva. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : ''}`.trim());
-          }
-          await fallbackButton.click();
+          throw new Error(`No apareció botón confirmar después de enviar. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : `Body: ${(postSubmitErrors.bodySnippet || '').slice(0, 200)}`}`.trim());
         }
+        await fallbackButton.click();
       }
       confirmClicked = true;
       await pauseStep();
 
-      await page.waitForTimeout(3000);
+      // Wait for success screen to load after clicking Confirmar
+      // Poll up to 10 seconds for the success div or completion
+      for (let sw = 0; sw < 10; sw++) {
+        await page.waitForTimeout(1000);
+        const done = await page.evaluate(() => {
+          const successDiv = document.querySelector('.validacion-completada');
+          if (!successDiv) return false;
+          const style = window.getComputedStyle(successDiv);
+          return style.display !== 'none' && style.visibility !== 'hidden';
+        }).catch(() => false);
+        if (done) break;
+      }
 
       successResult = await page.evaluate(({ expectedEmail }) => {
         const successDiv = document.querySelector('.validacion-completada');
