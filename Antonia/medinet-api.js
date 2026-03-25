@@ -37,6 +37,9 @@
  *   GET  /api/transversal/sucursal/list/                                   → branch list
  *   GET  /api/transversal/prevision/                                       → insurance list
  *   GET  /api/pacientes/existe-run/                                        → check patient by RUT
+ *   GET  /api/agenda/citas/proximos-cupos-all/{ubi}/                        → all profs + next slots (NO AUTH)
+ *   GET  /api/agenda/citas/proximos-cupos/{ubi}/{esp}/                     → profs + next slots by specialty (NO AUTH)
+ *   GET  /api/especialidad/get_por_ubicacion/{ubi}/                        → specialties by branch (NO AUTH)
  *   GET  /api/agenda/citas/get-check-cupos/{ubi}/?identifier={rut}          → check cupos (NO AUTH)
  *   POST /api/agenda/citas/agendaweb-add/                                  → book via agendaweb (NO AUTH, form-urlencoded)
  *   POST /api-public/schedule/appointment/add-overschedule/                → book (public API)
@@ -429,15 +432,38 @@ export async function bookAgendaweb({ slot, especialidad, tipocita, ubicacion, p
 }
 
 /**
- * Full API-only search + book flow. No auth/token required.
- * 1. checkCupos → paciente_existe?
- * 2. fetchAvailableSlots (via noAuthFetch) → available slots
- * 3. bookAgendaweb → confirm booking
+ * Full API-only slot search. No auth required.
+ * Returns ALL professionals + next available slots for a branch.
+ * Response: [{ id, nombres, paterno, especialidad, especialidad_id, tipo_cita,
+ *   duracion_cita, avatar_url, agendaweb_alert, is_resource,
+ *   cupos: [{ fecha: "YYYY-MM-DD", horas: ["HH:MM", ...] }] }]
  */
-export async function searchSlotsNoAuth({ ubicacionId, especialidadId, profesionalId, fechaDesde, fechaHasta, tipocitaId }) {
+export async function fetchProximosCuposAll(ubicacionId) {
   return noAuthFetch(
-    `/api/agenda/citas/cupos-disponibles/${ubicacionId}/${especialidadId}/${profesionalId}/${fechaDesde}/${fechaHasta}/${tipocitaId}/`,
+    `/api/agenda/citas/proximos-cupos-all/${ubicacionId}/`,
     { timeout: 20000 }
+  );
+}
+
+/**
+ * Slot search filtered by specialty. No auth required.
+ * Same response shape as proximos-cupos-all but filtered to one specialty.
+ */
+export async function fetchProximosCupos(ubicacionId, especialidadId) {
+  return noAuthFetch(
+    `/api/agenda/citas/proximos-cupos/${ubicacionId}/${especialidadId}/`,
+    { timeout: 20000 }
+  );
+}
+
+/**
+ * Fetch specialties for a branch. No auth required.
+ * Response: [{ id, nombre, ubicaciones, ... }]
+ */
+export async function fetchSpecialtiesByBranchNoAuth(ubicacionId) {
+  return noAuthFetch(
+    `/api/especialidad/get_por_ubicacion/${ubicacionId}/`,
+    { timeout: 10000 }
   );
 }
 
