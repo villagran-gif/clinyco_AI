@@ -3,6 +3,13 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { fileURLToPath } from "url";
 import { accessSync, constants as fsConstants } from "fs";
+import {
+  checkCupos,
+  searchSlotsViaApi,
+  bookAppointmentForPatient,
+  formatRutWithDots,
+  DEFAULT_BRANCH_ID,
+} from "../Antonia/medinet-api.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +33,7 @@ function resolveScript() {
 
 const SCRIPT = resolveScript();
 
-const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 120000, search_and_book: 180000 };
+const DEFAULT_TIMEOUTS = { cache: 60000, search: 45000, book: 120000, search_and_book: 180000, book_api: 15000, search_api: 15000 };
 
 const app = express();
 app.use(express.json());
@@ -83,6 +90,90 @@ function buildEnv(action, payload) {
 
   return null;
 }
+
+// ─── API-only endpoints (no Puppeteer, instant response) ──────
+
+/**
+ * Search for slots via pure API (no browser).
+ * POST /medinet/api/search { query, patientRut, branchId? }
+ */
+app.post("/medinet/api/search", authMiddleware, async (req, res) => {
+  const { query, patientRut, branchId } = req.body || {};
+  if (!query) return res.status(400).json({ error: "query is required" });
+
+  try {
+    const rut = formatRutWithDots(patientRut || MEDINET_RUT);
+    const branch = Number(branchId || DEFAULT_BRANCH_ID);
+
+    // Check cupos in parallel with slot search
+    const [cuposResult, searchResult] = await Promise.all([
+      checkCupos(branch, rut).catch((e) => ({ status: false, mensaje: e.message })),
+      searchSlotsViaApi({ query, branchId: branch }),
+    ]);
+
+    return res.json({
+      ...searchResult,
+      source: "antonia_api_search",
+      cupos: cuposResult,
+    });
+  } catch (error) {
+    console.error("[medinet-worker] api/search error:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Book a slot via pure API (no browser).
+ * POST /medinet/api/book { slot, patientData, branchId? }
+ *
+ * slot: { professionalId, dataDia, time, duration, specialtyId, tipoCitaId }
+ * patientData: { run, email, fono, nombres?, apPaterno?, apMaterno?, direccion?, sexo?, fechaNacimiento?, prevision? }
+ */
+app.post("/medinet/api/book", authMiddleware, async (req, res) => {
+  const { slot, patientData = {}, branchId } = req.body || {};
+
+  if (!slot?.professionalId || !slot?.dataDia || !slot?.time) {
+    return res.status(400).json({ error: "slot.professionalId, slot.dataDia, and slot.time are required" });
+  }
+
+  const rut = formatRutWithDots(patientData.run || patientData.rut || MEDINET_RUT);
+  const branch = Number(branchId || DEFAULT_BRANCH_ID);
+
+  try {
+    // Step 1: Check cupos and whether patient exists
+    const cupos = await checkCupos(branch, rut).catch(() => null);
+
+    if (cupos && !cupos.puede_agendar) {
+      return res.json({
+        source: "antonia_api_book",
+        success: false,
+        message: cupos.mensaje || "El paciente no puede agendar.",
+        patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
+      });
+    }
+
+    const pacienteExiste = cupos?.paciente_existe !== false;
+
+    // Step 2: Book via API (3-tier: agendaweb → chatbot → overschedule)
+    const result = await bookAppointmentForPatient({
+      slot,
+      patientData: { ...patientData, run: rut },
+      branchId: branch,
+      pacienteExiste,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error("[medinet-worker] api/book error:", error.message);
+    return res.status(500).json({
+      source: "antonia_api_book",
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// ─── Legacy Puppeteer-based endpoints ─────────────────────────
 
 app.post("/medinet/run", authMiddleware, async (req, res) => {
   const { action, payload = {} } = req.body || {};

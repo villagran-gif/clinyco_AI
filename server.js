@@ -41,6 +41,7 @@ import {
   fetchSpecialtiesForProfessional as apiFetchSpecialtiesForProfessional,
   formatRutWithDots,
   bookAppointmentForPatient as apiBookAppointment,
+  checkCupos,
 } from "./Antonia/medinet-api.js";
 
 const app = express();
@@ -419,10 +420,26 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   if (process.env.MEDINET_API_TOKEN) {
     try {
       console.log("[medinet-api] Booking via REST API:", slot.professionalId, slot.dataDia, slot.time);
+      // Check cupos to determine if patient exists (controls form field strategy)
+      const rut = formatRutWithDots(patientData.rut || patientData.run || "");
+      let pacienteExiste = true; // default safe assumption
+      if (rut) {
+        const cupos = await checkCupos(39, rut).catch(() => null);
+        if (cupos && !cupos.puede_agendar) {
+          return {
+            source: "antonia_api_cupos_check",
+            success: false,
+            message: cupos.mensaje || "El paciente no puede agendar.",
+            patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
+          };
+        }
+        if (cupos) pacienteExiste = cupos.paciente_existe !== false;
+      }
       const apiResult = await apiBookAppointment({
         slot,
-        patientData,
+        patientData: { ...patientData, run: rut },
         branchId: 39,
+        pacienteExiste,
       });
       if (apiResult?.success) {
         console.log("[medinet-api] API booking succeeded:", apiResult.appointmentId);
