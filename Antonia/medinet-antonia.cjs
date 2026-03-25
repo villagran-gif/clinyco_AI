@@ -1341,29 +1341,66 @@ async function searchAndBook() {
       await clickRequestedSlot();
       await fillPatientForm();
 
+      // Capture form field values before clicking Enviar for debugging
+      const preSubmitState = await page.evaluate(() => {
+        const fields = {};
+        for (const id of ['paciente_nombres', 'paciente_ap_paterno', 'paciente_ap_materno', 'paciente_email', 'paciente_fono', 'paciente_direccion', 'paciente_prevision', 'paciente_nacimiento', 'paciente_sexo', 'paciente_rut']) {
+          const el = document.querySelector(`#${id}`);
+          if (el) fields[id] = el.value || '(empty)';
+        }
+        return fields;
+      }).catch(() => ({}));
+      console.error('PRE_SUBMIT_FIELDS:', JSON.stringify(preSubmitState));
+
       await page.locator('button.btn-comprobar-cita:visible').first().click();
       await pauseStep();
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(4000);
+
+      // Check for form validation errors after clicking Enviar
+      const postSubmitErrors = await page.evaluate(() => {
+        const errors = Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger, .has-error, [class*="error"]'))
+          .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        const alerts = Array.from(document.querySelectorAll('.alert'))
+          .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        const currentStep = document.querySelector('.step.active, .stepper-step.active, [class*="step"][class*="active"]');
+        const stepText = currentStep ? (currentStep.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 100) : 'no-active-step';
+        return { errors: [...errors, ...alerts].slice(0, 8), step: stepText };
+      }).catch(() => ({ errors: [], step: 'eval-failed' }));
+      if (postSubmitErrors.errors.length) {
+        console.error('POST_SUBMIT_ERRORS:', JSON.stringify(postSubmitErrors));
+      }
+      console.error('POST_SUBMIT_STEP:', postSubmitErrors.step);
 
       const confirmarButton = page.locator('button.btn.btn-confirmar[onclick="controlStepper(4, 0)"]:visible').first();
       const hasConfirmButton = await confirmarButton.isVisible().catch(() => false);
+      console.error('CONFIRM_BUTTON_VISIBLE:', hasConfirmButton);
       if (hasConfirmButton) {
         await confirmarButton.click();
       } else {
-        const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
-          hasNotText: 'Volver',
-        }).first();
-        const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
-        if (!hasFallbackButton) {
-          const formErrors = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger'))
-              .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
-              .filter(Boolean)
-              .slice(0, 5);
-          }).catch(() => []);
-          throw new Error(`No apareció un botón util para confirmar reserva. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : ''}`.trim());
+        // Also try broader confirm button selectors
+        const altConfirmButton = page.locator('button.btn-confirmar:visible, button:has-text("Confirmar"):visible').first();
+        const hasAltConfirm = await altConfirmButton.isVisible().catch(() => false);
+        if (hasAltConfirm) {
+          console.error('ALT_CONFIRM_BUTTON_FOUND');
+          await altConfirmButton.click();
+        } else {
+          const fallbackButton = page.locator('button:visible:not(.btn-volver)').filter({
+            hasNotText: 'Volver',
+          }).first();
+          const hasFallbackButton = await fallbackButton.isVisible().catch(() => false);
+          if (!hasFallbackButton) {
+            const formErrors = await page.evaluate(() => {
+              return Array.from(document.querySelectorAll('.text-danger, .help-block, .invalid-feedback, .error, .alert-danger'))
+                .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+                .filter(Boolean)
+                .slice(0, 5);
+            }).catch(() => []);
+            throw new Error(`No apareció un botón util para confirmar reserva. ${formErrors.length ? `Errores: ${formErrors.join(' | ')}` : ''}`.trim());
+          }
+          await fallbackButton.click();
         }
-        await fallbackButton.click();
       }
       confirmClicked = true;
       await pauseStep();
@@ -1468,6 +1505,8 @@ async function searchAndBook() {
       confirmApiOk,
       apiBookingAccepted,
       confirmEvidence: confirmEvidence.slice(-6),
+      formFields: preSubmitState || {},
+      formErrors: postSubmitErrors?.errors || [],
       slotDate,
       slotTime,
       patient_reply: strictSuccess
