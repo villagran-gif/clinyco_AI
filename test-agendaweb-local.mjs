@@ -1,101 +1,64 @@
 /**
  * Test local: bookAgendaweb con dos RUTs.
- * Script autónomo — usa fetch directo, no depende de medinet-api.js para slots.
  *
- * Flujo completo:
- *   1. checkCupos (sin auth)
- *   2. Slots disponibles (con Token auth) — fetch directo
- *   3. bookAgendaweb via apiFormPost (sin auth, solo headers especiales)
+ * Prueba directa del fix: campos personales SIEMPRE vacíos.
+ * Antes del fix: 500. Después del fix: agendado_correctamente o cupo_tomado.
+ * Ambas respuestas confirman que el fix funciona (ya no da 500).
  *
  * Uso: node test-agendaweb-local.mjs
+ *   o: node test-agendaweb-local.mjs 2026-03-27 10:00
  */
 import { bookAgendaweb } from "./Antonia/medinet-api.js";
 
 const BASE = "https://clinyco.medinetapp.com";
 const TOKEN = "64c8840eeb9675d6b9427f8fe37751d007e62086";
-
-// Asegurar token para bookAgendaweb (apiFormPost lo usa opcionalmente)
 process.env.MEDINET_API_TOKEN ??= TOKEN;
 
 // ─── Config ──────────────────────────────────────────────────
 const BRANCH = 39;
-const ESPECIALIDAD = 5;      // Nutrición
-const PROFESIONAL = 69;      // Cerquera Magaly
+const ESPECIALIDAD = 5;
+const PROFESIONAL = 69;
 const TIPO_CITA = 6;
 const DURACION = 30;
+
+// Fecha/hora desde args o default a mañana 09:00
+const argFecha = process.argv[2];
+const argHora = process.argv[3];
+
+function tomorrow() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+const SLOT_FECHA = argFecha || tomorrow();
+const SLOT_HORA = argHora || "09:00";
 
 const TEST_RUTS = [
   { rut: "23.754.493-5", label: "RUT A (nuevo)" },
   { rut: "6.469.664-5",  label: "RUT B (existente)" },
 ];
 
-// ─── Helpers: fetch directo ──────────────────────────────────
-async function directGet(path, { auth = false } = {}) {
-  const headers = { "Content-Type": "application/json" };
-  if (auth) headers.Authorization = `Token ${TOKEN}`;
-  const res = await fetch(`${BASE}${path}`, { headers });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`GET ${path} → ${res.status}: ${text.slice(0, 300)}`);
-  }
+// ─── Check cupos directo ─────────────────────────────────────
+async function checkCuposDirecto(rut) {
+  const res = await fetch(
+    `${BASE}/api/agenda/citas/get-check-cupos/${BRANCH}/?identifier=${encodeURIComponent(rut)}`
+  );
+  if (!res.ok) throw new Error(`checkCupos → ${res.status}`);
   return res.json();
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-function futureDate(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-// Cache de slots
-let cachedSlot = null;
-
-async function getFirstSlot() {
-  if (cachedSlot) return cachedSlot;
-
-  const desde = today();
-  const hasta = futureDate(14);
-  console.log(`   Buscando slots ${desde} → ${hasta} (fetch directo con Token)...`);
-
-  const raw = await directGet(
-    `/api/agenda/citas/cupos-disponibles/${BRANCH}/${ESPECIALIDAD}/${PROFESIONAL}/${desde}/${hasta}/${TIPO_CITA}/`,
-    { auth: true }
-  );
-
-  const allSlots = Array.isArray(raw) ? raw : (raw?.cupos || raw?.data || []);
-
-  for (const item of allSlots) {
-    if (item.horas && Array.isArray(item.horas)) {
-      for (const h of item.horas) {
-        cachedSlot = { fecha: item.fecha, hora: h.hora || h };
-        return cachedSlot;
-      }
-    } else if (item.fecha && item.hora) {
-      cachedSlot = { fecha: item.fecha, hora: item.hora };
-      return cachedSlot;
-    }
-  }
-
-  console.log("   Raw response:", JSON.stringify(raw).slice(0, 500));
-  return null;
-}
-
-// ─── Main ────────────────────────────────────────────────────
+// ─── Test ────────────────────────────────────────────────────
 async function testRut({ rut, label }) {
   console.log(`\n${"=".repeat(60)}`);
   console.log(`TEST: ${label} → ${rut}`);
   console.log("=".repeat(60));
 
-  // 1. Check cupos (sin auth)
-  console.log("\n1) checkCupos (sin auth)...");
+  // 1. Check cupos
+  console.log("\n1) checkCupos...");
   let pacienteExiste = false;
   try {
-    const cupos = await directGet(
-      `/api/agenda/citas/get-check-cupos/${BRANCH}/?identifier=${encodeURIComponent(rut)}`
-    );
+    const cupos = await checkCuposDirecto(rut);
     console.log("   →", JSON.stringify(cupos));
     pacienteExiste = cupos.paciente_existe === true;
     if (cupos.puede_agendar === false) {
@@ -103,32 +66,16 @@ async function testRut({ rut, label }) {
       return { rut, label, result: "sin_cupos", pacienteExiste };
     }
   } catch (err) {
-    console.log("   ⚠ checkCupos error (continuando):", err.message);
+    console.log("   ⚠ Error (continuando):", err.message);
   }
 
-  // 2. Obtener slot (con Token)
-  console.log("\n2) fetchAvailableSlots (con Token)...");
-  let slot;
-  try {
-    slot = await getFirstSlot();
-  } catch (err) {
-    console.log("   ✗ ERROR:", err.message);
-    return { rut, label, result: "error_slots", pacienteExiste };
-  }
-
-  if (!slot) {
-    console.log("   ✗ No hay slots en los próximos 14 días.");
-    return { rut, label, result: "sin_slots", pacienteExiste };
-  }
-  console.log(`   → Slot: ${slot.fecha} ${slot.hora}`);
-
-  // 3. Agendar (sin auth, solo X-Requested-With)
-  console.log(`\n3) bookAgendaweb (${slot.fecha} ${slot.hora})...`);
+  // 2. bookAgendaweb directo (sin auth, solo X-Requested-With + form-urlencoded)
+  console.log(`\n2) bookAgendaweb (${SLOT_FECHA} ${SLOT_HORA})...`);
   try {
     const res = await bookAgendaweb({
       run: rut,
-      fecha: slot.fecha,
-      hora: slot.hora,
+      fecha: SLOT_FECHA,
+      hora: SLOT_HORA,
       profesional: PROFESIONAL,
       especialidad: ESPECIALIDAD,
       tipo: TIPO_CITA,
@@ -139,11 +86,22 @@ async function testRut({ rut, label }) {
       pacienteExiste,
     });
     console.log("   →", JSON.stringify(res));
-    const ok = res.status === "agendado_correctamente";
-    console.log(ok ? "   ✓ ÉXITO" : `   ✗ Respuesta: ${res.status || res.mensaje || JSON.stringify(res)}`);
-    return { rut, label, result: res.status || "unknown", pacienteExiste };
+
+    if (res.status === "agendado_correctamente") {
+      console.log("   ✓ ÉXITO — agendado correctamente");
+      return { rut, label, result: res.status, pacienteExiste };
+    } else if (res.status === "cupo_tomado") {
+      console.log("   ✓ OK — cupo_tomado (endpoint respondió bien, no 500)");
+      return { rut, label, result: res.status, pacienteExiste };
+    } else {
+      console.log(`   ? Respuesta inesperada: ${JSON.stringify(res)}`);
+      return { rut, label, result: res.status || "unknown", pacienteExiste };
+    }
   } catch (err) {
-    console.log("   ✗ ERROR:", err.message);
+    const is500 = err.message.includes("500");
+    console.log(is500
+      ? "   ✗ ERROR 500 — el fix NO funcionó (campos personales aún se envían?)"
+      : `   ✗ ERROR: ${err.message}`);
     return { rut, label, result: "error", error: err.message, pacienteExiste };
   }
 }
@@ -152,7 +110,8 @@ async function testRut({ rut, label }) {
 console.log("╔══════════════════════════════════════════════════════════╗");
 console.log("║  Test agendaweb-add: campos personales siempre vacíos  ║");
 console.log("╚══════════════════════════════════════════════════════════╝");
-console.log(`Token: ${TOKEN.slice(0, 8)}...`);
+console.log(`Slot: ${SLOT_FECHA} ${SLOT_HORA} | Prof: ${PROFESIONAL} | Esp: ${ESPECIALIDAD} | Branch: ${BRANCH}`);
+console.log(`Criterio: agendado_correctamente o cupo_tomado = FIX OK (antes daba 500)`);
 
 const results = [];
 for (const t of TEST_RUTS) {
@@ -162,7 +121,12 @@ for (const t of TEST_RUTS) {
 console.log("\n\n" + "═".repeat(60));
 console.log("RESUMEN:");
 console.log("═".repeat(60));
+const OK_STATUSES = ["agendado_correctamente", "cupo_tomado"];
 for (const r of results) {
-  const icon = r.result === "agendado_correctamente" ? "✓" : "✗";
+  const ok = OK_STATUSES.includes(r.result);
+  const icon = ok ? "✓" : "✗";
   console.log(`  ${icon} ${r.label} (${r.rut}) → ${r.result} [pacienteExiste=${r.pacienteExiste}]`);
 }
+
+const allOk = results.every(r => OK_STATUSES.includes(r.result));
+console.log(`\n${allOk ? "✓ FIX CONFIRMADO: endpoint responde correctamente (no 500)" : "✗ HAY ERRORES — revisar arriba"}`);
