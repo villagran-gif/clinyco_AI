@@ -1,18 +1,20 @@
 /**
  * Test local: bookAgendaweb con dos RUTs.
  *
- * Flujo simplificado:
- *   1. checkCupos → confirmar puede_agendar
- *   2. bookAgendaweb directo con slot hardcodeado (el endpoint no requiere auth)
+ * Flujo completo:
+ *   1. checkCupos (sin auth)
+ *   2. fetchAvailableSlots (con Token auth)
+ *   3. bookAgendaweb (sin auth, solo headers especiales)
  *
- * Uso:
- *   MEDINET_API_TOKEN=64c8840eeb9675d6b9427f8fe37751d007e62086 node test-agendaweb-local.mjs
- *
- * O sin token (checkCupos y agendaweb-add no lo requieren):
- *   node test-agendaweb-local.mjs
+ * Uso: node test-agendaweb-local.mjs
  */
+
+// Asegurar token para endpoints que lo requieren
+process.env.MEDINET_API_TOKEN ??= "64c8840eeb9675d6b9427f8fe37751d007e62086";
+
 import {
   checkCupos,
+  fetchAvailableSlots,
   bookAgendaweb,
 } from "./Antonia/medinet-api.js";
 
@@ -23,16 +25,52 @@ const PROFESIONAL = 69;      // Cerquera Magaly
 const TIPO_CITA = 6;
 const DURACION = 30;
 
-// Slot a usar: busca manualmente uno disponible si estos fallan
-// Ajustar fecha/hora según disponibilidad real
-const SLOT_FECHA = "2026-03-26";  // mañana
-const SLOT_HORA = "09:00";
-
 // Dos RUTs de prueba
 const TEST_RUTS = [
   { rut: "23.754.493-5", label: "RUT A (nuevo)" },
   { rut: "6.469.664-5",  label: "RUT B (existente)" },
 ];
+
+// ─── Helpers ─────────────────────────────────────────────────
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+function futureDate(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Cache de slots (compartir entre ambos tests)
+let cachedSlots = null;
+
+async function getFirstAvailableSlot() {
+  if (cachedSlots) return cachedSlots;
+
+  const desde = today();
+  const hasta = futureDate(14);
+  console.log(`   Buscando slots ${desde} → ${hasta}...`);
+  const raw = await fetchAvailableSlots(BRANCH, ESPECIALIDAD, PROFESIONAL, desde, hasta, TIPO_CITA);
+
+  const allSlots = Array.isArray(raw) ? raw : (raw?.cupos || raw?.data || []);
+
+  // Flatten: cada día puede tener múltiples horas
+  for (const item of allSlots) {
+    if (item.horas && Array.isArray(item.horas)) {
+      for (const h of item.horas) {
+        cachedSlots = { fecha: item.fecha, hora: h.hora || h };
+        return cachedSlots;
+      }
+    } else if (item.fecha && item.hora) {
+      cachedSlots = { fecha: item.fecha, hora: item.hora };
+      return cachedSlots;
+    }
+  }
+
+  // Debug: mostrar respuesta cruda
+  console.log("   Raw response:", JSON.stringify(raw).slice(0, 500));
+  return null;
+}
 
 // ─── Main ────────────────────────────────────────────────────
 async function testRut({ rut, label }) {
@@ -40,24 +78,46 @@ async function testRut({ rut, label }) {
   console.log(`TEST: ${label} → ${rut}`);
   console.log("=".repeat(60));
 
-  // 1. Check cupos (no requiere auth)
+  // 1. Check cupos (sin auth)
   console.log("\n1) checkCupos...");
+  let pacienteExiste = false;
   try {
     const cupos = await checkCupos(BRANCH, rut);
     console.log("   →", JSON.stringify(cupos));
-    const pacienteExiste = cupos.paciente_existe === true;
-    console.log(`   → paciente_existe=${pacienteExiste}`);
+    pacienteExiste = cupos.paciente_existe === true;
+    // Paciente nuevo: no devuelve puede_agendar, pero sí puede
+    // Paciente existente: puede_agendar=false → cupos agotados
+    if (cupos.puede_agendar === false) {
+      console.log("   ✗ Cupos agotados para este paciente.");
+      return { rut, label, result: "sin_cupos", pacienteExiste };
+    }
   } catch (err) {
     console.log("   ⚠ checkCupos error (continuando):", err.message);
   }
 
-  // 2. Agendar directo (no requiere auth, solo headers especiales)
-  console.log(`\n2) bookAgendaweb... (${SLOT_FECHA} ${SLOT_HORA})`);
+  // 2. Obtener slot disponible (con Token auth)
+  console.log("\n2) fetchAvailableSlots...");
+  let slot;
+  try {
+    slot = await getFirstAvailableSlot();
+  } catch (err) {
+    console.log("   ✗ ERROR buscando slots:", err.message);
+    return { rut, label, result: "error_slots", pacienteExiste };
+  }
+
+  if (!slot) {
+    console.log("   ✗ No hay slots disponibles en los próximos 14 días.");
+    return { rut, label, result: "sin_slots", pacienteExiste };
+  }
+  console.log(`   → Slot: ${slot.fecha} ${slot.hora}`);
+
+  // 3. Agendar (sin auth, solo headers especiales)
+  console.log(`\n3) bookAgendaweb... (${slot.fecha} ${slot.hora})`);
   try {
     const res = await bookAgendaweb({
       run: rut,
-      fecha: SLOT_FECHA,
-      hora: SLOT_HORA,
+      fecha: slot.fecha,
+      hora: slot.hora,
       profesional: PROFESIONAL,
       especialidad: ESPECIALIDAD,
       tipo: TIPO_CITA,
@@ -65,15 +125,15 @@ async function testRut({ rut, label }) {
       ubicacion: BRANCH,
       email: "",
       telefono: "",
-      pacienteExiste: false,  // no importa, siempre envía campos vacíos
+      pacienteExiste,
     });
     console.log("   →", JSON.stringify(res));
     const ok = res.status === "agendado_correctamente";
     console.log(ok ? "   ✓ ÉXITO" : `   ✗ Respuesta: ${res.status || res.mensaje || JSON.stringify(res)}`);
-    return { rut, label, result: res.status || "unknown" };
+    return { rut, label, result: res.status || "unknown", pacienteExiste };
   } catch (err) {
     console.log("   ✗ ERROR:", err.message);
-    return { rut, label, result: "error", error: err.message };
+    return { rut, label, result: "error", error: err.message, pacienteExiste };
   }
 }
 
@@ -81,7 +141,6 @@ async function testRut({ rut, label }) {
 console.log("╔══════════════════════════════════════════════════════════╗");
 console.log("║  Test agendaweb-add: campos personales siempre vacíos  ║");
 console.log("╚══════════════════════════════════════════════════════════╝");
-console.log(`Slot: ${SLOT_FECHA} ${SLOT_HORA} | Prof: ${PROFESIONAL} | Esp: ${ESPECIALIDAD} | Branch: ${BRANCH}`);
 
 const results = [];
 for (const t of TEST_RUTS) {
@@ -93,5 +152,5 @@ console.log("RESUMEN:");
 console.log("═".repeat(60));
 for (const r of results) {
   const icon = r.result === "agendado_correctamente" ? "✓" : "✗";
-  console.log(`  ${icon} ${r.label} (${r.rut}) → ${r.result}`);
+  console.log(`  ${icon} ${r.label} (${r.rut}) → ${r.result} [pacienteExiste=${r.pacienteExiste}]`);
 }
