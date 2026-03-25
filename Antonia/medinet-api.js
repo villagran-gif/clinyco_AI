@@ -64,32 +64,37 @@ function getSessionCookie() {
 
 /**
  * Build auth headers.
- * /api-public/* always uses Token.
- * /api/* tries: API-Key header, then session cookie, then Token (some DRF setups accept it).
+ * Token auth works for most parametric /api/* endpoints and /api-public/*.
+ * Api-Key and Cookie are tried only as fallbacks for endpoints that reject Token.
+ *
+ * Verified working with Token auth (2026-03-25):
+ *   /api/profesional/activos-list/                    (also works unauthenticated)
+ *   /api/especialidad/get_por_ubicacion/{id}/
+ *   /api/especialidad/get_por_profesional/{ubi}/{prof}/
+ *   /api/pacientes/existe-run/?run=XX.XXX.XXX-X
+ *   /api/agenda/citas/proximos-cupos-chatbot/{ubi}/{esp}/
+ *   /api/agenda/tipocita/get-by-branch-specialty-and-professional/{b}/{e}/{p}/{r}/
  */
 function buildHeaders(path) {
   const h = { "Content-Type": "application/json" };
 
-  if (path.startsWith("/api-public/")) {
+  // Token auth is the primary method — works for both /api/ and /api-public/
+  try {
     h.Authorization = `Token ${getToken()}`;
-    return h;
+  } catch {
+    // Token not configured — try fallbacks
+    const apiKey = getApiKey();
+    if (apiKey) {
+      h["Api-Key"] = apiKey;
+      return h;
+    }
+    const cookie = getSessionCookie();
+    if (cookie) {
+      h.Cookie = cookie;
+      return h;
+    }
   }
 
-  // /api/* endpoints — try available auth methods
-  const apiKey = getApiKey();
-  if (apiKey) {
-    h["Api-Key"] = apiKey;
-    return h;
-  }
-
-  const cookie = getSessionCookie();
-  if (cookie) {
-    h.Cookie = cookie;
-    return h;
-  }
-
-  // Fallback: try Token auth (works if DRF TokenAuthentication is global)
-  h.Authorization = `Token ${getToken()}`;
   return h;
 }
 
@@ -117,7 +122,10 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
     if (contentType.includes("application/json")) {
       return await res.json();
     }
-    return await res.text();
+    const text = await res.text();
+    // Some endpoints return empty body on success (e.g. proximos-cupos-chatbot with no slots)
+    if (!text || !text.trim()) return null;
+    return text;
   } finally {
     clearTimeout(timer);
   }
@@ -609,3 +617,196 @@ export async function bookAppointmentForPatient({ slot, patientData, branchId, s
     };
   }
 }
+
+// ─── API-first search (replaces Playwright for slot discovery) ──
+
+const DEFAULT_BRANCH_ID = 39; // Mall Arauco Express
+
+/**
+ * Format RUT with dots and dash for the existe-run endpoint.
+ * Input:  "13580388k" or "13580388-k" or "13.580.388-k"
+ * Output: "13.580.388-k"
+ */
+function formatRutWithDots(rut) {
+  const clean = String(rut || "").replace(/[.\-\s]/g, "").toUpperCase();
+  if (clean.length < 2) return rut;
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1).toLowerCase();
+  const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${formatted}-${dv}`;
+}
+
+/**
+ * API-first professional search + slot discovery.
+ * Uses only endpoints verified working with Token auth.
+ *
+ * Flow:
+ *  1. findProfessional() → match by name (activos-list, public)
+ *  2. fetchSpecialtiesForProfessional() → get specialty (Token auth)
+ *  3. fetchAppointmentTypesByContext() → get tipo_cita (Token auth)
+ *  4. fetchNextSlotsChatbot() → get available slots (Token auth)
+ *  5. Falls back to fetchAvailableSlots() if chatbot endpoint has no data
+ *
+ * Returns object compatible with runMedinetAntonia response shape:
+ *  { professional, specialty, available_slots, patient_reply, source }
+ */
+export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID }) {
+  const profMatch = await findProfessional(query);
+  if (!profMatch) {
+    return {
+      source: "api",
+      professional: null,
+      specialty: null,
+      available_slots: [],
+      patient_reply: null,
+    };
+  }
+
+  const profName = profMatch.display || `${profMatch.nombres || ""} ${profMatch.paterno || ""}`.trim();
+  const profId = profMatch.id;
+
+  // Get specialty for this professional at this branch
+  let specialties = [];
+  try {
+    specialties = await fetchSpecialtiesForProfessional(branchId, profId);
+  } catch (e) {
+    console.log(`[medinet-api] fetchSpecialtiesForProfessional(${branchId},${profId}) failed:`, e.message);
+  }
+
+  const specialty = Array.isArray(specialties) && specialties.length > 0 ? specialties[0] : null;
+  const specialtyId = specialty?.id;
+  const specialtyName = specialty?.nombre || "";
+
+  if (!specialtyId) {
+    // Professional found but no specialty at this branch — return name only
+    return {
+      source: "api",
+      professional: profName,
+      professionalId: profId,
+      specialty: null,
+      available_slots: [],
+      patient_reply: null,
+    };
+  }
+
+  // Try to get appointment types (needed for cupos-disponibles)
+  let tipoCitaId = null;
+  try {
+    const tipos = await fetchAppointmentTypesByContext(branchId, specialtyId, profId, false);
+    if (Array.isArray(tipos) && tipos.length > 0) {
+      tipoCitaId = tipos[0].id;
+    }
+  } catch (e) {
+    console.log(`[medinet-api] fetchAppointmentTypesByContext failed:`, e.message);
+  }
+
+  // Try chatbot-optimized slots endpoint first
+  let slots = [];
+  try {
+    const chatbotSlots = await fetchNextSlotsChatbot(branchId, specialtyId);
+    if (Array.isArray(chatbotSlots) && chatbotSlots.length > 0) {
+      for (const entry of chatbotSlots) {
+        if (slots.length >= MAX_SLOTS) break;
+        const date = entry.fecha || entry.date || entry.dia || "";
+        const time = entry.hora || entry.hour || entry.time || "";
+        if (!date || !time) continue;
+        // Filter for this specific professional if the endpoint returns all
+        if (entry.profesional_id && entry.profesional_id !== profId) continue;
+        slots.push({
+          date: isoToDisplayDate(date) || date,
+          time,
+          dataDia: date,
+          professional: entry.profesional || profName,
+          professionalId: String(profId),
+          specialty: entry.especialidad || specialtyName,
+          duration: entry.duracion || 30,
+        });
+      }
+    }
+  } catch (e) {
+    console.log(`[medinet-api] fetchNextSlotsChatbot(${branchId},${specialtyId}) failed:`, e.message);
+  }
+
+  // If chatbot endpoint returned no slots and we have tipoCitaId, try cupos-disponibles
+  if (slots.length === 0 && tipoCitaId) {
+    try {
+      slots = await searchAvailableSlots({
+        professionalId: profId,
+        ubicacionId: branchId,
+        especialidadId: specialtyId,
+        tipocitaId: tipoCitaId,
+        daysAhead: 14,
+      });
+    } catch (e) {
+      console.log(`[medinet-api] searchAvailableSlots failed:`, e.message);
+    }
+  }
+
+  // Build patient-facing reply
+  let patient_reply = null;
+  if (slots.length > 0) {
+    const lines = slots.map((s, i) => `${i + 1}. ${s.date} a las ${s.time}`);
+    lines.push(`${slots.length + 1}. Salir`);
+    patient_reply =
+      `Encontré las siguientes horas disponibles con ${profName} (${specialtyName}):\n\n` +
+      lines.join("\n") +
+      "\n\n¿Cuál prefieres?";
+  }
+
+  return {
+    source: "api",
+    professional: profName,
+    professionalId: profId,
+    specialty: specialtyName,
+    specialtyId,
+    tipoCitaId,
+    available_slots: slots,
+    patient_reply,
+  };
+}
+
+/**
+ * Build professionals cache entirely from API (no Playwright needed).
+ * Uses activos-list (public) + get_por_profesional per professional.
+ * Returns cache object compatible with the Playwright cache format.
+ */
+export async function buildCacheFromApi(branchId = DEFAULT_BRANCH_ID) {
+  const professionals = await fetchActiveProfessionals();
+  if (!Array.isArray(professionals) || !professionals.length) return null;
+
+  const cached = [];
+  for (const prof of professionals) {
+    const name = prof.display || `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+    let specialty = "";
+    let specialtyId = "";
+
+    try {
+      const specs = await fetchSpecialtiesForProfessional(branchId, prof.id);
+      if (Array.isArray(specs) && specs.length > 0) {
+        specialty = specs[0].nombre || "";
+        specialtyId = String(specs[0].id || "");
+      }
+    } catch {
+      // Some professionals may not be at this branch
+    }
+
+    cached.push({
+      id: String(prof.id),
+      name,
+      specialty,
+      specialtyId,
+      tipocita: "",
+      duracion: "",
+      alert_text: "",
+      avatarUrl: "",
+    });
+  }
+
+  return {
+    branch: String(branchId),
+    cachedAt: new Date().toISOString(),
+    professionals: cached,
+  };
+}
+
+export { formatRutWithDots, DEFAULT_BRANCH_ID };

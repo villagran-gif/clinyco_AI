@@ -33,6 +33,15 @@ import {
   formatRutHuman as formatValidatedRutHuman,
   normalizeRut
 } from "./extraction/identity-normalizers.js";
+import {
+  searchSlotsViaApi,
+  buildCacheFromApi,
+  findProfessional as apiFindProfessional,
+  checkPatientByRut as apiCheckPatientByRut,
+  fetchSpecialtiesForProfessional as apiFetchSpecialtiesForProfessional,
+  formatRutWithDots,
+  bookAppointmentForPatient as apiBookAppointment,
+} from "./Antonia/medinet-api.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -198,7 +207,22 @@ function matchProfessionalFromCache(text) {
 async function runMedinetAntoniaCache() {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
 
-  // Try remote worker first
+  // ── 1. Try REST API cache build (no browser, no IP blocking) ──
+  if (process.env.MEDINET_API_TOKEN) {
+    try {
+      console.log("[medinet-api] Building cache via REST API...");
+      const apiCache = await buildCacheFromApi();
+      if (apiCache && apiCache.professionals?.length > 0) {
+        writeFileSync(MEDINET_CACHE_FILE, JSON.stringify(apiCache, null, 2), "utf8");
+        console.log(`[medinet-api] Cache built via API: ${apiCache.professionals.length} professionals`);
+        return true;
+      }
+    } catch (apiError) {
+      console.warn("[medinet-api] API cache build failed, falling through:", apiError.message);
+    }
+  }
+
+  // ── 2. Try remote Playwright worker ──
   if (useRemoteWorker()) {
     console.log("[medinet] Cache refresh via remote worker:", MEDINET_WORKER_URL);
     const result = await callMedinetWorker("cache", {}, timeoutMs);
@@ -209,6 +233,7 @@ async function runMedinetAntoniaCache() {
     console.warn("[medinet] Remote worker cache failed, falling back to local");
   }
 
+  // ── 3. Local Playwright (last resort) ──
   try {
     const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
       env: {
@@ -330,7 +355,25 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
-  // Try remote worker first
+  // ── 1. Try REST API first (no browser, no IP blocking) ──
+  if (process.env.MEDINET_API_TOKEN) {
+    try {
+      console.log("[medinet-api] Searching via REST API:", safeQuery);
+      const apiResult = await searchSlotsViaApi({ query: safeQuery });
+      if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
+        console.log("[medinet-api] API search succeeded:", apiResult.professional, "slots:", apiResult.available_slots?.length);
+        return apiResult;
+      }
+      if (apiResult?.professional) {
+        console.log("[medinet-api] Professional found but no slots via API:", apiResult.professional);
+        // Fall through to Playwright which can scrape the calendar
+      }
+    } catch (apiError) {
+      console.warn("[medinet-api] API search failed, falling through to Playwright:", apiError.message);
+    }
+  }
+
+  // ── 2. Try remote Playwright worker ──
   if (useRemoteWorker()) {
     console.log("[medinet] Search via remote worker:", safeQuery);
     const result = await callMedinetWorker("search", {
@@ -343,6 +386,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
     console.warn("[medinet] Remote worker search failed, falling back to local");
   }
 
+  // ── 3. Local Playwright (last resort) ──
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
@@ -371,11 +415,30 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
+  // ── 1. Try REST API booking first (no browser needed) ──
+  if (process.env.MEDINET_API_TOKEN) {
+    try {
+      console.log("[medinet-api] Booking via REST API:", slot.professionalId, slot.dataDia, slot.time);
+      const apiResult = await apiBookAppointment({
+        slot,
+        patientData,
+        branchId: 39,
+      });
+      if (apiResult?.success) {
+        console.log("[medinet-api] API booking succeeded:", apiResult.appointmentId);
+        return apiResult;
+      }
+      console.log("[medinet-api] API booking returned failure:", apiResult?.message);
+    } catch (apiError) {
+      console.warn("[medinet-api] API booking failed, falling through to Playwright:", apiError.message);
+    }
+  }
+
   // Use search_and_book: searches for the slot first, then books in the same browser session.
   // This avoids the "date not found in calendar" error that occurs with blind booking.
   const medinetMode = "search_and_book";
 
-  // Try remote worker first
+  // ── 2. Try remote Playwright worker ──
   if (useRemoteWorker()) {
     console.log("[medinet] search_and_book via remote worker:", slot.professionalId, slot.dataDia, slot.time);
     const result = await callMedinetWorker(medinetMode, { slot, patientData }, timeoutMs);
