@@ -815,11 +815,108 @@ function formatRutWithDots(rut) {
 }
 
 /**
+ * Specialty-based search: find available slots for any professional in a specialty.
+ * Used when the user queries by specialty name (e.g. "nutricion", "medicina general")
+ * instead of a professional name.
+ */
+async function searchSlotsBySpecialty({ specialtyId, specialtyQuery, branchId = DEFAULT_BRANCH_ID }) {
+  const normalizedQuery = normalizeText(specialtyQuery);
+
+  // Resolve specialty display name from the API or local map
+  let specialtyName = Object.entries(SPECIALTY_IDS).find(([, id]) => id === specialtyId)?.[0] || normalizedQuery;
+  // Capitalize first letter for display
+  specialtyName = specialtyName.charAt(0).toUpperCase() + specialtyName.slice(1).toLowerCase();
+
+  // Try chatbot-optimized endpoint first (returns slots across all professionals)
+  let slots = [];
+  try {
+    const chatbotSlots = await fetchNextSlotsChatbot(branchId, specialtyId);
+    if (Array.isArray(chatbotSlots) && chatbotSlots.length > 0) {
+      for (const entry of chatbotSlots) {
+        if (slots.length >= MAX_SLOTS) break;
+        const date = entry.fecha || entry.date || entry.dia || "";
+        const time = entry.hora || entry.hour || entry.time || "";
+        if (!date || !time) continue;
+        slots.push({
+          date: isoToDisplayDate(date) || date,
+          time,
+          dataDia: date,
+          professional: entry.profesional || null,
+          professionalId: entry.profesional_id ? String(entry.profesional_id) : null,
+          specialty: entry.especialidad || specialtyName,
+          specialtyId,
+          duration: entry.duracion || 30,
+        });
+      }
+    }
+  } catch (e) {
+    console.log(`[medinet-api] searchSlotsBySpecialty chatbot(${branchId},${specialtyId}) failed:`, e.message);
+  }
+
+  // If chatbot returned nothing, try fetching professionals for this specialty and search each
+  if (slots.length === 0) {
+    try {
+      const profs = await fetchProfessionalsBySpecialtyAndBranch(specialtyId, branchId);
+      if (Array.isArray(profs) && profs.length > 0) {
+        for (const prof of profs) {
+          if (slots.length >= MAX_SLOTS) break;
+          const profId = prof.id;
+          const profName = `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+          const tipoCita = Array.isArray(prof.tipos_cita) && prof.tipos_cita.length > 0 ? prof.tipos_cita[0] : null;
+          if (!tipoCita) continue;
+
+          try {
+            const profSlots = await searchAvailableSlots({
+              professionalId: profId,
+              ubicacionId: branchId,
+              especialidadId: specialtyId,
+              tipocitaId: tipoCita.id,
+              daysAhead: 14,
+            });
+            for (const s of profSlots) {
+              if (slots.length >= MAX_SLOTS) break;
+              slots.push({ ...s, specialty: specialtyName, specialtyId });
+            }
+          } catch { /* skip this professional */ }
+        }
+      }
+    } catch (e) {
+      console.log(`[medinet-api] searchSlotsBySpecialty profs fallback failed:`, e.message);
+    }
+  }
+
+  // Build patient-facing reply
+  let patient_reply = null;
+  if (slots.length > 0) {
+    const lines = slots.map((s, i) => {
+      const profLabel = s.professional ? ` con ${s.professional}` : "";
+      return `${i + 1}. ${s.date} a las ${s.time}${profLabel}`;
+    });
+    lines.push(`${slots.length + 1}. Salir`);
+    patient_reply =
+      `Encontré las siguientes horas disponibles en ${specialtyName}:\n\n` +
+      lines.join("\n") +
+      "\n\n¿Cuál prefieres?";
+  }
+
+  return {
+    source: "api_specialty_search",
+    professional: slots.length > 0 ? slots[0].professional : null,
+    professionalId: slots.length > 0 ? slots[0].professionalId : null,
+    specialty: specialtyName,
+    specialtyId,
+    available_slots: slots,
+    patient_reply,
+  };
+}
+
+/**
  * API-first professional search + slot discovery.
  * Uses only endpoints verified working with Token auth.
  *
  * Flow:
  *  1. findProfessional() → match by name (activos-list, public)
+ *  1b. If no professional found, try findSpecialtyId() → specialty-based search
  *  2. fetchSpecialtiesForProfessional() → get specialty (Token auth)
  *  3. fetchAppointmentTypesByContext() → get tipo_cita (Token auth)
  *  4. fetchNextSlotsChatbot() → get available slots (Token auth)
@@ -830,7 +927,13 @@ function formatRutWithDots(rut) {
  */
 export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID }) {
   const profMatch = await findProfessional(query);
+
+  // If no professional matched, try specialty-based search
   if (!profMatch) {
+    const specId = findSpecialtyId(query);
+    if (specId) {
+      return searchSlotsBySpecialty({ specialtyId: specId, specialtyQuery: query, branchId });
+    }
     return {
       source: "api",
       professional: null,
