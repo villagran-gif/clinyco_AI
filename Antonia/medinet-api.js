@@ -1174,4 +1174,139 @@ export async function buildCacheFromApi(branchId = DEFAULT_BRANCH_ID) {
   };
 }
 
+// ─── No-auth search (uses proximos-cupos, 0 token needed) ──────
+
+const MAX_NOAUTH_SLOTS = 3;
+
+/**
+ * Search for available slots using only no-auth endpoints.
+ * Uses proximos-cupos-all (all specialties) or proximos-cupos (filtered by specialty).
+ *
+ * Flow:
+ *  1. fetchProximosCuposAll or fetchProximosCupos → professionals + next slots
+ *  2. Match query against professional names and specialties
+ *  3. Return slots in the same format as searchSlotsViaApi
+ *
+ * @param {object} opts
+ * @param {string} opts.query          - Professional name or specialty to search
+ * @param {number} [opts.branchId=39]  - Branch ID
+ * @returns Same shape as searchSlotsViaApi: { professional, specialty, available_slots, patient_reply, source }
+ */
+export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID }) {
+  const normalized = normalizeText(query);
+  if (!normalized) {
+    return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: null };
+  }
+
+  // Step 1: Check if query matches a known specialty
+  const specId = findSpecialtyId(query);
+
+  // Step 2: Fetch data — filtered by specialty if we know it, otherwise all
+  let professionals;
+  try {
+    professionals = specId
+      ? await fetchProximosCupos(branchId, specId)
+      : await fetchProximosCuposAll(branchId);
+  } catch (e) {
+    console.log(`[medinet-api] searchSlotsNoAuth fetch failed:`, e.message);
+    return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: null };
+  }
+
+  if (!Array.isArray(professionals) || !professionals.length) {
+    return { source: "api_noauth", professional: null, specialty: specId ? normalized : null, available_slots: [], patient_reply: null };
+  }
+
+  // Step 3: Match query against professional names (if not a specialty search)
+  let matched = professionals;
+  if (!specId) {
+    const queryTokens = normalized.split(/\s+/).filter(Boolean);
+
+    const scored = professionals.map((prof) => {
+      const display = normalizeText(`${prof.nombres || ""} ${prof.paterno || ""}`);
+      const specName = normalizeText(prof.especialidad || "");
+      let score = 0;
+
+      // Exact display match
+      if (display === normalized) score = 100;
+      // All query tokens found in name
+      else if (queryTokens.length >= 2 && queryTokens.every((t) => display.includes(t))) score = 90;
+      // Display starts with query
+      else if (display.startsWith(normalized)) score = 80;
+      // Display contains query
+      else if (display.includes(normalized)) score = 70;
+      // Any token matches
+      else if (queryTokens.some((t) => display.includes(t))) score = 50;
+      // Specialty matches
+      else if (specName.includes(normalized) || normalized.includes(specName)) score = 40;
+
+      return { prof, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    matched = scored.filter((s) => s.score > 0).map((s) => s.prof);
+
+    if (!matched.length) {
+      return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: null };
+    }
+  }
+
+  // Step 4: Build slots from matched professionals
+  const slots = [];
+  for (const prof of matched) {
+    if (slots.length >= MAX_NOAUTH_SLOTS) break;
+    const cupos = prof.cupos || [];
+    const profName = `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+
+    for (const cupo of cupos) {
+      if (slots.length >= MAX_NOAUTH_SLOTS) break;
+      const horas = cupo.horas || [];
+      for (const hora of horas) {
+        if (slots.length >= MAX_NOAUTH_SLOTS) break;
+        slots.push({
+          date: isoToDisplayDate(cupo.fecha) || cupo.fecha,
+          time: hora,
+          dataDia: cupo.fecha,
+          professional: profName,
+          professionalId: String(prof.id),
+          specialty: prof.especialidad || "",
+          specialtyId: prof.especialidad_id || null,
+          tipoCitaId: prof.tipo_cita || null,
+          duration: prof.duracion_cita || 30,
+        });
+      }
+    }
+  }
+
+  // Step 5: Build patient reply
+  let patient_reply = null;
+  if (slots.length > 0) {
+    const isSpecialtySearch = !!specId;
+    const label = isSpecialtySearch
+      ? (slots[0].specialty || normalized)
+      : `${slots[0].professional} (${slots[0].specialty})`;
+
+    const lines = slots.map((s, i) => {
+      const profLabel = isSpecialtySearch ? ` con ${s.professional}` : "";
+      return `${i + 1}. ${s.date} a las ${s.time}${profLabel}`;
+    });
+    lines.push(`${slots.length + 1}. Salir`);
+
+    patient_reply =
+      `Encontré las siguientes horas disponibles${isSpecialtySearch ? ` en ${label}` : ` con ${label}`}:\n\n` +
+      lines.join("\n") +
+      "\n\n¿Cuál prefieres?";
+  }
+
+  return {
+    source: "api_noauth",
+    professional: slots.length > 0 ? slots[0].professional : null,
+    professionalId: slots.length > 0 ? slots[0].professionalId : null,
+    specialty: slots.length > 0 ? slots[0].specialty : (specId ? normalized : null),
+    specialtyId: slots.length > 0 ? slots[0].specialtyId : specId,
+    tipoCitaId: slots.length > 0 ? slots[0].tipoCitaId : null,
+    available_slots: slots,
+    patient_reply,
+  };
+}
+
 export { formatRutWithDots, DEFAULT_BRANCH_ID };
