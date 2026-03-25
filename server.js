@@ -372,9 +372,36 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
     }
   }
 
-  // ── 2. Try remote Playwright worker ──
+  // ── 2. Try remote worker API search (no Puppeteer) ──
   if (useRemoteWorker()) {
-    console.log("[medinet] Search via remote worker:", safeQuery);
+    try {
+      console.log("[medinet] API search via remote worker:", safeQuery);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      const res = await fetch(`${MEDINET_WORKER_URL}/medinet/api/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${MEDINET_WORKER_TOKEN}` },
+        body: JSON.stringify({ query: safeQuery, patientRut: rut }),
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+      if (res.ok) {
+        const apiResult = await res.json();
+        if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
+          console.log("[medinet] Remote API search succeeded:", apiResult.professional, "slots:", apiResult.available_slots?.length);
+          return apiResult;
+        }
+        if (apiResult?.professional) {
+          console.log("[medinet] Professional found via remote API but no slots:", apiResult.professional);
+        }
+      }
+    } catch (remoteApiErr) {
+      console.warn("[medinet] Remote API search failed:", remoteApiErr.message);
+    }
+  }
+
+  // ── 3. Try remote Playwright worker (fallback) ──
+  if (useRemoteWorker()) {
+    console.log("[medinet] Search via remote Playwright worker:", safeQuery);
     const result = await callMedinetWorker("search", {
       query: safeQuery,
       patientPhone: String(patientPhone || ""),
@@ -449,11 +476,37 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
     }
   }
 
-  // Use search_and_book: searches for the slot first, then books in the same browser session.
-  // This avoids the "date not found in calendar" error that occurs with blind booking.
-  const medinetMode = "search_and_book";
+  // ── 2. Try remote worker API booking (no Puppeteer, worker calls Medinet API) ──
+  if (useRemoteWorker()) {
+    try {
+      console.log("[medinet] API booking via remote worker:", slot.professionalId, slot.dataDia, slot.time);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      const res = await fetch(`${MEDINET_WORKER_URL}/medinet/api/book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${MEDINET_WORKER_TOKEN}` },
+        body: JSON.stringify({ slot, patientData, branchId: DEFAULT_BRANCH_ID }),
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+      if (res.ok) {
+        const apiResult = await res.json();
+        if (apiResult?.success) {
+          console.log("[medinet] Remote API booking succeeded:", apiResult.appointmentId || apiResult.message);
+          return apiResult;
+        }
+        console.log("[medinet] Remote API booking returned failure:", apiResult?.message);
+        // If patient can't schedule, return immediately (don't fall through to Puppeteer)
+        if (apiResult?.message && /no puede[s]? agendar/i.test(apiResult.message)) {
+          return apiResult;
+        }
+      }
+    } catch (remoteApiErr) {
+      console.warn("[medinet] Remote API booking failed:", remoteApiErr.message);
+    }
+  }
 
-  // ── 2. Try remote Playwright worker ──
+  // ── 3. Try remote Playwright worker (search_and_book fallback) ──
+  const medinetMode = "search_and_book";
   if (useRemoteWorker()) {
     console.log("[medinet] search_and_book via remote worker:", slot.professionalId, slot.dataDia, slot.time);
     const result = await callMedinetWorker(medinetMode, { slot, patientData }, timeoutMs);
