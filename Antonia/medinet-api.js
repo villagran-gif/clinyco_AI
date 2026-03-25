@@ -420,8 +420,6 @@ export async function bookOverschedule(data) {
  * @returns {{ status: string }} e.g. { status: "agendado_correctamente" }
  */
 export async function bookAgendaweb(opts) {
-  const isNew = !opts.pacienteExiste;
-
   const params = new URLSearchParams({
     es_recurso: String(opts.esRecurso || false),
     estado: "1",
@@ -434,14 +432,14 @@ export async function bookAgendaweb(opts) {
     sesion_id: "",
     tipoagenda: "",
     observacion: "Agendado vía AgendaWeb.",
-    nombre: isNew ? (opts.nombre || "") : "",
-    apellidos: isNew ? (opts.apellidos || "") : "",
+    nombre: "",
+    apellidos: "",
     telefono_fijo: opts.telefono || "",
-    direccion: isNew ? (opts.direccion || "") : "",
-    sexo: isNew ? (opts.sexo || "") : "",
+    direccion: "",
+    sexo: "",
     email: opts.email || "",
-    fecha_nacimiento: isNew ? (opts.fechaNacimiento || "") : "",
-    aseguradora: isNew ? (opts.aseguradora || "") : "",
+    fecha_nacimiento: "",
+    aseguradora: "",
     run: opts.run,
     ubicacion: String(opts.ubicacion),
     desde_agendaweb: "true",
