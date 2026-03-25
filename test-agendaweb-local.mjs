@@ -1,22 +1,21 @@
 /**
  * Test local: bookAgendaweb con dos RUTs.
+ * Script autónomo — usa fetch directo, no depende de medinet-api.js para slots.
  *
  * Flujo completo:
  *   1. checkCupos (sin auth)
- *   2. fetchAvailableSlots (con Token auth)
- *   3. bookAgendaweb (sin auth, solo headers especiales)
+ *   2. Slots disponibles (con Token auth) — fetch directo
+ *   3. bookAgendaweb via apiFormPost (sin auth, solo headers especiales)
  *
  * Uso: node test-agendaweb-local.mjs
  */
+import { bookAgendaweb } from "./Antonia/medinet-api.js";
 
-// Asegurar token para endpoints que lo requieren
-process.env.MEDINET_API_TOKEN ??= "64c8840eeb9675d6b9427f8fe37751d007e62086";
+const BASE = "https://clinyco.medinetapp.com";
+const TOKEN = "64c8840eeb9675d6b9427f8fe37751d007e62086";
 
-import {
-  checkCupos,
-  fetchAvailableSlots,
-  bookAgendaweb,
-} from "./Antonia/medinet-api.js";
+// Asegurar token para bookAgendaweb (apiFormPost lo usa opcionalmente)
+process.env.MEDINET_API_TOKEN ??= TOKEN;
 
 // ─── Config ──────────────────────────────────────────────────
 const BRANCH = 39;
@@ -25,13 +24,23 @@ const PROFESIONAL = 69;      // Cerquera Magaly
 const TIPO_CITA = 6;
 const DURACION = 30;
 
-// Dos RUTs de prueba
 const TEST_RUTS = [
   { rut: "23.754.493-5", label: "RUT A (nuevo)" },
   { rut: "6.469.664-5",  label: "RUT B (existente)" },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────
+// ─── Helpers: fetch directo ──────────────────────────────────
+async function directGet(path, { auth = false } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (auth) headers.Authorization = `Token ${TOKEN}`;
+  const res = await fetch(`${BASE}${path}`, { headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`GET ${path} → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return res.json();
+}
+
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -41,33 +50,35 @@ function futureDate(days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Cache de slots (compartir entre ambos tests)
-let cachedSlots = null;
+// Cache de slots
+let cachedSlot = null;
 
-async function getFirstAvailableSlot() {
-  if (cachedSlots) return cachedSlots;
+async function getFirstSlot() {
+  if (cachedSlot) return cachedSlot;
 
   const desde = today();
   const hasta = futureDate(14);
-  console.log(`   Buscando slots ${desde} → ${hasta}...`);
-  const raw = await fetchAvailableSlots(BRANCH, ESPECIALIDAD, PROFESIONAL, desde, hasta, TIPO_CITA);
+  console.log(`   Buscando slots ${desde} → ${hasta} (fetch directo con Token)...`);
+
+  const raw = await directGet(
+    `/api/agenda/citas/cupos-disponibles/${BRANCH}/${ESPECIALIDAD}/${PROFESIONAL}/${desde}/${hasta}/${TIPO_CITA}/`,
+    { auth: true }
+  );
 
   const allSlots = Array.isArray(raw) ? raw : (raw?.cupos || raw?.data || []);
 
-  // Flatten: cada día puede tener múltiples horas
   for (const item of allSlots) {
     if (item.horas && Array.isArray(item.horas)) {
       for (const h of item.horas) {
-        cachedSlots = { fecha: item.fecha, hora: h.hora || h };
-        return cachedSlots;
+        cachedSlot = { fecha: item.fecha, hora: h.hora || h };
+        return cachedSlot;
       }
     } else if (item.fecha && item.hora) {
-      cachedSlots = { fecha: item.fecha, hora: item.hora };
-      return cachedSlots;
+      cachedSlot = { fecha: item.fecha, hora: item.hora };
+      return cachedSlot;
     }
   }
 
-  // Debug: mostrar respuesta cruda
   console.log("   Raw response:", JSON.stringify(raw).slice(0, 500));
   return null;
 }
@@ -79,40 +90,40 @@ async function testRut({ rut, label }) {
   console.log("=".repeat(60));
 
   // 1. Check cupos (sin auth)
-  console.log("\n1) checkCupos...");
+  console.log("\n1) checkCupos (sin auth)...");
   let pacienteExiste = false;
   try {
-    const cupos = await checkCupos(BRANCH, rut);
+    const cupos = await directGet(
+      `/api/agenda/citas/get-check-cupos/${BRANCH}/?identifier=${encodeURIComponent(rut)}`
+    );
     console.log("   →", JSON.stringify(cupos));
     pacienteExiste = cupos.paciente_existe === true;
-    // Paciente nuevo: no devuelve puede_agendar, pero sí puede
-    // Paciente existente: puede_agendar=false → cupos agotados
     if (cupos.puede_agendar === false) {
-      console.log("   ✗ Cupos agotados para este paciente.");
+      console.log("   ✗ Cupos agotados.");
       return { rut, label, result: "sin_cupos", pacienteExiste };
     }
   } catch (err) {
     console.log("   ⚠ checkCupos error (continuando):", err.message);
   }
 
-  // 2. Obtener slot disponible (con Token auth)
-  console.log("\n2) fetchAvailableSlots...");
+  // 2. Obtener slot (con Token)
+  console.log("\n2) fetchAvailableSlots (con Token)...");
   let slot;
   try {
-    slot = await getFirstAvailableSlot();
+    slot = await getFirstSlot();
   } catch (err) {
-    console.log("   ✗ ERROR buscando slots:", err.message);
+    console.log("   ✗ ERROR:", err.message);
     return { rut, label, result: "error_slots", pacienteExiste };
   }
 
   if (!slot) {
-    console.log("   ✗ No hay slots disponibles en los próximos 14 días.");
+    console.log("   ✗ No hay slots en los próximos 14 días.");
     return { rut, label, result: "sin_slots", pacienteExiste };
   }
   console.log(`   → Slot: ${slot.fecha} ${slot.hora}`);
 
-  // 3. Agendar (sin auth, solo headers especiales)
-  console.log(`\n3) bookAgendaweb... (${slot.fecha} ${slot.hora})`);
+  // 3. Agendar (sin auth, solo X-Requested-With)
+  console.log(`\n3) bookAgendaweb (${slot.fecha} ${slot.hora})...`);
   try {
     const res = await bookAgendaweb({
       run: rut,
@@ -141,6 +152,7 @@ async function testRut({ rut, label }) {
 console.log("╔══════════════════════════════════════════════════════════╗");
 console.log("║  Test agendaweb-add: campos personales siempre vacíos  ║");
 console.log("╚══════════════════════════════════════════════════════════╝");
+console.log(`Token: ${TOKEN.slice(0, 8)}...`);
 
 const results = [];
 for (const t of TEST_RUTS) {
