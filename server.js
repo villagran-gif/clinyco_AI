@@ -554,6 +554,7 @@ function getMissingBookingFields(patientData) {
     { key: "rut", label: "RUT" },
     { key: "nombres", label: "nombre completo" },
     { key: "apPaterno", label: "apellido paterno" },
+    { key: "apMaterno", label: "apellido materno" },
     { key: "prevision", label: "previsión/aseguradora" },
     { key: "nacimiento", label: "fecha de nacimiento" },
     { key: "email", label: "correo electrónico" },
@@ -1527,12 +1528,12 @@ function extractDate(text) {
 
 function extractAddress(text) {
   const source = normalizeSpaces(String(text || ""));
-  // Match explicit "dirección: ..." prefix
-  const match = source.match(/(?:direccion|dirección)\s*:?\s*(.+)$/i);
-  if (match) return titleCaseWords(match[1]);
+  // Match explicit "dirección: ..." prefix — stop at next emoji label, newline, or end
+  const match = source.match(/(?:direccion|dirección)\s*:?\s*(.+?)(?=\s*(?:[🏙📱📧🎂🏥🩺🆔👤]|ciudad\s*:|celular\s*:|correo\s*:|fecha\s*:|previsi[oó]n\s*:|tramo\s*:|rut\s*:|nombre\s*:|apellido\s*:|$))/i);
+  if (match && match[1].trim()) return titleCaseWords(match[1].trim());
   // Match common street patterns: "Av.", "Calle", "Pasaje", etc. followed by name and number
-  const streetMatch = source.match(/^((?:av(?:enida)?|calle|pasaje|psje|pje|los|las|el|la)\b[\s.]*.+\d+.*)$/i);
-  if (streetMatch) return titleCaseWords(streetMatch[1]);
+  const streetMatch = source.match(/^((?:av(?:enida)?|calle|pasaje|psje|pje|los|las|el|la)\b[\s.]*.+?\d+(?:\s*,\s*\w+)?)(?=\s*(?:[🏙📱📧🎂🏥]|$))/i);
+  if (streetMatch) return titleCaseWords(streetMatch[1].trim());
   return null;
 }
 
@@ -2283,6 +2284,10 @@ function getMissingPatientDataFields(state) {
   if (!cd.c_tel1 && !cd.c_tel2) missing.push({ key: "c_tel1", label: "📱 Número de celular:", emoji: "📱" });
   if (!cd.c_nombres) missing.push({ key: "c_nombres", label: "👤 Nombre completo:", emoji: "👤" });
   if (!cd.c_rut) missing.push({ key: "c_rut", label: "🆔 RUT:", emoji: "🆔" });
+  // Medinet requires both apellido paterno AND materno
+  if (cd.c_apellidos && !splitApellidos(cd.c_apellidos).materno) {
+    missing.push({ key: "c_ap_materno", label: "👤 Apellido materno:", emoji: "👤" });
+  }
   return missing;
 }
 
@@ -2890,6 +2895,14 @@ function updateDraftsFromText(state, text, info) {
 
   const address = extractAddress(cleanText);
   if (address) state.contactDraft.c_direccion = address;
+
+  // Extract apellido materno if provided explicitly (e.g. "Apellido materno: Pérez")
+  const apMaternoMatch = cleanText.match(/apellido\s+materno\s*:?\s*([A-Za-záéíóúñÁÉÍÓÚÑ]+)/i);
+  if (apMaternoMatch) {
+    const existingApellidos = state.contactDraft.c_apellidos || "";
+    const { paterno } = splitApellidos(existingApellidos);
+    state.contactDraft.c_apellidos = paterno ? `${paterno} ${titleCaseWords(apMaternoMatch[1])}` : titleCaseWords(apMaternoMatch[1]);
+  }
 
   const preferredFullName = structured.full_name || extractName(cleanText);
   if (preferredFullName && isUsablePersonName(preferredFullName)) {
