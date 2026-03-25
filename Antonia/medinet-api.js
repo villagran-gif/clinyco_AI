@@ -32,7 +32,10 @@
  *   GET  /api/agenda/citas/cupos-disponibles/{ubi}/{esp}/{prof}/{from}/{to}/{tipocita}/
  *   GET  /api/agenda/citas/proximos-cupos-chatbot/{ubi}/{esp}/
  *   GET  /api/agenda/citas/professional-is-available/{prof}/{type}/{date}/{dur}/
- *   GET  /api/agenda/citas/add-chatbot/                                    → POST chatbot booking
+ *   POST /api/agenda/citas/add-chatbot/                                    → book (chatbot)
+ *   POST /api/agenda/citas/agendaweb-add/                                 → book (agendaweb form, form-urlencoded)
+ *   GET  /api/agenda/citas/get-check-cupos/{ubi}/?identifier=X            → cupo/patient check
+ *   POST /api/agenda/citas/solicitar-codigo/                              → request verification code
  *   GET  /api/agenda/tipocita/get-por-profesional/{prof}/
  *   GET  /api/transversal/sucursal/list/                                   → branch list
  *   GET  /api/transversal/prevision/                                       → insurance list
@@ -64,33 +67,80 @@ function getSessionCookie() {
 
 /**
  * Build auth headers.
- * /api-public/* always uses Token.
- * /api/* tries: API-Key header, then session cookie, then Token (some DRF setups accept it).
+ * Token auth works for most parametric /api/* endpoints and /api-public/*.
+ * Api-Key and Cookie are tried only as fallbacks for endpoints that reject Token.
+ *
+ * Verified working with Token auth (2026-03-25):
+ *   /api/profesional/activos-list/                    (also works unauthenticated)
+ *   /api/especialidad/get_por_ubicacion/{id}/
+ *   /api/especialidad/get_por_profesional/{ubi}/{prof}/
+ *   /api/pacientes/existe-run/?run=XX.XXX.XXX-X
+ *   /api/agenda/citas/proximos-cupos-chatbot/{ubi}/{esp}/
+ *   /api/agenda/tipocita/get-by-branch-specialty-and-professional/{b}/{e}/{p}/{r}/
  */
 function buildHeaders(path) {
   const h = { "Content-Type": "application/json" };
 
-  if (path.startsWith("/api-public/")) {
+  // Token auth is the primary method — works for both /api/ and /api-public/
+  try {
     h.Authorization = `Token ${getToken()}`;
-    return h;
+  } catch {
+    // Token not configured — try fallbacks
+    const apiKey = getApiKey();
+    if (apiKey) {
+      h["Api-Key"] = apiKey;
+      return h;
+    }
+    const cookie = getSessionCookie();
+    if (cookie) {
+      h.Cookie = cookie;
+      return h;
+    }
   }
 
-  // /api/* endpoints — try available auth methods
-  const apiKey = getApiKey();
-  if (apiKey) {
-    h["Api-Key"] = apiKey;
-    return h;
-  }
-
-  const cookie = getSessionCookie();
-  if (cookie) {
-    h.Cookie = cookie;
-    return h;
-  }
-
-  // Fallback: try Token auth (works if DRF TokenAuthentication is global)
-  h.Authorization = `Token ${getToken()}`;
   return h;
+}
+
+/**
+ * POST with application/x-www-form-urlencoded body.
+ * Used for agendaweb endpoints that require form data + XMLHttpRequest header.
+ */
+async function apiFormPost(path, params, { timeout = 20000 } = {}) {
+  const url = `${BASE_URL}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const h = { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" };
+    // Add auth if available
+    try { h.Authorization = `Token ${getToken()}`; } catch { /* no token */ }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: h,
+      body: params.toString(),
+      signal: controller.signal,
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const json = await res.json();
+      // agendaweb-add returns 200 even for errors like "cupo_tomado"
+      if (json.status === "cupo_tomado") {
+        throw new Error(json.message || "La hora seleccionada no tiene cupo.");
+      }
+      return json;
+    }
+
+    // Non-JSON response (likely HTML error page) means server error
+    const text = await res.text().catch(() => "");
+    if (!res.ok || text.includes("<title>500</title>") || text.includes("<title>404</title>")) {
+      throw new Error(`Medinet form POST ${path} → ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } = {}) {
@@ -117,7 +167,10 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
     if (contentType.includes("application/json")) {
       return await res.json();
     }
-    return await res.text();
+    const text = await res.text();
+    // Some endpoints return empty body on success (e.g. proximos-cupos-chatbot with no slots)
+    if (!text || !text.trim()) return null;
+    return text;
   } finally {
     clearTimeout(timer);
   }
@@ -283,6 +336,34 @@ export async function fetchProfessionalResourceAvailable(ubicacionId, especialid
   );
 }
 
+// ─── Cupos / Verification ───────────────────────────────────────
+
+/**
+ * Check if a patient can book at a given branch (cupo check).
+ * @param {number} ubicacionId  Branch ID (e.g. 39)
+ * @param {string} identifier   Patient RUT formatted with dots (e.g. "6.469.664-5")
+ * @returns {{ status: boolean, mensaje: string, paciente_existe: boolean, puede_agendar: boolean, maximo_cupos: number }}
+ */
+export async function checkCupos(ubicacionId, identifier) {
+  return apiFetch(
+    `/api/agenda/citas/get-check-cupos/${ubicacionId}/?identifier=${encodeURIComponent(identifier)}`
+  );
+}
+
+/**
+ * Request a verification code for a patient (sends email notification).
+ * @param {string} identifier  Patient RUT
+ * @param {boolean} isFromTwoFactor  Whether this is a two-factor request
+ * @returns {{ status: boolean, mensaje: string, id: number, is_created_from_two_factor: boolean }}
+ */
+export async function requestVerificationCode(identifier, isFromTwoFactor = false) {
+  const params = new URLSearchParams({
+    identifier,
+    is_from_two_factor: String(isFromTwoFactor),
+  });
+  return apiFormPost("/api/agenda/citas/solicitar-codigo/", params);
+}
+
 // ─── Booking ────────────────────────────────────────────────────
 
 /**
@@ -305,6 +386,69 @@ export async function bookOverschedule(data) {
     body: data,
     timeout: 20000,
   });
+}
+
+/**
+ * Book via the agendaweb form endpoint (same endpoint the web UI uses).
+ * Requires X-Requested-With: XMLHttpRequest and form-urlencoded body.
+ *
+ * IMPORTANT rules discovered via testing:
+ *  - Header X-Requested-With: XMLHttpRequest is MANDATORY (500 without it)
+ *  - For existing patients: personal fields (nombre, apellidos, direccion, sexo,
+ *    fecha_nacimiento, aseguradora) MUST be empty — backend looks them up by RUN
+ *  - For new patients: all personal fields must be provided
+ *
+ * @param {object} opts
+ * @param {string} opts.run                Patient RUT (e.g. "6.469.664-5")
+ * @param {string} opts.fecha              Date "YYYY-MM-DD"
+ * @param {string} opts.hora               Time "HH:MM"
+ * @param {number} opts.profesional        Professional ID
+ * @param {number} opts.especialidad       Specialty ID
+ * @param {number} opts.tipo               Appointment type ID
+ * @param {number} opts.duracion           Duration in minutes
+ * @param {number} opts.ubicacion          Branch ID
+ * @param {boolean} opts.pacienteExiste    Whether the patient already exists
+ * @param {string} [opts.email]            Patient email
+ * @param {string} [opts.telefono]         Patient phone
+ * @param {string} [opts.nombre]           Patient first name (new patients only)
+ * @param {string} [opts.apellidos]        Patient last name (new patients only)
+ * @param {string} [opts.direccion]        Patient address (new patients only)
+ * @param {string} [opts.sexo]             Patient sex M/F (new patients only)
+ * @param {string} [opts.fechaNacimiento]  Patient DOB DD/MM/YYYY (new patients only)
+ * @param {string} [opts.aseguradora]      Insurance ID (new patients only)
+ * @param {boolean} [opts.esRecurso]       Whether booking a resource (default false)
+ * @returns {{ status: string }} e.g. { status: "agendado_correctamente" }
+ */
+export async function bookAgendaweb(opts) {
+  const isNew = !opts.pacienteExiste;
+
+  const params = new URLSearchParams({
+    es_recurso: String(opts.esRecurso || false),
+    estado: "1",
+    fecha: opts.fecha,
+    tipo: String(opts.tipo),
+    duracion: String(opts.duracion || 30),
+    especialidad: String(opts.especialidad),
+    hora: opts.hora,
+    profesional: String(opts.profesional),
+    sesion_id: "",
+    tipoagenda: "",
+    observacion: "Agendado vía AgendaWeb.",
+    nombre: isNew ? (opts.nombre || "") : "",
+    apellidos: isNew ? (opts.apellidos || "") : "",
+    telefono_fijo: opts.telefono || "",
+    direccion: isNew ? (opts.direccion || "") : "",
+    sexo: isNew ? (opts.sexo || "") : "",
+    email: opts.email || "",
+    fecha_nacimiento: isNew ? (opts.fechaNacimiento || "") : "",
+    aseguradora: isNew ? (opts.aseguradora || "") : "",
+    run: opts.run,
+    ubicacion: String(opts.ubicacion),
+    desde_agendaweb: "true",
+    is_patient_created_from_two_factor: "false",
+  });
+
+  return apiFormPost("/api/agenda/citas/agendaweb-add/", params);
 }
 
 // ─── Appointments (query / manage) ─────────────────────────────
@@ -555,10 +699,55 @@ export async function searchAvailableSlots({ professionalId, ubicacionId, especi
 
 /**
  * Book an appointment via API (replaces Playwright bookSlot).
- * Tries chatbot endpoint first, falls back to overschedule.
- * Returns { success, message, patient_reply }.
+ *
+ * Strategy (3-tier fallback):
+ *  1. bookAgendaweb()  — form-urlencoded, same endpoint the web UI uses (proven working)
+ *  2. bookChatbot()    — JSON, chatbot-specific endpoint
+ *  3. bookOverschedule() — JSON, public API endpoint
+ *
+ * @param {object} opts
+ * @param {object} opts.slot          Slot object { professionalId, dataDia, time, duration, specialtyId, tipoCitaId }
+ * @param {object} opts.patientData   Patient { run, email, fono, nombres, apPaterno, apMaterno, direccion, sexo, fechaNacimiento, prevision }
+ * @param {number} opts.branchId      Branch/ubicacion ID
+ * @param {boolean} [opts.pacienteExiste]  Whether patient already exists (from checkCupos)
+ * @param {number} [opts.scheduleTypeId]   Schedule type (default 1)
  */
-export async function bookAppointmentForPatient({ slot, patientData, branchId, scheduleTypeId = 1 }) {
+export async function bookAppointmentForPatient({ slot, patientData, branchId, pacienteExiste, scheduleTypeId = 1 }) {
+
+  // ── Tier 1: bookAgendaweb (preferred — proven via real browser testing) ──
+  try {
+    const result = await bookAgendaweb({
+      run: patientData.run || patientData.rut || "",
+      fecha: slot.dataDia,
+      hora: slot.time,
+      profesional: Number(slot.professionalId),
+      especialidad: Number(slot.specialtyId || slot.especialidadId || 0),
+      tipo: Number(slot.tipoCitaId || slot.tipo || 0),
+      duracion: Number(slot.duration || 30),
+      ubicacion: Number(branchId),
+      pacienteExiste: pacienteExiste !== false, // default true for safety
+      email: patientData.email || "",
+      telefono: patientData.fono || patientData.telefono || "",
+      nombre: patientData.nombres || "",
+      apellidos: [patientData.apPaterno || "", patientData.apMaterno || ""].filter(Boolean).join(" "),
+      direccion: patientData.direccion || "",
+      sexo: patientData.sexo || "",
+      fechaNacimiento: patientData.fechaNacimiento || patientData.nacimiento || "",
+      aseguradora: patientData.prevision || "",
+    });
+    return {
+      source: "antonia_booking_via_api_agendaweb",
+      success: true,
+      message: "Reserva realizada con éxito",
+      appointmentId: result?.id || result?.cita_id || null,
+      patient_reply: "Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación.",
+      raw: result,
+    };
+  } catch (agendawebError) {
+    console.log("[medinet-api] bookAgendaweb failed, trying chatbot:", agendawebError.message);
+  }
+
+  // ── Tier 2: bookChatbot (JSON endpoint) ──
   const bookingPayload = {
     profesional_id: Number(slot.professionalId),
     date: slot.dataDia,
@@ -567,29 +756,26 @@ export async function bookAppointmentForPatient({ slot, patientData, branchId, s
     schedule_type_id: scheduleTypeId,
     branch_id: Number(branchId),
   };
-
-  // Add patient fields
   if (patientData?.nombres) bookingPayload.patient_name = `${patientData.nombres} ${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim();
   if (patientData?.email) bookingPayload.patient_email = patientData.email;
   if (patientData?.fono) bookingPayload.patient_phone = patientData.fono;
   if (patientData?.prevision) bookingPayload.patient_insurance = patientData.prevision;
 
   try {
-    // Try chatbot-specific booking endpoint first
     const result = await bookChatbot(bookingPayload);
     return {
       source: "antonia_booking_via_api_chatbot",
       success: true,
       message: "Reserva realizada con éxito",
       appointmentId: result?.id || result?.appointment_id || result?.cita_id || null,
-      patient_reply: "Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación. ¡Gracias!",
+      patient_reply: "Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación.",
       raw: result,
     };
   } catch (chatbotError) {
-    console.log("Chatbot booking failed, trying overschedule:", chatbotError.message);
+    console.log("[medinet-api] bookChatbot failed, trying overschedule:", chatbotError.message);
   }
 
-  // Fallback to overschedule (public API, Token auth — always works)
+  // ── Tier 3: bookOverschedule (public API fallback) ──
   try {
     const result = await bookOverschedule(bookingPayload);
     return {
@@ -597,7 +783,7 @@ export async function bookAppointmentForPatient({ slot, patientData, branchId, s
       success: true,
       message: "Reserva realizada con éxito",
       appointmentId: result?.id || result?.appointment_id || null,
-      patient_reply: "Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación. ¡Gracias!",
+      patient_reply: "Tu cita ha sido agendada con éxito. Revisa tu email para la confirmación.",
       raw: result,
     };
   } catch (error) {
@@ -609,3 +795,196 @@ export async function bookAppointmentForPatient({ slot, patientData, branchId, s
     };
   }
 }
+
+// ─── API-first search (replaces Playwright for slot discovery) ──
+
+const DEFAULT_BRANCH_ID = 39; // Mall Arauco Express
+
+/**
+ * Format RUT with dots and dash for the existe-run endpoint.
+ * Input:  "13580388k" or "13580388-k" or "13.580.388-k"
+ * Output: "13.580.388-k"
+ */
+function formatRutWithDots(rut) {
+  const clean = String(rut || "").replace(/[.\-\s]/g, "").toUpperCase();
+  if (clean.length < 2) return rut;
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1).toLowerCase();
+  const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${formatted}-${dv}`;
+}
+
+/**
+ * API-first professional search + slot discovery.
+ * Uses only endpoints verified working with Token auth.
+ *
+ * Flow:
+ *  1. findProfessional() → match by name (activos-list, public)
+ *  2. fetchSpecialtiesForProfessional() → get specialty (Token auth)
+ *  3. fetchAppointmentTypesByContext() → get tipo_cita (Token auth)
+ *  4. fetchNextSlotsChatbot() → get available slots (Token auth)
+ *  5. Falls back to fetchAvailableSlots() if chatbot endpoint has no data
+ *
+ * Returns object compatible with runMedinetAntonia response shape:
+ *  { professional, specialty, available_slots, patient_reply, source }
+ */
+export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID }) {
+  const profMatch = await findProfessional(query);
+  if (!profMatch) {
+    return {
+      source: "api",
+      professional: null,
+      specialty: null,
+      available_slots: [],
+      patient_reply: null,
+    };
+  }
+
+  const profName = profMatch.display || `${profMatch.nombres || ""} ${profMatch.paterno || ""}`.trim();
+  const profId = profMatch.id;
+
+  // Get specialty for this professional at this branch
+  let specialties = [];
+  try {
+    specialties = await fetchSpecialtiesForProfessional(branchId, profId);
+  } catch (e) {
+    console.log(`[medinet-api] fetchSpecialtiesForProfessional(${branchId},${profId}) failed:`, e.message);
+  }
+
+  const specialty = Array.isArray(specialties) && specialties.length > 0 ? specialties[0] : null;
+  const specialtyId = specialty?.id;
+  const specialtyName = specialty?.nombre || "";
+
+  if (!specialtyId) {
+    // Professional found but no specialty at this branch — return name only
+    return {
+      source: "api",
+      professional: profName,
+      professionalId: profId,
+      specialty: null,
+      available_slots: [],
+      patient_reply: null,
+    };
+  }
+
+  // Try to get appointment types (needed for cupos-disponibles)
+  let tipoCitaId = null;
+  try {
+    const tipos = await fetchAppointmentTypesByContext(branchId, specialtyId, profId, false);
+    if (Array.isArray(tipos) && tipos.length > 0) {
+      tipoCitaId = tipos[0].id;
+    }
+  } catch (e) {
+    console.log(`[medinet-api] fetchAppointmentTypesByContext failed:`, e.message);
+  }
+
+  // Try chatbot-optimized slots endpoint first
+  let slots = [];
+  try {
+    const chatbotSlots = await fetchNextSlotsChatbot(branchId, specialtyId);
+    if (Array.isArray(chatbotSlots) && chatbotSlots.length > 0) {
+      for (const entry of chatbotSlots) {
+        if (slots.length >= MAX_SLOTS) break;
+        const date = entry.fecha || entry.date || entry.dia || "";
+        const time = entry.hora || entry.hour || entry.time || "";
+        if (!date || !time) continue;
+        // Filter for this specific professional if the endpoint returns all
+        if (entry.profesional_id && entry.profesional_id !== profId) continue;
+        slots.push({
+          date: isoToDisplayDate(date) || date,
+          time,
+          dataDia: date,
+          professional: entry.profesional || profName,
+          professionalId: String(profId),
+          specialty: entry.especialidad || specialtyName,
+          duration: entry.duracion || 30,
+        });
+      }
+    }
+  } catch (e) {
+    console.log(`[medinet-api] fetchNextSlotsChatbot(${branchId},${specialtyId}) failed:`, e.message);
+  }
+
+  // If chatbot endpoint returned no slots and we have tipoCitaId, try cupos-disponibles
+  if (slots.length === 0 && tipoCitaId) {
+    try {
+      slots = await searchAvailableSlots({
+        professionalId: profId,
+        ubicacionId: branchId,
+        especialidadId: specialtyId,
+        tipocitaId: tipoCitaId,
+        daysAhead: 14,
+      });
+    } catch (e) {
+      console.log(`[medinet-api] searchAvailableSlots failed:`, e.message);
+    }
+  }
+
+  // Build patient-facing reply
+  let patient_reply = null;
+  if (slots.length > 0) {
+    const lines = slots.map((s, i) => `${i + 1}. ${s.date} a las ${s.time}`);
+    lines.push(`${slots.length + 1}. Salir`);
+    patient_reply =
+      `Encontré las siguientes horas disponibles con ${profName} (${specialtyName}):\n\n` +
+      lines.join("\n") +
+      "\n\n¿Cuál prefieres?";
+  }
+
+  return {
+    source: "api",
+    professional: profName,
+    professionalId: profId,
+    specialty: specialtyName,
+    specialtyId,
+    tipoCitaId,
+    available_slots: slots,
+    patient_reply,
+  };
+}
+
+/**
+ * Build professionals cache entirely from API (no Playwright needed).
+ * Uses activos-list (public) + get_por_profesional per professional.
+ * Returns cache object compatible with the Playwright cache format.
+ */
+export async function buildCacheFromApi(branchId = DEFAULT_BRANCH_ID) {
+  const professionals = await fetchActiveProfessionals();
+  if (!Array.isArray(professionals) || !professionals.length) return null;
+
+  const cached = [];
+  for (const prof of professionals) {
+    const name = prof.display || `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+    let specialty = "";
+    let specialtyId = "";
+
+    try {
+      const specs = await fetchSpecialtiesForProfessional(branchId, prof.id);
+      if (Array.isArray(specs) && specs.length > 0) {
+        specialty = specs[0].nombre || "";
+        specialtyId = String(specs[0].id || "");
+      }
+    } catch {
+      // Some professionals may not be at this branch
+    }
+
+    cached.push({
+      id: String(prof.id),
+      name,
+      specialty,
+      specialtyId,
+      tipocita: "",
+      duracion: "",
+      alert_text: "",
+      avatarUrl: "",
+    });
+  }
+
+  return {
+    branch: String(branchId),
+    cachedAt: new Date().toISOString(),
+    professionals: cached,
+  };
+}
+
+export { formatRutWithDots, DEFAULT_BRANCH_ID };
