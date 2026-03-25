@@ -36,12 +36,10 @@ import {
 import {
   searchSlotsViaApi,
   buildCacheFromApi,
-  findProfessional as apiFindProfessional,
-  checkPatientByRut as apiCheckPatientByRut,
-  fetchSpecialtiesForProfessional as apiFetchSpecialtiesForProfessional,
   formatRutWithDots,
   bookAppointmentForPatient as apiBookAppointment,
   checkCupos,
+  DEFAULT_BRANCH_ID,
 } from "./Antonia/medinet-api.js";
 
 const app = express();
@@ -424,7 +422,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       const rut = formatRutWithDots(patientData.rut || patientData.run || "");
       let pacienteExiste = true; // default safe assumption
       if (rut) {
-        const cupos = await checkCupos(39, rut).catch(() => null);
+        const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
         if (cupos && !cupos.puede_agendar) {
           return {
             source: "antonia_api_cupos_check",
@@ -438,7 +436,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       const apiResult = await apiBookAppointment({
         slot,
         patientData: { ...patientData, run: rut },
-        branchId: 39,
+        branchId: DEFAULT_BRANCH_ID,
         pacienteExiste,
       });
       if (apiResult?.success) {
