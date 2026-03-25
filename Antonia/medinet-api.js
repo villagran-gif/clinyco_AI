@@ -853,31 +853,41 @@ async function searchSlotsBySpecialty({ specialtyId, specialtyQuery, branchId = 
     console.log(`[medinet-api] searchSlotsBySpecialty chatbot(${branchId},${specialtyId}) failed:`, e.message);
   }
 
-  // If chatbot returned nothing, try fetching professionals for this specialty and search each
+  // If chatbot returned nothing, find professionals for this specialty via full list
+  // (fetchProfessionalsFull works with Token auth; get_por_especialidad does not)
   if (slots.length === 0) {
     try {
-      const profs = await fetchProfessionalsBySpecialtyAndBranch(specialtyId, branchId);
-      if (Array.isArray(profs) && profs.length > 0) {
-        for (const prof of profs) {
-          if (slots.length >= MAX_SLOTS) break;
-          const profId = prof.id;
-          const profName = `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
-          const tipoCita = Array.isArray(prof.tipos_cita) && prof.tipos_cita.length > 0 ? prof.tipos_cita[0] : null;
-          if (!tipoCita) continue;
+      const fullList = await fetchProfessionalsFull();
+      // Filter to professionals that have this specialty at this branch
+      const matching = (Array.isArray(fullList) ? fullList : []).filter((prof) => {
+        if (!prof.es_activo || !prof.permite_agendaweb) return false;
+        const suc_esps = prof.sucursal_especialidades || [];
+        return suc_esps.some(
+          (se) => se.especialidad?.id === specialtyId && se.ubicacion?.id === branchId
+        );
+      });
 
-          try {
-            const profSlots = await searchAvailableSlots({
-              professionalId: profId,
-              ubicacionId: branchId,
-              especialidadId: specialtyId,
-              tipocitaId: tipoCita.id,
-              daysAhead: 14,
-            });
-            for (const s of profSlots) {
-              if (slots.length >= MAX_SLOTS) break;
-              slots.push({ ...s, specialty: specialtyName, specialtyId });
-            }
-          } catch { /* skip this professional */ }
+      for (const prof of matching) {
+        if (slots.length >= MAX_SLOTS) break;
+        const profId = prof.id;
+        const profName = `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+        const tipoCita = Array.isArray(prof.tipos_cita) && prof.tipos_cita.length > 0 ? prof.tipos_cita[0] : null;
+        if (!tipoCita) continue;
+
+        try {
+          const profSlots = await searchAvailableSlots({
+            professionalId: profId,
+            ubicacionId: branchId,
+            especialidadId: specialtyId,
+            tipocitaId: tipoCita.id,
+            daysAhead: 14,
+          });
+          for (const s of profSlots) {
+            if (slots.length >= MAX_SLOTS) break;
+            slots.push({ ...s, professional: s.professional || profName, specialty: specialtyName, specialtyId });
+          }
+        } catch (e2) {
+          console.log(`[medinet-api] searchSlotsBySpecialty prof ${profId} slots failed:`, e2.message);
         }
       }
     } catch (e) {
