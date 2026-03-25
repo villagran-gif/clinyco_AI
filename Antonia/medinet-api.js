@@ -40,6 +40,11 @@
  *   GET  /api/transversal/sucursal/list/                                   → branch list
  *   GET  /api/transversal/prevision/                                       → insurance list
  *   GET  /api/pacientes/existe-run/                                        → check patient by RUT
+ *   GET  /api/agenda/citas/proximos-cupos-all/{ubi}/                        → all profs + next slots (NO AUTH)
+ *   GET  /api/agenda/citas/proximos-cupos/{ubi}/{esp}/                     → profs + next slots by specialty (NO AUTH)
+ *   GET  /api/especialidad/get_por_ubicacion/{ubi}/                        → specialties by branch (NO AUTH)
+ *   GET  /api/agenda/citas/get-check-cupos/{ubi}/?identifier={rut}          → check cupos (NO AUTH)
+ *   POST /api/agenda/citas/agendaweb-add/                                  → book via agendaweb (NO AUTH, form-urlencoded)
  *   POST /api-public/schedule/appointment/add-overschedule/                → book (public API)
  *   GET  /api-public/schedule/appointment/all-appointments/{from}/{to}/
  *   GET  /api-public/schedule/appointment/{id}/
@@ -171,6 +176,37 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
     // Some endpoints return empty body on success (e.g. proximos-cupos-chatbot with no slots)
     if (!text || !text.trim()) return null;
     return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch without authentication — for /api/ endpoints that are publicly accessible.
+ * Proven to work via curl without any token (get-check-cupos, cupos-disponibles, agendaweb-add, etc.).
+ */
+async function noAuthFetch(path, { method = "GET", headers = {}, body = null, timeout = 15000 } = {}) {
+  const url = `${BASE_URL}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const options = {
+      method,
+      headers,
+      signal: controller.signal,
+    };
+    if (body) options.body = body;
+
+    const res = await fetch(url, options);
+    const contentType = res.headers.get("content-type") || "";
+    const data = contentType.includes("application/json") ? await res.json() : await res.text();
+
+    if (!res.ok) {
+      const msg = typeof data === "object" ? JSON.stringify(data) : String(data).slice(0, 300);
+      throw new Error(`Medinet ${method} ${path} → ${res.status}: ${msg}`);
+    }
+    return data;
   } finally {
     clearTimeout(timer);
   }
@@ -390,7 +426,7 @@ export async function bookOverschedule(data) {
 
 /**
  * Book via the agendaweb form endpoint (same endpoint the web UI uses).
- * Requires X-Requested-With: XMLHttpRequest and form-urlencoded body.
+ * No auth/token required — uses apiFormPost (form-urlencoded + XMLHttpRequest).
  *
  * IMPORTANT rules discovered via testing:
  *  - Header X-Requested-With: XMLHttpRequest is MANDATORY (500 without it)
@@ -449,6 +485,44 @@ export async function bookAgendaweb(opts) {
   });
 
   return apiFormPost("/api/agenda/citas/agendaweb-add/", params);
+}
+
+// ─── No-auth slot search endpoints ──────────────────────────────
+
+/**
+ * Full API-only slot search. No auth required.
+ * Returns ALL professionals + next available slots for a branch.
+ * Response: [{ id, nombres, paterno, especialidad, especialidad_id, tipo_cita,
+ *   duracion_cita, avatar_url, agendaweb_alert, is_resource,
+ *   cupos: [{ fecha: "YYYY-MM-DD", horas: ["HH:MM", ...] }] }]
+ */
+export async function fetchProximosCuposAll(ubicacionId) {
+  return noAuthFetch(
+    `/api/agenda/citas/proximos-cupos-all/${ubicacionId}/`,
+    { timeout: 20000 }
+  );
+}
+
+/**
+ * Slot search filtered by specialty. No auth required.
+ * Same response shape as proximos-cupos-all but filtered to one specialty.
+ */
+export async function fetchProximosCupos(ubicacionId, especialidadId) {
+  return noAuthFetch(
+    `/api/agenda/citas/proximos-cupos/${ubicacionId}/${especialidadId}/`,
+    { timeout: 20000 }
+  );
+}
+
+/**
+ * Fetch specialties for a branch. No auth required.
+ * Response: [{ id, nombre, ubicaciones, ... }]
+ */
+export async function fetchSpecialtiesByBranchNoAuth(ubicacionId) {
+  return noAuthFetch(
+    `/api/especialidad/get_por_ubicacion/${ubicacionId}/`,
+    { timeout: 10000 }
+  );
 }
 
 // ─── Appointments (query / manage) ─────────────────────────────
