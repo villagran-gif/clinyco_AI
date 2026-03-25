@@ -35,6 +35,7 @@ import {
 } from "./extraction/identity-normalizers.js";
 import {
   searchSlotsViaApi,
+  searchSlotsNoAuth,
   buildCacheFromApi,
   formatRutWithDots,
   bookAppointmentForPatient as apiBookAppointment,
@@ -354,21 +355,29 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
-  // ── 1. Try REST API first (no browser, no IP blocking) ──
+  // ── 1. Try no-auth REST API first (no browser, no token, no IP blocking) ──
+  try {
+    console.log("[medinet-api] Searching via no-auth API:", safeQuery);
+    const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
+    if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
+      console.log("[medinet-api] No-auth search succeeded:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
+      return noAuthResult;
+    }
+  } catch (noAuthError) {
+    console.warn("[medinet-api] No-auth search failed:", noAuthError.message);
+  }
+
+  // ── 1b. Try auth-based REST API if token is available ──
   if (process.env.MEDINET_API_TOKEN) {
     try {
-      console.log("[medinet-api] Searching via REST API:", safeQuery);
+      console.log("[medinet-api] Searching via auth API:", safeQuery);
       const apiResult = await searchSlotsViaApi({ query: safeQuery });
       if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
-        console.log("[medinet-api] API search succeeded:", apiResult.professional, "slots:", apiResult.available_slots?.length);
+        console.log("[medinet-api] Auth API search succeeded:", apiResult.professional, "slots:", apiResult.available_slots?.length);
         return apiResult;
       }
-      if (apiResult?.professional) {
-        console.log("[medinet-api] Professional found but no slots via API:", apiResult.professional);
-        // Fall through to Playwright which can scrape the calendar
-      }
     } catch (apiError) {
-      console.warn("[medinet-api] API search failed, falling through to Playwright:", apiError.message);
+      console.warn("[medinet-api] Auth API search failed, falling through to Playwright:", apiError.message);
     }
   }
 
@@ -414,39 +423,37 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
-  // ── 1. Try REST API booking first (no browser needed) ──
-  if (process.env.MEDINET_API_TOKEN) {
-    try {
-      console.log("[medinet-api] Booking via REST API:", slot.professionalId, slot.dataDia, slot.time);
-      // Check cupos to determine if patient exists (controls form field strategy)
-      const rut = formatRutWithDots(patientData.rut || patientData.run || "");
-      let pacienteExiste = true; // default safe assumption
-      if (rut) {
-        const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
-        if (cupos && !cupos.puede_agendar) {
-          return {
-            source: "antonia_api_cupos_check",
-            success: false,
-            message: cupos.mensaje || "El paciente no puede agendar.",
-            patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
-          };
-        }
-        if (cupos) pacienteExiste = cupos.paciente_existe !== false;
+  // ── 1. Try REST API booking first (no browser needed, no token required) ──
+  try {
+    console.log("[medinet-api] Booking via REST API:", slot.professionalId, slot.dataDia, slot.time);
+    // Check cupos to determine if patient exists (controls form field strategy)
+    const rut = formatRutWithDots(patientData.rut || patientData.run || "");
+    let pacienteExiste = true; // default safe assumption
+    if (rut) {
+      const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
+      if (cupos && !cupos.puede_agendar) {
+        return {
+          source: "antonia_api_cupos_check",
+          success: false,
+          message: cupos.mensaje || "El paciente no puede agendar.",
+          patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
+        };
       }
-      const apiResult = await apiBookAppointment({
-        slot,
-        patientData: { ...patientData, run: rut },
-        branchId: DEFAULT_BRANCH_ID,
-        pacienteExiste,
-      });
-      if (apiResult?.success) {
-        console.log("[medinet-api] API booking succeeded:", apiResult.appointmentId);
-        return apiResult;
-      }
-      console.log("[medinet-api] API booking returned failure:", apiResult?.message);
-    } catch (apiError) {
-      console.warn("[medinet-api] API booking failed, falling through to Playwright:", apiError.message);
+      if (cupos) pacienteExiste = cupos.paciente_existe !== false;
     }
+    const apiResult = await apiBookAppointment({
+      slot,
+      patientData: { ...patientData, run: rut },
+      branchId: DEFAULT_BRANCH_ID,
+      pacienteExiste,
+    });
+    if (apiResult?.success) {
+      console.log("[medinet-api] API booking succeeded:", apiResult.appointmentId);
+      return apiResult;
+    }
+    console.log("[medinet-api] API booking returned failure:", apiResult?.message);
+  } catch (apiError) {
+    console.warn("[medinet-api] API booking failed, falling through to Playwright:", apiError.message);
   }
 
   // Use search_and_book: searches for the slot first, then books in the same browser session.
