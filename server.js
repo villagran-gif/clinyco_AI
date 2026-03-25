@@ -357,41 +357,45 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
 
   // ── 1. Try no-auth REST API first (no browser, no token, no IP blocking) ──
   try {
-    console.log("[medinet-api] Searching via no-auth API:", safeQuery);
+    console.log("[medinet-search] path=api_noauth | query:", safeQuery);
     const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
     if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
-      console.log("[medinet-api] No-auth search succeeded:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
+      console.log("[medinet-search] path=api_noauth | SUCCESS:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
       return noAuthResult;
     }
+    console.log("[medinet-search] path=api_noauth | no slots found");
   } catch (noAuthError) {
-    console.warn("[medinet-api] No-auth search failed:", noAuthError.message);
+    console.warn("[medinet-search] path=api_noauth | ERROR:", noAuthError.message);
   }
 
   // ── 1b. Try auth-based REST API if token is available ──
   if (process.env.MEDINET_API_TOKEN) {
     try {
-      console.log("[medinet-api] Searching via auth API:", safeQuery);
+      console.log("[medinet-search] path=api_auth | query:", safeQuery);
       const apiResult = await searchSlotsViaApi({ query: safeQuery });
       if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
-        console.log("[medinet-api] Auth API search succeeded:", apiResult.professional, "slots:", apiResult.available_slots?.length);
+        console.log("[medinet-search] path=api_auth | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
         return apiResult;
       }
     } catch (apiError) {
-      console.warn("[medinet-api] Auth API search failed, falling through to Playwright:", apiError.message);
+      console.warn("[medinet-search] path=api_auth | ERROR:", apiError.message);
     }
   }
 
   // ── 2. Try remote Playwright worker ──
   if (useRemoteWorker()) {
-    console.log("[medinet] Search via remote worker:", safeQuery);
+    console.log("[medinet-search] path=fallback remote worker | query:", safeQuery);
     const result = await callMedinetWorker("search", {
       query: safeQuery,
       patientPhone: String(patientPhone || ""),
       patientMessage: String(patientMessage || ""),
       patientRut: rut
     }, timeoutMs);
-    if (result !== null) return result;
-    console.warn("[medinet] Remote worker search failed, falling back to local");
+    if (result !== null) {
+      console.log("[medinet-search] path=fallback remote worker | SUCCESS");
+      return result;
+    }
+    console.warn("[medinet-search] path=fallback remote worker | FAILED, falling to local");
   }
 
   // ── 3. Local Playwright (last resort) ──
@@ -425,13 +429,14 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
 
   // ── 1. Try REST API booking first (no browser needed, no token required) ──
   try {
-    console.log("[medinet-api] Booking via REST API:", slot.professionalId, slot.dataDia, slot.time);
+    console.log("[medinet-booking] path=api | starting:", slot.professionalId, slot.dataDia, slot.time);
     // Check cupos to determine if patient exists (controls form field strategy)
     const rut = formatRutWithDots(patientData.rut || patientData.run || "");
     let pacienteExiste = true; // default safe assumption
     if (rut) {
       const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
       if (cupos && !cupos.puede_agendar) {
+        console.log("[medinet-booking] path=api cupos_blocked | rut:", rut, "mensaje:", cupos.mensaje);
         return {
           source: "antonia_api_cupos_check",
           success: false,
@@ -440,6 +445,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
         };
       }
       if (cupos) pacienteExiste = cupos.paciente_existe !== false;
+      console.log("[medinet-booking] path=api checkCupos | rut:", rut, "pacienteExiste:", pacienteExiste);
     }
     const apiResult = await apiBookAppointment({
       slot,
@@ -448,26 +454,29 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       pacienteExiste,
     });
     if (apiResult?.success) {
-      console.log("[medinet-api] API booking succeeded:", apiResult.appointmentId);
+      console.log("[medinet-booking] path=api", apiResult.source, "| SUCCESS");
       return apiResult;
     }
-    console.log("[medinet-api] API booking returned failure:", apiResult?.message);
+    console.log("[medinet-booking] path=api FAILED:", apiResult?.source, apiResult?.message);
   } catch (apiError) {
-    console.warn("[medinet-api] API booking failed, falling through to Playwright:", apiError.message);
+    console.warn("[medinet-booking] path=api ERROR, falling through to Playwright:", apiError.message);
   }
 
   // Use search_and_book: searches for the slot first, then books in the same browser session.
-  // This avoids the "date not found in calendar" error that occurs with blind booking.
   const medinetMode = "search_and_book";
 
   // ── 2. Try remote Playwright worker ──
   if (useRemoteWorker()) {
-    console.log("[medinet] search_and_book via remote worker:", slot.professionalId, slot.dataDia, slot.time);
+    console.log("[medinet-booking] path=fallback remote worker:", slot.professionalId, slot.dataDia, slot.time);
     const result = await callMedinetWorker(medinetMode, { slot, patientData }, timeoutMs);
-    if (result !== null) return result;
-    console.warn("[medinet] Remote worker search_and_book failed, falling back to local");
+    if (result !== null) {
+      console.log("[medinet-booking] path=fallback remote worker | result:", result.success ? "SUCCESS" : "FAILED");
+      return result;
+    }
+    console.warn("[medinet-booking] path=fallback remote worker FAILED, falling to local");
   }
 
+  console.log("[medinet-booking] path=fallback local playwright:", slot.professionalId, slot.dataDia, slot.time);
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
       ...process.env,
