@@ -37,6 +37,8 @@
  *   GET  /api/transversal/sucursal/list/                                   → branch list
  *   GET  /api/transversal/prevision/                                       → insurance list
  *   GET  /api/pacientes/existe-run/                                        → check patient by RUT
+ *   GET  /api/agenda/citas/get-check-cupos/{ubi}/?identifier={rut}          → check cupos (NO AUTH)
+ *   POST /api/agenda/citas/agendaweb-add/                                  → book via agendaweb (NO AUTH, form-urlencoded)
  *   POST /api-public/schedule/appointment/add-overschedule/                → book (public API)
  *   GET  /api-public/schedule/appointment/all-appointments/{from}/{to}/
  *   GET  /api-public/schedule/appointment/{id}/
@@ -118,6 +120,37 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
       return await res.json();
     }
     return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch without authentication — for /api/ endpoints that are publicly accessible.
+ * Proven to work via curl without any token (get-check-cupos, cupos-disponibles, agendaweb-add, etc.).
+ */
+async function noAuthFetch(path, { method = "GET", headers = {}, body = null, timeout = 15000 } = {}) {
+  const url = `${BASE_URL}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const options = {
+      method,
+      headers,
+      signal: controller.signal,
+    };
+    if (body) options.body = body;
+
+    const res = await fetch(url, options);
+    const contentType = res.headers.get("content-type") || "";
+    const data = contentType.includes("application/json") ? await res.json() : await res.text();
+
+    if (!res.ok) {
+      const msg = typeof data === "object" ? JSON.stringify(data) : String(data).slice(0, 300);
+      throw new Error(`Medinet ${method} ${path} → ${res.status}: ${msg}`);
+    }
+    return data;
   } finally {
     clearTimeout(timer);
   }
@@ -305,6 +338,107 @@ export async function bookOverschedule(data) {
     body: data,
     timeout: 20000,
   });
+}
+
+// ─── No-auth endpoints (publicly accessible) ───────────────────
+
+/**
+ * Check cupos for a patient at a branch. No auth required.
+ * @param {number} ubicacionId  Branch ID (e.g. 39)
+ * @param {string} rut          Patient RUT with dv (e.g. "24.611.466-8")
+ * @returns {{ status, mensaje, paciente_existe, puede_agendar, maximo_cupos }}
+ */
+export async function checkCupos(ubicacionId, rut) {
+  return noAuthFetch(
+    `/api/agenda/citas/get-check-cupos/${ubicacionId}/?identifier=${encodeURIComponent(rut)}`,
+    { timeout: 10000 }
+  );
+}
+
+/**
+ * Book via agendaweb-add endpoint. No auth required.
+ * Uses application/x-www-form-urlencoded + X-Requested-With: XMLHttpRequest.
+ *
+ * @param {object} opts
+ * @param {object} opts.slot         - { dataDia, time, professionalId, duration }
+ * @param {number} opts.especialidad - Specialty ID
+ * @param {number} opts.tipocita     - Appointment type ID
+ * @param {number} opts.ubicacion    - Branch ID
+ * @param {boolean} opts.pacienteExiste - true if patient already exists in system
+ * @param {object} opts.paciente     - Patient data
+ * @param {string} opts.paciente.run
+ * @param {string} [opts.paciente.email]
+ * @param {string} [opts.paciente.telefono]
+ * @param {string} [opts.paciente.nombre]       - Required if !pacienteExiste
+ * @param {string} [opts.paciente.apellidos]     - Required if !pacienteExiste
+ * @param {string} [opts.paciente.sexo]          - Required if !pacienteExiste
+ * @param {string} [opts.paciente.fechaNacimiento] - Required if !pacienteExiste (YYYY-MM-DD)
+ * @param {string} [opts.paciente.direccion]     - Required if !pacienteExiste
+ * @param {string|number} [opts.paciente.aseguradora] - Required if !pacienteExiste
+ */
+export async function bookAgendaweb({ slot, especialidad, tipocita, ubicacion, pacienteExiste, paciente }) {
+  const fields = {
+    es_recurso: "false",
+    estado: "1",
+    fecha: slot.dataDia,
+    tipo: String(tipocita),
+    duracion: String(slot.duration || 30),
+    especialidad: String(especialidad),
+    hora: slot.time,
+    profesional: String(slot.professionalId),
+    sesion_id: "",
+    tipoagenda: "",
+    observacion: "Agendado via AgendaWeb.",
+    run: paciente.run,
+    ubicacion: String(ubicacion),
+    desde_agendaweb: "true",
+    is_patient_created_from_two_factor: "false",
+    email: paciente.email || "",
+    telefono_fijo: paciente.telefono || "",
+  };
+
+  if (pacienteExiste) {
+    // Existing patient: personal fields empty
+    fields.nombre = "";
+    fields.apellidos = "";
+    fields.direccion = "";
+    fields.sexo = "";
+    fields.fecha_nacimiento = "";
+    fields.aseguradora = "";
+  } else {
+    // New patient: all personal fields required
+    fields.nombre = paciente.nombre || "";
+    fields.apellidos = paciente.apellidos || "";
+    fields.direccion = paciente.direccion || "";
+    fields.sexo = paciente.sexo || "";
+    fields.fecha_nacimiento = paciente.fechaNacimiento || "";
+    fields.aseguradora = String(paciente.aseguradora || "");
+  }
+
+  const body = new URLSearchParams(fields).toString();
+
+  return noAuthFetch("/api/agenda/citas/agendaweb-add/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body,
+    timeout: 20000,
+  });
+}
+
+/**
+ * Full API-only search + book flow. No auth/token required.
+ * 1. checkCupos → paciente_existe?
+ * 2. fetchAvailableSlots (via noAuthFetch) → available slots
+ * 3. bookAgendaweb → confirm booking
+ */
+export async function searchSlotsNoAuth({ ubicacionId, especialidadId, profesionalId, fechaDesde, fechaHasta, tipocitaId }) {
+  return noAuthFetch(
+    `/api/agenda/citas/cupos-disponibles/${ubicacionId}/${especialidadId}/${profesionalId}/${fechaDesde}/${fechaHasta}/${tipocitaId}/`,
+    { timeout: 20000 }
+  );
 }
 
 // ─── Appointments (query / manage) ─────────────────────────────
