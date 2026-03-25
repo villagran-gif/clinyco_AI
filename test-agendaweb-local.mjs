@@ -11,8 +11,7 @@
 import { bookAgendaweb } from "./Antonia/medinet-api.js";
 
 const BASE = "https://clinyco.medinetapp.com";
-const TOKEN = "64c8840eeb9675d6b9427f8fe37751d007e62086";
-process.env.MEDINET_API_TOKEN ??= TOKEN;
+// No se necesitan credenciales para checkCupos ni agendaweb-add
 
 // ─── Config ──────────────────────────────────────────────────
 const BRANCH = 39;
