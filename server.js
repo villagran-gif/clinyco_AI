@@ -113,32 +113,51 @@ const execFileAsync = promisify(execFile);
 const MEDINET_WORKER_URL = (process.env.MEDINET_WORKER_URL || "").replace(/\/+$/, "");
 const MEDINET_WORKER_TOKEN = process.env.MEDINET_WORKER_TOKEN || "";
 
-async function callMedinetWorker(action, payload = {}, timeoutMs = 60000) {
-  if (!MEDINET_WORKER_URL || !MEDINET_WORKER_TOKEN) return null; // fallback to local
+async function callMedinetWorkerPath(path, body = {}, timeoutMs = 60000) {
+  if (!MEDINET_WORKER_URL || !MEDINET_WORKER_TOKEN) return null;
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs + 5000);
+
   try {
-    const res = await fetch(`${MEDINET_WORKER_URL}/medinet/run`, {
+    const res = await fetch(`${MEDINET_WORKER_URL}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${MEDINET_WORKER_TOKEN}`
       },
-      body: JSON.stringify({ action, payload: { ...payload, timeoutMs } }),
+      body: JSON.stringify(body),
       signal: controller.signal
     });
+
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`[medinet-worker-remote] ${action} HTTP ${res.status}:`, body.slice(0, 300));
+      const bodyText = await res.text().catch(() => "");
+      console.error(`[medinet-worker-remote] ${path} HTTP ${res.status}:`, bodyText.slice(0, 300));
       return null;
     }
+
     return await res.json();
   } catch (err) {
-    console.error(`[medinet-worker-remote] ${action} error:`, err.message);
+    console.error(`[medinet-worker-remote] ${path} error:`, err.message);
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function callMedinetWorkerLegacy(action, payload = {}, timeoutMs = 60000) {
+  return callMedinetWorkerPath("/medinet/run", {
+    action,
+    payload: { ...payload, timeoutMs }
+  }, timeoutMs);
+}
+
+async function callMedinetWorkerApiSearch(payload = {}, timeoutMs = 60000) {
+  return callMedinetWorkerPath("/medinet/api/search", payload, timeoutMs);
+}
+
+async function callMedinetWorkerApiBook(payload = {}, timeoutMs = 60000) {
+  return callMedinetWorkerPath("/medinet/api/book", payload, timeoutMs);
 }
 
 function useRemoteWorker() {
@@ -382,19 +401,36 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
     }
   }
 
-  // ── 2. Try remote Playwright worker ──
+  // ── 2. Try remote API-only worker ──
   if (useRemoteWorker()) {
-    console.log("[medinet-search] path=fallback remote worker | query:", safeQuery);
-    const result = await callMedinetWorker("search", {
+    console.log("[medinet-search] path=remote api worker | query:", safeQuery);
+
+    const result = await callMedinetWorkerApiSearch({
+      query: safeQuery,
+      patientRut: rut || "",
+      patientPhone: String(patientPhone || ""),
+      patientMessage: String(patientMessage || ""),
+      branchId: DEFAULT_BRANCH_ID
+    }, timeoutMs);
+
+    if (result !== null) {
+      console.log("[medinet-search] path=remote api worker | SUCCESS");
+      return result;
+    }
+
+    console.warn("[medinet-search] path=remote api worker | FAILED, trying legacy worker");
+    const legacyResult = await callMedinetWorkerLegacy("search", {
       query: safeQuery,
       patientPhone: String(patientPhone || ""),
       patientMessage: String(patientMessage || ""),
       patientRut: rut
     }, timeoutMs);
-    if (result !== null) {
+
+    if (legacyResult !== null) {
       console.log("[medinet-search] path=fallback remote worker | SUCCESS");
-      return result;
+      return legacyResult;
     }
+
     console.warn("[medinet-search] path=fallback remote worker | FAILED, falling to local");
   }
 
@@ -447,6 +483,15 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       if (cupos) pacienteExiste = cupos.paciente_existe !== false;
       console.log("[medinet-booking] path=api checkCupos | rut:", rut, "pacienteExiste:", pacienteExiste);
     }
+    console.log("[medinet-booking] slot payload:", JSON.stringify({
+      professionalId: slot?.professionalId,
+      specialtyId: slot?.specialtyId,
+      tipoCitaId: slot?.tipoCitaId,
+      duration: slot?.duration,
+      dataDia: slot?.dataDia,
+      time: slot?.time,
+      branchId: DEFAULT_BRANCH_ID
+    }));
     const apiResult = await apiBookAppointment({
       slot,
       patientData: { ...patientData, run: rut },
@@ -465,14 +510,29 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   // Use search_and_book: searches for the slot first, then books in the same browser session.
   const medinetMode = "search_and_book";
 
-  // ── 2. Try remote Playwright worker ──
+  // ── 2. Try remote API-only worker ──
   if (useRemoteWorker()) {
-    console.log("[medinet-booking] path=fallback remote worker:", slot.professionalId, slot.dataDia, slot.time);
-    const result = await callMedinetWorker(medinetMode, { slot, patientData }, timeoutMs);
+    console.log("[medinet-booking] path=remote api worker:", slot.professionalId, slot.dataDia, slot.time);
+
+    const result = await callMedinetWorkerApiBook({
+      slot,
+      patientData,
+      branchId: DEFAULT_BRANCH_ID
+    }, timeoutMs);
+
     if (result !== null) {
-      console.log("[medinet-booking] path=fallback remote worker | result:", result.success ? "SUCCESS" : "FAILED");
+      console.log("[medinet-booking] path=remote api worker | result:", result.success ? "SUCCESS" : "FAILED");
       return result;
     }
+
+    console.warn("[medinet-booking] path=remote api worker FAILED, trying legacy worker");
+    const legacyResult = await callMedinetWorkerLegacy("search_and_book", { slot, patientData }, timeoutMs);
+
+    if (legacyResult !== null) {
+      console.log("[medinet-booking] path=fallback remote worker | result:", legacyResult.success ? "SUCCESS" : "FAILED");
+      return legacyResult;
+    }
+
     console.warn("[medinet-booking] path=fallback remote worker FAILED, falling to local");
   }
 
