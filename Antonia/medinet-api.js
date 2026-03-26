@@ -633,7 +633,7 @@ export async function deleteOverschedule(appointmentId) {
 
 // ─── High-level helpers (used by server.js) ─────────────────────
 
-const MAX_SLOTS = 3;
+const MAX_SLOTS = 6;
 
 function normalizeText(value = "") {
   return String(value || "")
