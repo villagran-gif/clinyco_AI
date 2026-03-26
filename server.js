@@ -244,7 +244,7 @@ async function runMedinetAntoniaCache() {
   // ── 2. Try remote Playwright worker ──
   if (useRemoteWorker()) {
     console.log("[medinet] Cache refresh via remote worker:", MEDINET_WORKER_URL);
-    const result = await callMedinetWorker("cache", {}, timeoutMs);
+    const result = await callMedinetWorkerLegacy("cache", {}, timeoutMs);
     if (result !== null) {
       console.log("MEDINET CACHE REFRESH completed (remote worker)");
       return true;
