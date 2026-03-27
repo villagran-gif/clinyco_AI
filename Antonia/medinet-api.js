@@ -2,9 +2,10 @@
  * Medinet REST API client — replaces Playwright browser automation.
  *
  * Auth (two layers):
- *   /api-public/*  → "Authorization: Token <MEDINET_API_TOKEN>"
- *   /api/*          → Cookie session OR API-Key header (needs MEDINET_API_KEY)
- *                     Token auth is tried first; if 401/403, falls back.
+ *   /api-public/*  → "Authorization: MEDINET_JWT <jwt>" via POST /token-login/ (username/password)
+ *                     Falls back to "Authorization: Token <MEDINET_API_TOKEN>" if JWT env vars not set.
+ *   /api/*          → "Authorization: Token <MEDINET_API_TOKEN>"
+ *                     Falls back to Api-Key header or Cookie session.
  *
  * Real response shapes (from clinyco.medinetapp.com):
  *
@@ -48,7 +49,7 @@
  *   POST /api-public/schedule/appointment/add-overschedule/                → book (public API)
  *   GET  /api-public/schedule/appointment/all-appointments/{from}/{to}/
  *   GET  /api-public/schedule/appointment/{id}/
- *   PUT  /api-public/schedule/appointment/update-appointment-state/{id}/
+ *   POST /api-public/schedule/appointment/update-appointment-state/{id}/
  *   DEL  /api-public/schedule/appointment/{id}/delete-overschedule/
  */
 
@@ -70,10 +71,56 @@ function getSessionCookie() {
   return process.env.MEDINET_SESSION_COOKIE || "";
 }
 
+// ─── JWT Auth (for /api-public/* endpoints) ─────────────────────
+
+let _jwtToken = null;
+let _jwtExpiresAt = 0;
+
+/**
+ * Authenticate via POST /token-login/ and cache the JWT.
+ * Requires MEDINET_JWT_USERNAME and MEDINET_JWT_PASSWORD env vars.
+ */
+async function loginJwt() {
+  const username = process.env.MEDINET_JWT_USERNAME;
+  const password = process.env.MEDINET_JWT_PASSWORD;
+  if (!username || !password) {
+    throw new Error("MEDINET_JWT_USERNAME and MEDINET_JWT_PASSWORD are required for JWT auth");
+  }
+
+  const res = await fetch(`${BASE_URL}/token-login/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Medinet JWT login failed: ${res.status} ${text.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  _jwtToken = data.token;
+  if (!_jwtToken) throw new Error("Medinet /token-login/ did not return a token");
+  // Cache for ~22h (conservative; actual expiry may differ)
+  _jwtExpiresAt = Date.now() + 22 * 60 * 60 * 1000;
+  return _jwtToken;
+}
+
+async function getJwtToken() {
+  if (_jwtToken && Date.now() < _jwtExpiresAt) return _jwtToken;
+  return loginJwt();
+}
+
+function clearJwtToken() {
+  _jwtToken = null;
+  _jwtExpiresAt = 0;
+}
+
 /**
  * Build auth headers.
- * Token auth works for most parametric /api/* endpoints and /api-public/*.
- * Api-Key and Cookie are tried only as fallbacks for endpoints that reject Token.
+ *
+ * /api-public/* → MEDINET_JWT via /token-login/ (preferred), falls back to Token auth.
+ * /api/*        → Token auth (primary), falls back to Api-Key or Cookie.
  *
  * Verified working with Token auth (2026-03-25):
  *   /api/profesional/activos-list/                    (also works unauthenticated)
@@ -82,11 +129,28 @@ function getSessionCookie() {
  *   /api/pacientes/existe-run/?run=XX.XXX.XXX-X
  *   /api/agenda/citas/proximos-cupos-chatbot/{ubi}/{esp}/
  *   /api/agenda/tipocita/get-by-branch-specialty-and-professional/{b}/{e}/{p}/{r}/
+ *
+ * Verified working with MEDINET_JWT auth (2026-03-27):
+ *   /api-public/schedule/appointment/all-appointments/{from}/{to}/
+ *   /api-public/schedule/appointment/{id}/
+ *   /api-public/schedule/appointment/update-appointment-state/{id}/
+ *   /api-public/schedule/appointment/add-overschedule/
  */
-function buildHeaders(path) {
+async function buildHeaders(path) {
   const h = { "Content-Type": "application/json" };
 
-  // Token auth is the primary method — works for both /api/ and /api-public/
+  // /api-public/* endpoints use JWT auth (MEDINET_JWT prefix)
+  if (path.startsWith("/api-public/")) {
+    try {
+      const jwt = await getJwtToken();
+      h.Authorization = `MEDINET_JWT ${jwt}`;
+      return h;
+    } catch {
+      // JWT not configured — fall through to static Token auth
+    }
+  }
+
+  // /api/* endpoints and fallback: use static Token auth
   try {
     h.Authorization = `Token ${getToken()}`;
   } catch {
@@ -117,8 +181,15 @@ async function apiFormPost(path, params, { timeout = 20000 } = {}) {
 
   try {
     const h = { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" };
-    // Add auth if available
-    try { h.Authorization = `Token ${getToken()}`; } catch { /* no token */ }
+    // Add auth — JWT for /api-public/, Token for /api/
+    try {
+      if (path.startsWith("/api-public/")) {
+        const jwt = await getJwtToken();
+        h.Authorization = `MEDINET_JWT ${jwt}`;
+      } else {
+        h.Authorization = `Token ${getToken()}`;
+      }
+    } catch { /* no auth available */ }
 
     const res = await fetch(url, {
       method: "POST",
@@ -156,12 +227,26 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
   try {
     const options = {
       method,
-      headers: buildHeaders(path),
+      headers: await buildHeaders(path),
       signal: controller.signal,
     };
     if (body) options.body = JSON.stringify(body);
 
-    const res = await fetch(url, options);
+    let res = await fetch(url, options);
+
+    // Auto-refresh JWT on 401 for /api-public/ endpoints (single retry)
+    if (res.status === 401 && path.startsWith("/api-public/") && _jwtToken) {
+      clearJwtToken();
+      const controller2 = new AbortController();
+      const timer2 = setTimeout(() => controller2.abort(), timeout);
+      try {
+        options.headers = await buildHeaders(path);
+        options.signal = controller2.signal;
+        res = await fetch(url, options);
+      } finally {
+        clearTimeout(timer2);
+      }
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -589,12 +674,17 @@ export async function fetchSpecialtiesByBranchNoAuth(ubicacionId) {
  * Get all appointments in a date range.
  * @param {string} startDate "YYYY-MM-DD"
  * @param {string} endDate   "YYYY-MM-DD"
+ * @param {object} [opts]
+ * @param {number} [opts.branchId]  Filter by sucursal (branch_id query param)
+ * @param {number} [opts.statusId]  Filter by estado (status_id query param)
  */
-export async function fetchAllAppointments(startDate, endDate) {
-  return apiFetch(
-    `/api-public/schedule/appointment/all-appointments/${startDate}/${endDate}/`,
-    { timeout: 20000 }
-  );
+export async function fetchAllAppointments(startDate, endDate, { branchId, statusId } = {}) {
+  const params = new URLSearchParams();
+  if (branchId != null) params.set("branch_id", String(branchId));
+  if (statusId != null) params.set("status_id", String(statusId));
+  const qs = params.toString();
+  const path = `/api-public/schedule/appointment/all-appointments/${startDate}/${endDate}/${qs ? `?${qs}` : ""}`;
+  return apiFetch(path, { timeout: 20000 });
 }
 
 /**
@@ -616,11 +706,14 @@ export async function fetchAppointmentDetail(appointmentId) {
  * Confirm or cancel an appointment.
  * @param {number} appointmentId
  * @param {"Confirm"|"Cancel"} action
+ * @param {string} [observation]  Optional note (e.g. "Confirmado vía WhatsApp")
  */
-export async function updateAppointmentState(appointmentId, action) {
+export async function updateAppointmentState(appointmentId, action, observation) {
+  const body = { action };
+  if (observation) body.observation = observation;
   return apiFetch(`/api-public/schedule/appointment/update-appointment-state/${appointmentId}/`, {
-    method: "PUT",
-    body: { action },
+    method: "POST",
+    body,
   });
 }
 
