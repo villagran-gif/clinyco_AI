@@ -109,26 +109,38 @@ app.post("/medinet/api/search", authMiddleware, async (req, res) => {
     const rut = formatRutWithDots(patientRut || MEDINET_RUT);
     const branch = Number(branchId || DEFAULT_BRANCH_ID);
 
-    // Check cupos in parallel with no-auth slot search
-    const [cuposResult, searchResult] = await Promise.all([
-      checkCupos(branch, rut).catch((e) => ({ status: false, mensaje: e.message })),
-      searchSlotsNoAuth({ query, branchId: branch }).catch((e) => {
-        console.log("[medinet-worker] noauth search failed, trying auth:", e.message);
-        return null;
-      }),
-    ]);
+    // Check cupos first
+    const cuposResult = await checkCupos(branch, rut).catch((e) => ({ status: false, mensaje: e.message }));
 
-    // Fall back to auth-based search if no-auth returned no slots
-    const finalResult = (searchResult?.available_slots?.length > 0)
-      ? searchResult
-      : await searchSlotsViaApi({ query, branchId: branch }).catch((e) => {
-          console.log("[medinet-worker] auth search also failed:", e.message);
-          return searchResult || { source: "api_noauth", available_slots: [], patient_reply: null };
-        });
+    // Try auth-based search first (returns up to 6 slots with 14-day date range)
+    let searchResult = null;
+    try {
+      console.log("[medinet-worker] auth search | query:", query);
+      searchResult = await searchSlotsViaApi({ query, branchId: branch });
+      if (searchResult?.available_slots?.length > 0) {
+        console.log("[medinet-worker] auth search | SUCCESS:", searchResult.available_slots.length, "slots");
+      }
+    } catch (e) {
+      console.log("[medinet-worker] auth search failed, trying noauth:", e.message);
+    }
+
+    // Fall back to no-auth search if auth returned no slots
+    if (!searchResult?.available_slots?.length) {
+      try {
+        console.log("[medinet-worker] noauth search | query:", query);
+        searchResult = await searchSlotsNoAuth({ query, branchId: branch });
+        if (searchResult?.available_slots?.length > 0) {
+          console.log("[medinet-worker] noauth search | SUCCESS:", searchResult.available_slots.length, "slots");
+        }
+      } catch (e) {
+        console.log("[medinet-worker] noauth search also failed:", e.message);
+        searchResult = { source: "api_noauth", available_slots: [], patient_reply: null };
+      }
+    }
 
     return res.json({
-      ...finalResult,
-      source: finalResult.source || "antonia_api_search",
+      ...searchResult,
+      source: searchResult.source || "antonia_api_search",
       cupos: cuposResult,
     });
   } catch (error) {
