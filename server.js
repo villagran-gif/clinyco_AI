@@ -2818,7 +2818,28 @@ function hasScheduleIntent(text) {
     "QUIERO HORA",
     "QUIERO UNA HORA",
     "AGENDAR EN",
-    "AGENDA EN"
+    "AGENDA EN",
+    "NECESITO HORA",
+    "NECESITO UNA HORA",
+    "PEDIR HORA",
+    "PEDIR UNA HORA",
+    "SOLICITAR HORA",
+    "QUIERO ATENDERME",
+    "QUIERO OPERARME",
+    "ME QUIERO OPERAR",
+    "ME QUIERO ATENDER",
+    "CONSULTA CON",
+    "EVALUACION CON",
+    "EVALUACION DE",
+    "CONSULTAR CON",
+    "QUIERO CONSULTA",
+    "NECESITO CONSULTA",
+    "HORA DISPONIBLE",
+    "HORAS DISPONIBLES",
+    "VER HORA",
+    "VER HORAS",
+    "BUSCAR HORA",
+    "BUSCAR HORAS",
   ].some((phrase) => normalized.includes(phrase));
 }
 
@@ -2958,6 +2979,15 @@ function buildAntoniaFastPathCandidate(text, state) {
       || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
       || state.booking.pendingProfessional;
     return { shouldTry: true, reason: "schedule_intent_with_pending_professional", query: pendingQuery, trigger: "pending_professional" };
+  }
+
+  // Last resort: user has clear schedule intent but we couldn't extract specialty/professional.
+  // Try extractMedinetQuery as fallback — if it returns something meaningful, use it.
+  if (hasIntent) {
+    const fallbackQuery = extractMedinetQuery(text);
+    if (fallbackQuery && fallbackQuery.length >= 3) {
+      return { shouldTry: true, reason: "schedule_intent_fallback_query", query: fallbackQuery, trigger: "fallback" };
+    }
   }
 
   return noFastPath;
