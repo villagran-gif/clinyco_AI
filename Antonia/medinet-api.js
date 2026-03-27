@@ -1507,52 +1507,6 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
   };
 }
 
-// ─── V2 Patient endpoints (JWT) ──────────────────────────────────
-
-export async function fetchPatientV2(id) {
-  return apiFetch(`/api/v2/patients/patients/${id}/`);
-}
-
-export async function fetchPatientAppointments(id) {
-  return apiFetch(`/api/v2/patients/patients/${id}/appointments/`);
-}
-
-export async function fetchPatientRecipes(id) {
-  return apiFetch(`/api/v2/patients/patients/${id}/ambulatory-recipes/`);
-}
-
-export async function fetchPatientMedicalOrders(id) {
-  return apiFetch(`/api/v2/patients/patients/${id}/medical-orders/`);
-}
-
-export async function fetchPatientSurgicalOrders(id) {
-  return apiFetch(`/api/v2/patients/patients/${id}/surgical-orders/`);
-}
-
-export async function fetchPatientExams(id) {
-  return apiFetch(`/api/v2/patients/patients/${id}/exams/`);
-}
-
-// ─── V2 Transversal (JWT) ────────────────────────────────────────
-
-export async function fetchCommunes() {
-  return apiFetch("/api/v2/transversal/communes/");
-}
-
-export async function validateProfile(run) {
-  return apiFetch(`/api/v2/transversal/profiles/is-valid/${run}`);
-}
-
-// ─── V2 Schedule (JWT) ───────────────────────────────────────────
-
-export async function fetchAppointmentTypesV2() {
-  return apiFetch("/api/v2/schedule/appointments-types/");
-}
-
-export async function fetchSpecialtiesV2() {
-  return apiFetch("/api/v2/appointments/specialties/");
-}
-
 // ─── Payments (JWT) ──────────────────────────────────────────────
 
 export async function registerPayment(appointmentId, data) {
@@ -1566,7 +1520,4 @@ export async function fetchPaymentMethods() {
   return apiFetch("/api-public/billing/payments-methods/all/");
 }
 
-// ─── Export loginJwt for testing ─────────────────────────────────
-export { loginJwt };
-
-export { formatRutWithDots, DEFAULT_BRANCH_ID };
+export { loginJwt, formatRutWithDots, DEFAULT_BRANCH_ID };
