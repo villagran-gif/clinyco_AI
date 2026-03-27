@@ -87,7 +87,7 @@ const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.Z
 const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
 
 const MAX_HISTORY_MESSAGES = 14;
-const MAX_BOT_MESSAGES = 10;
+const MAX_BOT_MESSAGES = 16;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
@@ -280,6 +280,13 @@ const MEDINET_DISCARD_TOKENS = new Set([
   "TENGO", "TENER", "TIENES", "TIENE", "HAY",
   "DISPONIBLE", "DISPONIBLES", "DISPONIBILIDAD",
   "RESERVAR", "SOLICITAR", "PEDIR", "TU", "SI", "NO", "HOY", "MANANA",
+  // Palabras comunes que contaminan la búsqueda
+  "MI", "MIS", "ES", "A", "Y", "O", "SU", "SUS", "SE", "LE", "LO", "NOS", "SON",
+  "ESTA", "ESTE", "COMO", "MAS", "PERO", "YA", "TAMBIEN", "OTRA", "OTRO", "BIEN",
+  "GRACIAS", "MUCHAS", "BUEN", "BUENA", "BUENO", "OK", "OKAY", "VALE",
+  "CUANDO", "DONDE", "CUAL", "CUALES", "ALGUN", "ALGUNA", "ALGUNO",
+  "PROXIMA", "PROXIMO", "PROXIMAS", "PROXIMOS", "SIGUIENTE", "SEMANA", "MES",
+  "LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO",
   // títulos profesionales que contaminan la búsqueda
   "PSICOLOGA", "PSICOLOGO", "NUTRICIONISTA", "NUTRIOLOGA", "NUTRIOLOGO",
   "KINESIOLOGOA", "KINESIOLOGA", "KINESIOLOGO", "PEDIATRA", "CIRUJANO", "CIRUJANA",
@@ -302,7 +309,23 @@ const SPECIALTY_KEYWORDS = {
   BARIATRICA: "cirugia bariatrica", BARIATRICO: "cirugia bariatrica",
   ENDOCRINOLOGIA: "endocrinologia", ENDOCRINOLOGO: "endocrinologia", ENDOCRINOLOGA: "endocrinologia",
   GASTROENTEROLOGO: "gastroenterologia", GASTROENTEROLOGA: "gastroenterologia", GASTROENTEROLOGIA: "gastroenterologia",
-  PLASTICA: "cirugia plastica", PLASTICO: "cirugia plastica"
+  PLASTICA: "cirugia plastica", PLASTICO: "cirugia plastica",
+  KINESIOLOGIA: "kinesiologia", KINESIOLOGO: "kinesiologia", KINESIOLOGA: "kinesiologia",
+  PEDIATRIA: "pediatria", PEDIATRA: "pediatria",
+  DERMATOLOGIA: "dermatologia", DERMATOLOGO: "dermatologia", DERMATOLOGA: "dermatologia",
+  GINECOLOGIA: "ginecologia", GINECOLOGO: "ginecologia", GINECOLOGA: "ginecologia",
+  TRAUMATOLOGIA: "traumatologia", TRAUMATOLOGO: "traumatologia", TRAUMATOLOGA: "traumatologia",
+  OFTALMOLOGIA: "oftalmologia", OFTALMOLOGO: "oftalmologia", OFTALMOLOGA: "oftalmologia",
+  MEDICINA: "medicina general", GENERAL: "medicina general",
+  DEPORTIVA: "medicina deportiva",
+  ENFERMERIA: "enfermeria",
+  FONOAUDIOLOGIA: "fonoaudiologia", FONOAUDIOLOGO: "fonoaudiologia", FONOAUDIOLOGA: "fonoaudiologia",
+  CARDIOLOGIA: "cardiologia", CARDIOLOGO: "cardiologia", CARDIOLOGA: "cardiologia",
+  UROLOGIA: "urologia", UROLOGO: "urologia", UROLOGA: "urologia",
+  NEUROLOGIA: "neurologia", NEUROLOGO: "neurologia", NEUROLOGA: "neurologia",
+  OTORRINO: "otorrinolaringologia", OTORRINOLARINGOLOGIA: "otorrinolaringologia",
+  OBSTETRICIA: "obstetricia", MATRONA: "obstetricia",
+  DIABETOLOGIA: "diabetologia", DIABETOLOGO: "diabetologia", DIABETOLOGA: "diabetologia",
 };
 
 function extractCanonicalSpecialtyQuery(text) {
@@ -365,7 +388,18 @@ function extractMedinetQuery(text = "") {
   if (professionalName) return sanitizeMedinetProfessionalCandidate(professionalName) || professionalName.toLowerCase();
 
   const cleaned = sanitizeMedinetProfessionalCandidate(text);
-  return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
+  if (cleaned) return cleaned;
+  // Last resort: strip noise and take remaining meaningful words
+  const fallback = String(text || "")
+    .replace(/[¿?.,!;:()\d]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w.length > 2 && !MEDINET_DISCARD_TOKENS.has(w.toUpperCase()))
+    .slice(0, 3)
+    .join(" ")
+    .trim();
+  return fallback || null;
 }
 
 async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut }) {
@@ -2784,7 +2818,28 @@ function hasScheduleIntent(text) {
     "QUIERO HORA",
     "QUIERO UNA HORA",
     "AGENDAR EN",
-    "AGENDA EN"
+    "AGENDA EN",
+    "NECESITO HORA",
+    "NECESITO UNA HORA",
+    "PEDIR HORA",
+    "PEDIR UNA HORA",
+    "SOLICITAR HORA",
+    "QUIERO ATENDERME",
+    "QUIERO OPERARME",
+    "ME QUIERO OPERAR",
+    "ME QUIERO ATENDER",
+    "CONSULTA CON",
+    "EVALUACION CON",
+    "EVALUACION DE",
+    "CONSULTAR CON",
+    "QUIERO CONSULTA",
+    "NECESITO CONSULTA",
+    "HORA DISPONIBLE",
+    "HORAS DISPONIBLES",
+    "VER HORA",
+    "VER HORAS",
+    "BUSCAR HORA",
+    "BUSCAR HORAS",
   ].some((phrase) => normalized.includes(phrase));
 }
 
@@ -2924,6 +2979,15 @@ function buildAntoniaFastPathCandidate(text, state) {
       || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
       || state.booking.pendingProfessional;
     return { shouldTry: true, reason: "schedule_intent_with_pending_professional", query: pendingQuery, trigger: "pending_professional" };
+  }
+
+  // Last resort: user has clear schedule intent but we couldn't extract specialty/professional.
+  // Try extractMedinetQuery as fallback — if it returns something meaningful, use it.
+  if (hasIntent) {
+    const fallbackQuery = extractMedinetQuery(text);
+    if (fallbackQuery && fallbackQuery.length >= 3) {
+      return { shouldTry: true, reason: "schedule_intent_fallback_query", query: fallbackQuery, trigger: "fallback" };
+    }
   }
 
   return noFastPath;
