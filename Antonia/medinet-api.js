@@ -139,8 +139,8 @@ function clearJwtToken() {
 async function buildHeaders(path) {
   const h = { "Content-Type": "application/json" };
 
-  // /api-public/* endpoints use JWT auth (MEDINET_JWT prefix)
-  if (path.startsWith("/api-public/")) {
+  // /api-public/* and /api/v2/* endpoints use JWT auth (MEDINET_JWT prefix)
+  if (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) {
     try {
       const jwt = await getJwtToken();
       h.Authorization = `MEDINET_JWT ${jwt}`;
@@ -234,8 +234,8 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
 
     let res = await fetch(url, options);
 
-    // Auto-refresh JWT on 401 for /api-public/ endpoints (single retry)
-    if (res.status === 401 && path.startsWith("/api-public/") && _jwtToken) {
+    // Auto-refresh JWT on 401 for /api-public/ and /api/v2/ endpoints (single retry)
+    if (res.status === 401 && (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) && _jwtToken) {
       clearJwtToken();
       const controller2 = new AbortController();
       const timer2 = setTimeout(() => controller2.abort(), timeout);
@@ -1506,5 +1506,67 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
     patient_reply,
   };
 }
+
+// ─── V2 Patient endpoints (JWT) ──────────────────────────────────
+
+export async function fetchPatientV2(id) {
+  return apiFetch(`/api/v2/patients/patients/${id}/`);
+}
+
+export async function fetchPatientAppointments(id) {
+  return apiFetch(`/api/v2/patients/patients/${id}/appointments/`);
+}
+
+export async function fetchPatientRecipes(id) {
+  return apiFetch(`/api/v2/patients/patients/${id}/ambulatory-recipes/`);
+}
+
+export async function fetchPatientMedicalOrders(id) {
+  return apiFetch(`/api/v2/patients/patients/${id}/medical-orders/`);
+}
+
+export async function fetchPatientSurgicalOrders(id) {
+  return apiFetch(`/api/v2/patients/patients/${id}/surgical-orders/`);
+}
+
+export async function fetchPatientExams(id) {
+  return apiFetch(`/api/v2/patients/patients/${id}/exams/`);
+}
+
+// ─── V2 Transversal (JWT) ────────────────────────────────────────
+
+export async function fetchCommunes() {
+  return apiFetch("/api/v2/transversal/communes/");
+}
+
+export async function validateProfile(run) {
+  return apiFetch(`/api/v2/transversal/profiles/is-valid/${run}`);
+}
+
+// ─── V2 Schedule (JWT) ───────────────────────────────────────────
+
+export async function fetchAppointmentTypesV2() {
+  return apiFetch("/api/v2/schedule/appointments-types/");
+}
+
+export async function fetchSpecialtiesV2() {
+  return apiFetch("/api/v2/appointments/specialties/");
+}
+
+// ─── Payments (JWT) ──────────────────────────────────────────────
+
+export async function registerPayment(appointmentId, data) {
+  return apiFetch(`/api-public/billing/appointments/${appointmentId}/register-payment/`, {
+    method: "POST",
+    body: data,
+  });
+}
+
+export async function fetchPaymentMethods() {
+  return apiFetch("/api-public/billing/payments-methods/all/");
+}
+
+// ─── Export loginJwt for testing ─────────────────────────────────
+export { loginJwt };
 
 export { formatRutWithDots, DEFAULT_BRANCH_ID };
