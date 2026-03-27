@@ -4608,7 +4608,7 @@ app.post("/messages", async (req, res) => {
     if ((state.booking.awaitingPatientData || state.booking.awaitingConfirmation) && state.booking.chosenSlot) {
       // If exactly one field is missing, map the user's response directly to that field
       // (e.g., bot asks "me falta: apellido materno" → user replies "Morles")
-      if (state.booking.missingFields?.length === 1) {
+      if (state.booking.missingFields?.length >= 1) {
         tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
       }
       // Re-extract patient data (updateDraftsFromText may have captured new fields)
