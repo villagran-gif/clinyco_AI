@@ -365,13 +365,17 @@ const FIRST_NAME_ALIASES = {
   BENCINA: "francisco bencina",
 };
 
+const BOT_RESERVED_NAMES = new Set(["ANTONIA", "CLINYCO", "BOT"]);
+
 function extractKnownProfessionalAlias(text) {
   const nk = normalizeKey(text);
   for (const prof of KNOWN_AGENDA_PROFESSIONALS) {
+    if (BOT_RESERVED_NAMES.has(prof)) continue;
     if (nk.includes(prof)) return prof.toLowerCase();
   }
   const tokens = nk.split(/\s+/);
   for (const t of tokens) {
+    if (BOT_RESERVED_NAMES.has(t)) continue;
     if (FIRST_NAME_ALIASES[t]) return FIRST_NAME_ALIASES[t];
   }
   return null;
@@ -408,34 +412,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
-  // ── 1. Try no-auth REST API first (no browser, no token, no IP blocking) ──
-  try {
-    console.log("[medinet-search] path=api_noauth | query:", safeQuery);
-    const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
-    if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
-      console.log("[medinet-search] path=api_noauth | SUCCESS:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
-      return noAuthResult;
-    }
-    console.log("[medinet-search] path=api_noauth | no slots found");
-  } catch (noAuthError) {
-    console.warn("[medinet-search] path=api_noauth | ERROR:", noAuthError.message);
-  }
-
-  // ── 1b. Try auth-based REST API if token is available ──
-  if (process.env.MEDINET_API_TOKEN) {
-    try {
-      console.log("[medinet-search] path=api_auth | query:", safeQuery);
-      const apiResult = await searchSlotsViaApi({ query: safeQuery });
-      if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
-        console.log("[medinet-search] path=api_auth | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
-        return apiResult;
-      }
-    } catch (apiError) {
-      console.warn("[medinet-search] path=api_auth | ERROR:", apiError.message);
-    }
-  }
-
-  // ── 2. Try remote API-only worker ──
+  // ── 1. Try remote API-only worker first (fastest + avoids Cloudflare IP blocks) ──
   if (useRemoteWorker()) {
     console.log("[medinet-search] path=remote api worker | query:", safeQuery);
 
@@ -468,6 +445,40 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
     console.warn("[medinet-search] path=fallback remote worker | FAILED, falling to local");
   }
 
+  // ── 2. Try no-auth REST API (no browser, no token) ──
+  try {
+    console.log("[medinet-search] path=api_noauth | query:", safeQuery);
+    const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
+    if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
+      console.log("[medinet-search] path=api_noauth | SUCCESS:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
+      return noAuthResult;
+    }
+    console.log("[medinet-search] path=api_noauth | no slots found");
+  } catch (noAuthError) {
+    console.warn("[medinet-search] path=api_noauth | ERROR:", noAuthError.message);
+  }
+
+  // ── 2b. Try auth-based REST API if token is available ──
+  if (process.env.MEDINET_API_TOKEN) {
+    try {
+      console.log("[medinet-search] path=api_auth | query:", safeQuery);
+      const apiResult = await searchSlotsViaApi({ query: safeQuery });
+      if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
+        console.log("[medinet-search] path=api_auth | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
+        return apiResult;
+      }
+    } catch (apiError) {
+      console.warn("[medinet-search] path=api_auth | ERROR:", apiError.message);
+    }
+  }
+
+  // If a remote worker is configured, don't attempt local Playwright as a fallback:
+  // it's noisy and typically fails in environments where Medinet blocks non-Chile IPs.
+  if (useRemoteWorker()) {
+    console.warn("[medinet-search] path=fallback local playwright | SKIPPED (remote worker configured)");
+    return null;
+  }
+
   // ── 3. Local Playwright (last resort) ──
   const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
     env: {
@@ -497,7 +508,33 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
-  // ── 1. Try REST API booking first (no browser needed, no token required) ──
+  // ── 1. Try remote API-only worker first (fastest + avoids Cloudflare IP blocks) ──
+  if (useRemoteWorker()) {
+    console.log("[medinet-booking] path=remote api worker:", slot.professionalId, slot.dataDia, slot.time);
+
+    const result = await callMedinetWorkerApiBook({
+      slot,
+      patientData,
+      branchId: DEFAULT_BRANCH_ID
+    }, timeoutMs);
+
+    if (result !== null) {
+      console.log("[medinet-booking] path=remote api worker | result:", result.success ? "SUCCESS" : "FAILED");
+      return result;
+    }
+
+    console.warn("[medinet-booking] path=remote api worker FAILED, trying legacy worker");
+    const legacyResult = await callMedinetWorkerLegacy("search_and_book", { slot, patientData }, timeoutMs);
+
+    if (legacyResult !== null) {
+      console.log("[medinet-booking] path=fallback remote worker | result:", legacyResult.success ? "SUCCESS" : "FAILED");
+      return legacyResult;
+    }
+
+    console.warn("[medinet-booking] path=fallback remote worker FAILED, falling to local");
+  }
+
+  // ── 2. Try REST API booking (direct) ──
   try {
     console.log("[medinet-booking] path=api | starting:", slot.professionalId, slot.dataDia, slot.time);
     // Check cupos to determine if patient exists (controls form field strategy)
@@ -544,30 +581,11 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   // Use search_and_book: searches for the slot first, then books in the same browser session.
   const medinetMode = "search_and_book";
 
-  // ── 2. Try remote API-only worker ──
+  // If a remote worker is configured, don't attempt local Playwright as a fallback:
+  // it's noisy and typically fails in environments where Medinet blocks non-Chile IPs.
   if (useRemoteWorker()) {
-    console.log("[medinet-booking] path=remote api worker:", slot.professionalId, slot.dataDia, slot.time);
-
-    const result = await callMedinetWorkerApiBook({
-      slot,
-      patientData,
-      branchId: DEFAULT_BRANCH_ID
-    }, timeoutMs);
-
-    if (result !== null) {
-      console.log("[medinet-booking] path=remote api worker | result:", result.success ? "SUCCESS" : "FAILED");
-      return result;
-    }
-
-    console.warn("[medinet-booking] path=remote api worker FAILED, trying legacy worker");
-    const legacyResult = await callMedinetWorkerLegacy("search_and_book", { slot, patientData }, timeoutMs);
-
-    if (legacyResult !== null) {
-      console.log("[medinet-booking] path=fallback remote worker | result:", legacyResult.success ? "SUCCESS" : "FAILED");
-      return legacyResult;
-    }
-
-    console.warn("[medinet-booking] path=fallback remote worker FAILED, falling to local");
+    console.warn("[medinet-booking] path=fallback local playwright | SKIPPED (remote worker configured)");
+    return null;
   }
 
   console.log("[medinet-booking] path=fallback local playwright:", slot.professionalId, slot.dataDia, slot.time);
@@ -2960,6 +2978,10 @@ function extractProfessionalReference(text) {
 
   const titledMatch = source.match(/\b(?:dr|dra|doctor|doctora)\.?\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
   if (titledMatch) {
+    const candidateNorm = normalizeKey(titledMatch[1]);
+    if (BOT_RESERVED_NAMES.has(candidateNorm)) {
+      return { professionalName: null, matchType: null };
+    }
     return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
 
@@ -2970,6 +2992,9 @@ function extractProfessionalReference(text) {
     const candidateNorm = normalizeKey(withConMatch[1]);
     const isTimeExpression = /\b(PRIMERA|SEGUNDA|TERCERA|CUARTA|ULTIMA|PROXIMA|SIGUIENTE|ESTA|ESA|OTRA|SEMANA|MES|LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO|ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE|MANANA|HOY|AYER|TARDE|NOCHE)\b/.test(candidateNorm);
     if (!isTimeExpression) {
+      if (BOT_RESERVED_NAMES.has(candidateNorm)) {
+        return { professionalName: null, matchType: null };
+      }
       return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
     }
   }
@@ -3030,6 +3055,7 @@ function buildAntoniaFastPathCandidate(text, state) {
   const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
 
   const alias = extractKnownProfessionalAlias(text);
+  if (alias && BOT_RESERVED_NAMES.has(normalizeKey(alias))) return noFastPath;
   // Trigger fast-path if professional is named AND (has schedule intent OR we're already in schedule_request stage)
   const inScheduleStage = state.identity?.lastResolvedStage === "schedule_request" ||
     state.booking?.awaitingSlotChoice || state.booking?.pendingProfessional;
@@ -3376,6 +3402,28 @@ function buildStateSummary(state) {
 
   if (state.identity.lastQuestionReason) {
     parts.push(`[RESOLVER_MOTIVO] ${state.identity.lastQuestionReason}`);
+  }
+
+  const booking = state.booking || {};
+  const bookingAwaiting = [];
+  if (booking.awaitingSlotChoice) bookingAwaiting.push("slot_choice");
+  if (booking.awaitingRutVerification) bookingAwaiting.push("rut_verification");
+  if (booking.awaitingPatientData) bookingAwaiting.push("patient_data");
+  if (booking.awaitingConfirmation) bookingAwaiting.push("confirmation");
+  const bookingActive = !!(booking.pendingSlots?.length || booking.chosenSlot || bookingAwaiting.length);
+  if (bookingActive) {
+    const chosen = booking.chosenSlot
+      ? `${booking.chosenSlot.date || booking.chosenSlot.dataDia || ""} ${booking.chosenSlot.time || ""}`.trim()
+      : "";
+    parts.push([
+      `[BOOKING_ACTIVO]`,
+      `profesional=${booking.pendingProfessional || ""}`,
+      `especialidad=${booking.pendingSpecialty || ""}`,
+      `slots=${booking.pendingSlots?.length || 0}`,
+      `elegido=${chosen}`,
+      `esperando=${bookingAwaiting.join(",")}`,
+      `faltantes=${Array.isArray(booking.missingFields) ? booking.missingFields.join(",") : ""}`
+    ].join(" "));
   }
 
   return parts.join("\n");
@@ -4606,9 +4654,9 @@ app.post("/messages", async (req, res) => {
 
     // --- Antonia booking: patient providing missing data ---
     if ((state.booking.awaitingPatientData || state.booking.awaitingConfirmation) && state.booking.chosenSlot) {
-      // If exactly one field is missing, map the user's response directly to that field
+      // If at least one field is missing, map the user's response to the next required field
       // (e.g., bot asks "me falta: apellido materno" → user replies "Morles")
-      if (state.booking.missingFields?.length === 1) {
+      if (state.booking.missingFields?.length >= 1) {
         tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
       }
       // Re-extract patient data (updateDraftsFromText may have captured new fields)
@@ -5211,121 +5259,134 @@ app.post("/messages", async (req, res) => {
       state.dealDraft.dealValidacionPad = "No aplica PAD Fonasa por Tramo A";
     }
 
-    const resolverContext = resolveIdentityAndContext({
-      state,
-      supportResult: state.identity.supportRaw,
-      sellResult: state.identity.sellRaw,
-      latestUserText: userText
-    });
-    const resolverDecision = getNextBestQuestion(
-      state,
-      state.identity.supportRaw,
-      state.identity.sellRaw,
-      userText
+    const bookingActiveForRouting = !!(
+      state.booking?.pendingSlots?.length ||
+      state.booking?.awaitingSlotChoice ||
+      state.booking?.awaitingRutVerification ||
+      state.booking?.awaitingPatientData ||
+      state.booking?.awaitingConfirmation ||
+      state.booking?.chosenSlot
     );
 
-    applyResolverToState(state, resolverDecision);
-    console.log("Resolver context:", safeJson(resolverContext));
-    console.log("Resolver decision:", safeJson(resolverDecision));
-
-    const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);
-    const hardDerive =
-      resolverDecision.shouldDerive && (
-        resolverDecision.caseType === "E" ||
-        /clinical_record_only|ficha clinica|ficha clínica/i.test(String(resolverDecision.reason || "")) ||
-        unknownScheduleRequest.shouldDerive
+    if (!bookingActiveForRouting) {
+      const resolverContext = resolveIdentityAndContext({
+        state,
+        supportResult: state.identity.supportRaw,
+        sellResult: state.identity.sellRaw,
+        latestUserText: userText
+      });
+      const resolverDecision = getNextBestQuestion(
+        state,
+        state.identity.supportRaw,
+        state.identity.sellRaw,
+        userText
       );
 
-    if (!antoniaFastPathAttempted && resolverContext.stage === "agenda_without_direct_access") {
-      try {
-        // Prefer pendingProfessional from prior search over extracting from raw text
-        // (avoids searching for generic words like "agendar")
-        const medinetQuery = (state.booking?.pendingProfessional
-          ? (extractKnownProfessionalAlias(state.booking.pendingProfessional)
-             || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
-             || state.booking.pendingProfessional)
-          : extractMedinetQuery(userText));
-        const antoniaResponse = await runMedinetAntonia({
-          query: medinetQuery,
-          patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
-          patientMessage: userText
-        });
+      applyResolverToState(state, resolverDecision);
+      console.log("Resolver context:", safeJson(resolverContext));
+      console.log("Resolver decision:", safeJson(resolverDecision));
 
-        if (antoniaResponse?.patient_reply) {
-          // Store available slots for booking flow
-          if (antoniaResponse.available_slots?.length) {
-            state.booking.pendingSlots = antoniaResponse.available_slots;
-            state.booking.pendingProfessional = antoniaResponse.professional || null;
-            state.booking.pendingSpecialty = antoniaResponse.specialty || null;
-            state.booking.awaitingSlotChoice = true;
-            state.booking.awaitingRutVerification = false;
-            state.booking.awaitingPatientData = false;
-            state.booking.awaitingConfirmation = false;
-            state.booking.chosenSlot = null;
-            state.booking.missingFields = null;
-            state.booking.slotReminderSent = false;
-            await persistConversationSnapshot(conversationId, state, channelLabel);
-          }
-          return res.json(await sendManagedReply({
-            appId,
-            conversationId,
-            messageId,
-            userText,
-            reply: antoniaResponse.patient_reply,
-            kind: "antonia_medinet_reply",
-            state,
-            info,
-            channelLabel,
-            resolverDecision: {
-              ...resolverDecision,
-              nextAction: "antonia_medinet_reply",
-              reason: "Agenda resuelta por Antonia Medinet",
-              antoniaResponse
+      const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);
+      const hardDerive =
+        resolverDecision.shouldDerive && (
+          resolverDecision.caseType === "E" ||
+          /clinical_record_only|ficha clinica|ficha clínica/i.test(String(resolverDecision.reason || "")) ||
+          unknownScheduleRequest.shouldDerive
+        );
+
+      if (!antoniaFastPathAttempted && resolverContext.stage === "agenda_without_direct_access") {
+        try {
+          // Prefer pendingProfessional from prior search over extracting from raw text
+          // (avoids searching for generic words like "agendar")
+          const medinetQuery = (state.booking?.pendingProfessional
+            ? (extractKnownProfessionalAlias(state.booking.pendingProfessional)
+               || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
+               || state.booking.pendingProfessional)
+            : extractMedinetQuery(userText));
+          const antoniaResponse = await runMedinetAntonia({
+            query: medinetQuery,
+            patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
+            patientMessage: userText
+          });
+
+          if (antoniaResponse?.patient_reply) {
+            // Store available slots for booking flow
+            if (antoniaResponse.available_slots?.length) {
+              state.booking.pendingSlots = antoniaResponse.available_slots;
+              state.booking.pendingProfessional = antoniaResponse.professional || null;
+              state.booking.pendingSpecialty = antoniaResponse.specialty || null;
+              state.booking.awaitingSlotChoice = true;
+              state.booking.awaitingRutVerification = false;
+              state.booking.awaitingPatientData = false;
+              state.booking.awaitingConfirmation = false;
+              state.booking.chosenSlot = null;
+              state.booking.missingFields = null;
+              state.booking.slotReminderSent = false;
+              await persistConversationSnapshot(conversationId, state, channelLabel);
             }
-          }));
+            return res.json(await sendManagedReply({
+              appId,
+              conversationId,
+              messageId,
+              userText,
+              reply: antoniaResponse.patient_reply,
+              kind: "antonia_medinet_reply",
+              state,
+              info,
+              channelLabel,
+              resolverDecision: {
+                ...resolverDecision,
+                nextAction: "antonia_medinet_reply",
+                reason: "Agenda resuelta por Antonia Medinet",
+                antoniaResponse
+              }
+            }));
+          }
+        } catch (error) {
+          if (error.message?.includes("Executable doesn't exist")) {
+            console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
+          }
+          console.error("ANTONIA MEDINET ERROR:", error.message);
         }
-      } catch (error) {
-        if (error.message?.includes("Executable doesn't exist")) {
-          console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
-        }
-        console.error("ANTONIA MEDINET ERROR:", error.message);
       }
-    }
 
-    if (resolverDecision.shouldDerive && !hardDerive) {
-      resolverDecision.shouldDerive = false;
-    }
+      if (resolverDecision.shouldDerive && !hardDerive) {
+        resolverDecision.shouldDerive = false;
+      }
 
-    if (hardDerive) {
-      return res.json(await sendManagedReply({
-        appId,
-        conversationId,
-        messageId,
-        userText,
-        reply: resolverDecision.question,
-        kind: "resolver_derive",
-        state,
-        info,
-        channelLabel,
-        resolverDecision,
-        disableAiAfterSend: true,
-        handoffReasonAfterSend: resolverDecision.caseType === "E" ? "clinical_record_only" : "resolver_derive"
-      }));
-    }
+      if (hardDerive) {
+        return res.json(await sendManagedReply({
+          appId,
+          conversationId,
+          messageId,
+          userText,
+          reply: resolverDecision.question,
+          kind: "resolver_derive",
+          state,
+          info,
+          channelLabel,
+          resolverDecision,
+          disableAiAfterSend: true,
+          handoffReasonAfterSend: resolverDecision.caseType === "E" ? "clinical_record_only" : "resolver_derive"
+        }));
+      }
 
-    if (shouldUseResolverQuestion(state, resolverDecision, userText)) {
-      return res.json(await sendManagedReply({
-        appId,
-        conversationId,
-        messageId,
-        userText,
-        reply: resolverDecision.question,
-        kind: "resolver_question",
-        state,
-        info,
-        channelLabel,
-        resolverDecision
-      }));
+      if (shouldUseResolverQuestion(state, resolverDecision, userText)) {
+        return res.json(await sendManagedReply({
+          appId,
+          conversationId,
+          messageId,
+          userText,
+          reply: resolverDecision.question,
+          kind: "resolver_question",
+          state,
+          info,
+          channelLabel,
+          resolverDecision
+        }));
+      }
+    } else {
+      console.log("Resolver suppressed: booking flow active");
     }
 
     console.log("Conversation history:", safeJson(getHistory(conversationId)));
