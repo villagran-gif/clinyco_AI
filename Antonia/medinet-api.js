@@ -51,6 +51,20 @@
  *   GET  /api-public/schedule/appointment/{id}/
  *   POST /api-public/schedule/appointment/update-appointment-state/{id}/
  *   DEL  /api-public/schedule/appointment/{id}/delete-overschedule/
+ *   POST /api-public/schedule/appointment/{id}/register-payment/
+ *   GET  /api-public/billing/payments-methods/all/
+ *
+ * API v2 (JWT auth — /api/v2/*):
+ *   GET  /api/v2/patients/patients/{id}/                              → patient detail
+ *   GET  /api/v2/patients/patients/{id}/appointments/                 → patient appointments
+ *   GET  /api/v2/patients/patients/{id}/ambulatory-recipes/           → patient recipes
+ *   GET  /api/v2/patients/patients/{id}/medical-orders/               → patient medical orders
+ *   GET  /api/v2/patients/patients/{id}/surgical-orders/              → patient surgical orders
+ *   GET  /api/v2/patients/patients/{id}/exams/                        → patient exams
+ *   GET  /api/v2/transversal/communes/                                → communes list
+ *   GET  /api/v2/transversal/profiles/is-valid/{run}                  → validate RUT
+ *   GET  /api/v2/schedule/appointments-types/                         → appointment types (v2)
+ *   GET  /api/v2/appointments/specialties/                            → specialties (v2)
  */
 
 const BASE_URL = "https://clinyco.medinetapp.com";
@@ -139,8 +153,8 @@ function clearJwtToken() {
 async function buildHeaders(path) {
   const h = { "Content-Type": "application/json" };
 
-  // /api-public/* endpoints use JWT auth (MEDINET_JWT prefix)
-  if (path.startsWith("/api-public/")) {
+  // /api-public/* and /api/v2/* endpoints use JWT auth (MEDINET_JWT prefix)
+  if (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) {
     try {
       const jwt = await getJwtToken();
       h.Authorization = `MEDINET_JWT ${jwt}`;
@@ -183,7 +197,7 @@ async function apiFormPost(path, params, { timeout = 20000 } = {}) {
     const h = { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" };
     // Add auth — JWT for /api-public/, Token for /api/
     try {
-      if (path.startsWith("/api-public/")) {
+      if (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) {
         const jwt = await getJwtToken();
         h.Authorization = `MEDINET_JWT ${jwt}`;
       } else {
@@ -234,8 +248,8 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
 
     let res = await fetch(url, options);
 
-    // Auto-refresh JWT on 401 for /api-public/ endpoints (single retry)
-    if (res.status === 401 && path.startsWith("/api-public/") && _jwtToken) {
+    // Auto-refresh JWT on 401 for /api-public/ and /api/v2/ endpoints (single retry)
+    if (res.status === 401 && (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) && _jwtToken) {
       clearJwtToken();
       const controller2 = new AbortController();
       const timer2 = setTimeout(() => controller2.abort(), timeout);
@@ -721,6 +735,129 @@ export async function deleteOverschedule(appointmentId) {
   return apiFetch(`/api-public/schedule/appointment/${appointmentId}/delete-overschedule/`, {
     method: "DELETE",
   });
+}
+
+// ─── API v2: Patients ─────────────────────────────────────────────
+
+/**
+ * Get patient detail by ID.
+ * GET /api/v2/patients/patients/{id}/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPatientV2(patientId) {
+  return apiFetch(`/api/v2/patients/patients/${patientId}/`, { timeout: 20000 });
+}
+
+/**
+ * Get all appointments for a patient.
+ * GET /api/v2/patients/patients/{id}/appointments/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPatientAppointments(patientId) {
+  return apiFetch(`/api/v2/patients/patients/${patientId}/appointments/`, { timeout: 20000 });
+}
+
+/**
+ * Get ambulatory recipes for a patient.
+ * GET /api/v2/patients/patients/{id}/ambulatory-recipes/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPatientRecipes(patientId) {
+  return apiFetch(`/api/v2/patients/patients/${patientId}/ambulatory-recipes/`, { timeout: 20000 });
+}
+
+/**
+ * Get medical orders for a patient.
+ * GET /api/v2/patients/patients/{id}/medical-orders/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPatientMedicalOrders(patientId) {
+  return apiFetch(`/api/v2/patients/patients/${patientId}/medical-orders/`, { timeout: 20000 });
+}
+
+/**
+ * Get surgical orders for a patient.
+ * GET /api/v2/patients/patients/{id}/surgical-orders/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPatientSurgicalOrders(patientId) {
+  return apiFetch(`/api/v2/patients/patients/${patientId}/surgical-orders/`, { timeout: 20000 });
+}
+
+/**
+ * Get exams for a patient.
+ * GET /api/v2/patients/patients/{id}/exams/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPatientExams(patientId) {
+  return apiFetch(`/api/v2/patients/patients/${patientId}/exams/`, { timeout: 20000 });
+}
+
+// ─── API v2: Transversal ─────────────────────────────────────────
+
+/**
+ * Get all communes (comunas de Chile).
+ * GET /api/v2/transversal/communes/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchCommunes() {
+  return apiFetch("/api/v2/transversal/communes/", { timeout: 20000 });
+}
+
+/**
+ * Validate a RUT/RUN profile.
+ * GET /api/v2/transversal/profiles/is-valid/{run}
+ * Auth: MEDINET_JWT
+ * @param {string} run - RUT without dots, with dash (e.g. "12345678-9")
+ */
+export async function validateProfile(run) {
+  return apiFetch(`/api/v2/transversal/profiles/is-valid/${run}`, { timeout: 15000 });
+}
+
+// ─── API v2: Schedule ────────────────────────────────────────────
+
+/**
+ * Get all appointment types (v2).
+ * GET /api/v2/schedule/appointments-types/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchAppointmentTypesV2() {
+  return apiFetch("/api/v2/schedule/appointments-types/", { timeout: 20000 });
+}
+
+/**
+ * Get specialties (v2).
+ * GET /api/v2/appointments/specialties/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchSpecialtiesV2() {
+  return apiFetch("/api/v2/appointments/specialties/", { timeout: 20000 });
+}
+
+// ─── API Public: Payments ────────────────────────────────────────
+
+/**
+ * Register a payment for an appointment.
+ * POST /api-public/schedule/appointment/{id}/register-payment/
+ * Auth: MEDINET_JWT
+ * @param {number} appointmentId
+ * @param {object} paymentData - Payment details (method, amount, etc.)
+ */
+export async function registerPayment(appointmentId, paymentData) {
+  return apiFetch(`/api-public/schedule/appointment/${appointmentId}/register-payment/`, {
+    method: "POST",
+    body: paymentData,
+    timeout: 20000,
+  });
+}
+
+/**
+ * Get all available payment methods.
+ * GET /api-public/billing/payments-methods/all/
+ * Auth: MEDINET_JWT
+ */
+export async function fetchPaymentMethods() {
+  return apiFetch("/api-public/billing/payments-methods/all/", { timeout: 15000 });
 }
 
 // ─── High-level helpers (used by server.js) ─────────────────────
@@ -1512,4 +1649,10 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
   };
 }
 
-export { formatRutWithDots, DEFAULT_BRANCH_ID };
+export {
+  formatRutWithDots,
+  DEFAULT_BRANCH_ID,
+  // re-export JWT helpers for external use (e.g. testing)
+  loginJwt,
+  clearJwtToken,
+};
