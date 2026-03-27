@@ -374,35 +374,12 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
-  // ── 1. Try no-auth REST API first (no browser, no token, no IP blocking) ──
-  try {
-    console.log("[medinet-search] path=api_noauth | query:", safeQuery);
-    const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
-    if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
-      console.log("[medinet-search] path=api_noauth | SUCCESS:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
-      return noAuthResult;
-    }
-    console.log("[medinet-search] path=api_noauth | no slots found");
-  } catch (noAuthError) {
-    console.warn("[medinet-search] path=api_noauth | ERROR:", noAuthError.message);
+  // ── 1. Try remote VPS Chile worker (only path that bypasses Cloudflare geo-block) ──
+  if (!useRemoteWorker()) {
+    console.error("[medinet-search] MEDINET_WORKER_URL/TOKEN not configured — cannot reach Medinet (Cloudflare blocks direct access from Render)");
+    return null;
   }
-
-  // ── 1b. Try auth-based REST API if token is available ──
-  if (process.env.MEDINET_API_TOKEN) {
-    try {
-      console.log("[medinet-search] path=api_auth | query:", safeQuery);
-      const apiResult = await searchSlotsViaApi({ query: safeQuery });
-      if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
-        console.log("[medinet-search] path=api_auth | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
-        return apiResult;
-      }
-    } catch (apiError) {
-      console.warn("[medinet-search] path=api_auth | ERROR:", apiError.message);
-    }
-  }
-
-  // ── 2. Try remote API-only worker ──
-  if (useRemoteWorker()) {
+  {
     console.log("[medinet-search] path=remote api worker | query:", safeQuery);
 
     const result = await callMedinetWorkerApiSearch({
@@ -431,30 +408,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
       return legacyResult;
     }
 
-    console.warn("[medinet-search] path=fallback remote worker | FAILED, falling to local");
-  }
-
-  // ── 3. Local Playwright (last resort) ──
-  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
-    env: {
-      ...process.env,
-      MEDINET_RUT: rut,
-      MEDINET_QUERY: safeQuery,
-      MEDINET_PATIENT_PHONE: String(patientPhone || ""),
-      MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
-      MEDINET_HEADED: "false"
-    },
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024
-  });
-
-  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
-  if (!match) return null;
-
-  try {
-    return JSON.parse(match[1]);
-  } catch (parseError) {
-    console.error("ANTONIA JSON PARSE ERROR:", parseError.message, "raw:", match[1].slice(0, 200));
+    console.warn("[medinet-search] path=fallback remote worker | FAILED — no more paths available");
     return null;
   }
 }
