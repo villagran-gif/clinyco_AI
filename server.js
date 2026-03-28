@@ -4603,7 +4603,13 @@ app.post("/messages", async (req, res) => {
 
         const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
 
-        const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+        const bookingFailureMessage = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\n\nPuedes encontrar el mismo calendario en https://clinyco.medinetapp.com/agendaweb/planned/\n\nGracias\n\nAntonia, soy una IA mejorando cada día.";
+        let reply;
+        if (bookingResult?.success) {
+          reply = bookingResult.patient_reply || "Tu hora fue agendada correctamente.";
+        } else {
+          reply = bookingFailureMessage;
+        }
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
@@ -4629,7 +4635,7 @@ app.post("/messages", async (req, res) => {
         state.booking.pendingSlots = null;
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
-        const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web: https://clinyco.medinetapp.com/agendaweb/planned/";
+        const errorReply = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\n\nPuedes encontrar el mismo calendario en https://clinyco.medinetapp.com/agendaweb/planned/\n\nGracias\n\nAntonia, soy una IA mejorando cada día.";
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
@@ -4745,7 +4751,9 @@ app.post("/messages", async (req, res) => {
           patientRut: state.contactDraft?.c_rut || ""
         });
 
-        if (antoniaResponse?.patient_reply) {
+        const searchReply = antoniaResponse?.patient_reply
+          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+        if (searchReply) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
             state.booking.pendingSlots = antoniaResponse.available_slots;
@@ -4766,7 +4774,7 @@ app.post("/messages", async (req, res) => {
             conversationId,
             messageId,
             userText,
-            reply: antoniaResponse.patient_reply,
+            reply: searchReply,
             kind: "antonia_fast_path_reply",
             state,
             info,
@@ -5167,7 +5175,9 @@ app.post("/messages", async (req, res) => {
           patientMessage: userText
         });
 
-        if (antoniaResponse?.patient_reply) {
+        const searchReply2 = antoniaResponse?.patient_reply
+          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+        if (searchReply2) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
             state.booking.pendingSlots = antoniaResponse.available_slots;
@@ -5187,7 +5197,7 @@ app.post("/messages", async (req, res) => {
             conversationId,
             messageId,
             userText,
-            reply: antoniaResponse.patient_reply,
+            reply: searchReply2,
             kind: "antonia_medinet_reply",
             state,
             info,

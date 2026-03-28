@@ -1260,7 +1260,7 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
       professionalId: profId,
       specialty: null,
       available_slots: [],
-      patient_reply: null,
+      patient_reply: `No encontré horas disponibles con ${profName}. Puedes revisar el calendario en https://clinyco.medinetapp.com/agendaweb/planned/`,
     };
   }
 
@@ -1309,7 +1309,7 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
   }
 
   // Build patient-facing reply
-  let patient_reply = null;
+  let patient_reply;
   if (slots.length > 0) {
     const lines = slots.map((s, i) => `${i + 1}. ${s.date} a las ${s.time}`);
     lines.push(`${slots.length + 1}. Salir`);
@@ -1317,6 +1317,8 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
       `Encontré las siguientes horas disponibles con ${profName} (${specialtyName}):\n\n` +
       lines.join("\n") +
       "\n\n¿Cuál prefieres?";
+  } else {
+    patient_reply = `No encontré horas disponibles con ${profName} (${specialtyName}) en los próximos días.\n\nPuedes revisar el calendario en https://clinyco.medinetapp.com/agendaweb/planned/`;
   }
 
   return {
@@ -1410,11 +1412,11 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
       : await fetchProximosCuposAll(branchId);
   } catch (e) {
     console.log(`[medinet-api] searchSlotsNoAuth fetch failed:`, e.message);
-    return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: null };
+    return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: "No pude consultar las horas disponibles en este momento.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/" };
   }
 
   if (!Array.isArray(professionals) || !professionals.length) {
-    return { source: "api_noauth", professional: null, specialty: specId ? normalized : null, available_slots: [], patient_reply: null };
+    return { source: "api_noauth", professional: null, specialty: specId ? normalized : null, available_slots: [], patient_reply: "No encontré profesionales disponibles para esa búsqueda.\n\nPuedes revisar el calendario en https://clinyco.medinetapp.com/agendaweb/planned/" };
   }
 
   // Step 3: Match query against professional names (if not a specialty search)
@@ -1447,7 +1449,7 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
     matched = scored.filter((s) => s.score > 0).map((s) => s.prof);
 
     if (!matched.length) {
-      return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: null };
+      return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: "No encontré profesionales que coincidan con tu búsqueda.\n\nPuedes revisar el calendario en https://clinyco.medinetapp.com/agendaweb/planned/" };
     }
   }
 
