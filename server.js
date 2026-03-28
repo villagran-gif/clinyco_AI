@@ -4287,8 +4287,8 @@ app.post("/messages", async (req, res) => {
             state.booking.awaitingPatientData = true;
             state.booking.missingFields = missing.map((f) => f.key);
             await persistConversationSnapshot(conversationId, state, channelLabel);
-            const nextField = missing[0].label;
-            const reply = `RUT verificado correctamente. Para completar la reserva necesito tu ${nextField}. ¿Me lo puedes indicar?`;
+            const missingLabels = missing.map((f) => f.label).join(", ");
+            const reply = `RUT verificado correctamente. Para completar la reserva necesito los siguientes datos: ${missingLabels}. Por favor envíamelos.`;
             addToHistory(conversationId, "user", userText);
             return res.json(await sendManagedReply({
               appId, conversationId, messageId, userText,
@@ -4435,8 +4435,8 @@ app.post("/messages", async (req, res) => {
           state.booking.missingFields = missing.map((f) => f.key);
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
-          const nextField = missing[0].label;
-          const reply = `Perfecto, seleccionaste la hora ${choice.slot.time} del ${choice.slot.date}. Para completar la reserva necesito tu ${nextField}. ¿Me lo puedes indicar?`;
+          const missingLabels = missing.map((f) => f.label).join(", ");
+          const reply = `Perfecto, seleccionaste la hora ${choice.slot.time} del ${choice.slot.date}. Para completar la reserva necesito los siguientes datos: ${missingLabels}. Por favor envíamelos.`;
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
             appId, conversationId, messageId, userText,
@@ -4489,7 +4489,7 @@ app.post("/messages", async (req, res) => {
         // User sent non-slot text while awaitingSlotChoice — data was already captured by updateDraftsFromText.
         // The Playwright worker needs ALL patient data to fill the Medinet form.
         // If exactly one field is missing, map the user's response directly to that field
-        if (state.booking.missingFields?.length >= 1) {
+        if (state.booking.missingFields?.length === 1) {
           tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
         }
         // Check if data is complete: if yes → present slots; if no → ask for missing fields.
@@ -4502,8 +4502,8 @@ app.post("/messages", async (req, res) => {
           console.log("Booking: awaitingSlotChoice, collecting missing data before presenting slots:", missing.map(f => f.key).join(", "));
           // Reset reminder counter since we're still collecting data
           state.booking.slotReminderSent = false;
-          const nextField = missing[0].label;
-          const collectReply = `Gracias por la información. Para poder agendar con ${professional} necesito tu ${nextField}. ¿Me lo puedes indicar?`;
+          const missingLabels = missing.map((f) => f.label).join(", ");
+          const collectReply = `Gracias por la información. Para poder agendar con ${professional} necesito además: ${missingLabels}.`;
           await persistConversationSnapshot(conversationId, state, channelLabel);
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
@@ -4619,8 +4619,8 @@ app.post("/messages", async (req, res) => {
         state.booking.missingFields = missing.map((f) => f.key);
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
-        const nextField = missing[0].label;
-        const reply = `Gracias. Ahora necesito tu ${nextField}. ¿Me lo puedes indicar?`;
+        const missingLabels = missing.map((f) => f.label).join(", ");
+        const reply = `Gracias. Aún me falta: ${missingLabels}. Por favor envíamelos para completar tu reserva.`;
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
