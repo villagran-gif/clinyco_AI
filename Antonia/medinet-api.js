@@ -1264,6 +1264,19 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
     };
   }
 
+  // ── Get tipoCitaId (needed for booking via agendaweb-add) ──
+  let tipoCitaId = null;
+  try {
+    const tipos = await fetchAppointmentTypesByContext(branchId, specialtyId, profId, 0);
+    if (Array.isArray(tipos) && tipos.length > 0) {
+      // Prefer the es_default type, otherwise first one
+      const defaultTipo = tipos.find((t) => t.es_default);
+      tipoCitaId = (defaultTipo || tipos[0]).id;
+    }
+  } catch (e) {
+    console.log(`[medinet-api] fetchAppointmentTypesByContext failed:`, e.message);
+  }
+
   // ── Primary: picker-fecha (same endpoint agendaweb UI uses, no auth) ──
   let slots = [];
   try {
@@ -1273,35 +1286,25 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
       professional: profName,
       professionalId: String(profId),
       specialty: specialtyName,
+      specialtyId,
+      tipoCitaId,
     }));
   } catch (e) {
     console.log(`[medinet-api] fetchPickerFechaSlots failed:`, e.message);
   }
 
   // ── Fallback: cupos-disponibles (if picker-fecha returned nothing) ──
-  if (slots.length === 0) {
-    let tipoCitaId = null;
+  if (slots.length === 0 && tipoCitaId) {
     try {
-      const tipos = await fetchAppointmentTypesByContext(branchId, specialtyId, profId, 0);
-      if (Array.isArray(tipos) && tipos.length > 0) {
-        tipoCitaId = tipos[0].id;
-      }
+      slots = await searchAvailableSlots({
+        professionalId: profId,
+        ubicacionId: branchId,
+        especialidadId: specialtyId,
+        tipocitaId: tipoCitaId,
+        daysAhead: 14,
+      });
     } catch (e) {
-      console.log(`[medinet-api] fetchAppointmentTypesByContext failed:`, e.message);
-    }
-
-    if (tipoCitaId) {
-      try {
-        slots = await searchAvailableSlots({
-          professionalId: profId,
-          ubicacionId: branchId,
-          especialidadId: specialtyId,
-          tipocitaId: tipoCitaId,
-          daysAhead: 14,
-        });
-      } catch (e) {
-        console.log(`[medinet-api] searchAvailableSlots failed:`, e.message);
-      }
+      console.log(`[medinet-api] searchAvailableSlots failed:`, e.message);
     }
   }
 
@@ -1322,6 +1325,7 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
     professionalId: profId,
     specialty: specialtyName,
     specialtyId,
+    tipoCitaId,
     available_slots: slots,
     patient_reply,
   };

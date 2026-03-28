@@ -155,7 +155,7 @@ app.post("/medinet/api/book", authMiddleware, async (req, res) => {
     // Step 1: Check cupos and whether patient exists
     const cupos = await checkCupos(branch, rut).catch(() => null);
 
-    if (cupos && !cupos.puede_agendar) {
+    if (cupos && cupos.puede_agendar === false) {
       return res.json({
         source: "antonia_api_book",
         success: false,
