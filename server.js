@@ -87,7 +87,7 @@ const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.Z
 const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
 
 const MAX_HISTORY_MESSAGES = 14;
-const MAX_BOT_MESSAGES = 10;
+const MAX_BOT_MESSAGES = 30;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
@@ -627,14 +627,8 @@ function buildPatientDataFromState(state) {
 function getMissingBookingFields(patientData) {
   const required = [
     { key: "rut", label: "RUT" },
-    { key: "nombres", label: "nombre completo" },
-    { key: "apPaterno", label: "apellido paterno" },
-    { key: "apMaterno", label: "apellido materno" },
-    { key: "prevision", label: "previsión/aseguradora" },
-    { key: "nacimiento", label: "fecha de nacimiento" },
     { key: "email", label: "correo electrónico" },
-    { key: "fono", label: "teléfono" },
-    { key: "direccion", label: "dirección" }
+    { key: "fono", label: "teléfono" }
   ];
   return required.filter((f) => !patientData[f.key]);
 }
@@ -1745,7 +1739,7 @@ function detectNegatedAseguradora(normalizedText) {
 }
 
 function findExplicitAseguradora(normalizedText) {
-  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => normalizedText.includes(alias)) || null;
+  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => (' ' + normalizedText + ' ').includes(' ' + alias + ' ')) || null;
 }
 
 function parseAseguradora(text) {
@@ -3674,7 +3668,7 @@ Objetivo:
 - evita preguntas duras tipo flujo si ya entendiste la necesidad
 
 Identidad:
-- idealmente en tu segundo mensaje debes presentarte como Antonia
+- (La presentación como Antonia se maneja automáticamente, no te presentes de nuevo)
 - no digas que eres una IA
 
 Reglas operativas:
@@ -3717,6 +3711,78 @@ ${buildKnowledgePromptContext()}
 `.trim();
 }
 
+function formatReplyForWhatsApp(text) {
+  // Regla 1: Cortar en puntuación después de la palabra 10+
+  const punctAllRe = /[.;?!,:—]$/;
+  const punctNoColonRe = /[.;?!,—]$/;
+  const lines = text.split('\n');
+  const formatted = [];
+
+  for (const line of lines) {
+    if (!line.trim()) { formatted.push(line); continue; }
+    const words = line.split(/\s+/);
+    let current = [];
+    let count = 0;
+    let inQuestion = false;
+    for (const word of words) {
+      current.push(word);
+      count++;
+      if (word.includes('¿')) inQuestion = true;
+      const punctRe = inQuestion ? punctNoColonRe : punctAllRe;
+      if (count >= 10 && punctRe.test(word)) {
+        formatted.push(current.join(' '));
+        formatted.push('');
+        current = [];
+        count = 0;
+      }
+      if (word.includes('?') && inQuestion) inQuestion = false;
+    }
+    if (current.length) formatted.push(current.join(' '));
+  }
+
+  let result = formatted.join('\n');
+
+  // Regla 2: 2 líneas vacías antes de ¿
+  result = result.replace(/\n*¿/g, '\n\n\n¿');
+  result = result.replace(/^\n+/, '');
+  result = result.replace(/\n{4,}/g, '\n\n\n');
+
+  // Regla 3: Emojis contextuales
+  let emojiCount = 0;
+  const MAX_EMOJIS = 3;
+  const emojiLines = result.split('\n');
+  const emojiResult = [];
+
+  for (const line of emojiLines) {
+    let l = line;
+    const hasEmoji = /[\u{1F300}-\u{1FAD6}]/u.test(l);
+    const isQuestion = l.trim().startsWith('¿');
+    if (hasEmoji || isQuestion || emojiCount >= MAX_EMOJIS) {
+      emojiResult.push(l);
+      continue;
+    }
+    if (/^(Perfecto|Listo)/i.test(l.trim())) {
+      l = '✅ ' + l.trim();
+      emojiCount++;
+    } else if (/https?:\/\//.test(l) && emojiCount < MAX_EMOJIS) {
+      l = l.replace(/(https?:\/\/)/, '🔗 $1');
+      emojiCount++;
+    } else if (/\+56|\bWhatsApp\b/i.test(l) && emojiCount < MAX_EMOJIS) {
+      l = l.replace(/(\+56)/, '📲 $1');
+      emojiCount++;
+    } else if (/\bIMC\b|kg\/m²/.test(l) && emojiCount < MAX_EMOJIS) {
+      l = '📊 ' + l.trim();
+      emojiCount++;
+    } else if (/\bderiva|una agente\b/i.test(l) && emojiCount < MAX_EMOJIS) {
+      l = l.replace(/(una agente)/, '🙋‍♀️ $1');
+      emojiCount++;
+    }
+    emojiResult.push(l);
+  }
+
+  return emojiResult.join('\n');
+}
+
 async function askOpenAI({ systemPrompt, stateSummary, history }) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY");
@@ -3734,7 +3800,8 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
     ]
   });
 
-  return response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  let reply = response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  return formatReplyForWhatsApp(reply);
 }
 
 async function sendConversationReply(appId, conversationId, reply) {
@@ -5191,7 +5258,7 @@ app.post("/messages", async (req, res) => {
       history
     });
 
-    const isTenthMessage = state.system.botMessagesSent + 1 >= MAX_BOT_MESSAGES;
+    const isTenthMessage = state.system.botMessagesSent + 1 === MAX_BOT_MESSAGES;
     if (isTenthMessage) {
       const closure = getMaxMessagesClosure();
       reply = `${reply}\n\n${closure}`;

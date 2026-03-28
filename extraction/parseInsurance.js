@@ -43,7 +43,7 @@ export const MODALIDAD_FROM_ASEGURADORA = {
 export function parseAseguradora(text) {
   const normalized = normalizeKey(text);
   for (const [alias, canonical] of Object.entries(ASEGURADORA_ALIASES)) {
-    if (normalized.includes(alias)) {
+    if ((' ' + normalized + ' ').includes(' ' + alias + ' ')) {
       return {
         aseguradora: canonical,
         modalidad: MODALIDAD_FROM_ASEGURADORA[canonical] || null,
