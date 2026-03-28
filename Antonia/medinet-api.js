@@ -554,14 +554,14 @@ export async function bookAgendaweb(opts) {
     tipoagenda: "",
     observacion: "Agendado vía AgendaWeb.",
 
-    // IMPORTANTE:
-    // Siempre vacíos. agendaweb-add parece romperse si estos vienen llenos.
-    nombre: "",
-    apellidos: "",
-    direccion: "",
-    sexo: "",
-    fecha_nacimiento: "",
-    aseguradora: "",
+    // Paciente existente: vacíos (backend busca por RUT).
+    // Paciente nuevo: obligatorios.
+    nombre: opts.pacienteExiste !== false ? "" : (opts.nombre || ""),
+    apellidos: opts.pacienteExiste !== false ? "" : (opts.apellidos || ""),
+    direccion: opts.pacienteExiste !== false ? "" : (opts.direccion || ""),
+    sexo: opts.pacienteExiste !== false ? "" : (opts.sexo || ""),
+    fecha_nacimiento: opts.pacienteExiste !== false ? "" : (opts.fechaNacimiento || ""),
+    aseguradora: opts.pacienteExiste !== false ? "" : (opts.aseguradora || ""),
 
     telefono_fijo: opts.telefono || "",
     email: opts.email || "",
@@ -951,12 +951,30 @@ export async function bookAppointmentForPatient({
   const tipoCitaId = Number(slot?.tipoCitaId || slot?.tipo || 0);
   const professionalId = Number(slot?.professionalId || slot?.profesional || 0);
 
+  // Datos de paciente nuevo (solo se usan si pacienteExiste === false)
+  const nombres = patientData?.nombres || "";
+  const apPaterno = patientData?.apPaterno || patientData?.apellido_paterno || "";
+  const apMaterno = patientData?.apMaterno || patientData?.apellido_materno || "";
+  const direccion = patientData?.direccion || "";
+  const fechaNac = patientData?.fechaNacimiento || patientData?.fecha_nacimiento || "";
+  const prevision = patientData?.prevision || patientData?.aseguradora || "";
+
   if (!run || !slot?.dataDia || !slot?.time || !specialtyId || !tipoCitaId || !professionalId) {
     return {
       success: false,
       source: "antonia_booking_invalid_input",
       message: "Faltan datos obligatorios para reservar.",
       patient_reply: "No pude completar la reserva porque faltan datos de la hora seleccionada.",
+    };
+  }
+
+  // Validación: paciente nuevo necesita al menos nombre y apellido
+  if (!pacienteExiste && (!nombres || (!apPaterno && !apMaterno))) {
+    return {
+      success: false,
+      source: "antonia_booking_invalid_input",
+      message: "Paciente nuevo requiere nombre y apellidos para agendar.",
+      patient_reply: "Para agendar como paciente nuevo necesito tu nombre completo.",
     };
   }
 
@@ -974,6 +992,12 @@ export async function bookAppointmentForPatient({
       email,
       telefono,
       pacienteExiste,
+      nombre: nombres,
+      apellidos: `${apPaterno} ${apMaterno}`.trim(),
+      direccion,
+      sexo: "indeterminado",
+      fechaNacimiento: fechaNac,
+      aseguradora: prevision,
     });
 
     if (agendawebResult?.status === "agendado_correctamente") {
