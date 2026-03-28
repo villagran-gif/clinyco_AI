@@ -748,9 +748,84 @@ function tryMapSingleFieldResponse(userText, missingFieldKey, state) {
   return false;
 }
 
+const BOOKING_CORRECTION_FIELD_CONFIG = [
+  { key: "rut", label: "RUT", exact: ["RUT", "RUN", "MI RUT", "EL RUT"], prefix: /^(?:MI\s+)?(?:RUT|RUN)\s*[:=-]?\s*(.+)$/i },
+  { key: "nombres", label: "nombre completo", exact: ["NOMBRE", "NOMBRES", "NOMBRE COMPLETO", "MI NOMBRE"], prefix: /^(?:MI\s+)?(?:NOMBRE(?:S)?(?:\s+COMPLETO)?)\s*[:=-]?\s*(.+)$/i },
+  { key: "apPaterno", label: "apellido paterno", exact: ["APELLIDO PATERNO", "PATERNO"], prefix: /^(?:MI\s+)?(?:APELLIDO\s+PATERNO|PATERNO)\s*[:=-]?\s*(.+)$/i },
+  { key: "apMaterno", label: "apellido materno", exact: ["APELLIDO MATERNO", "MATERNO"], prefix: /^(?:MI\s+)?(?:APELLIDO\s+MATERNO|MATERNO)\s*[:=-]?\s*(.+)$/i },
+  { key: "nacimiento", label: "fecha de nacimiento", exact: ["FECHA DE NACIMIENTO", "FECHA NACIMIENTO", "NACIMIENTO", "FECHA"], prefix: /^(?:MI\s+)?(?:FECHA(?:\s+DE)?\s+NACIMIENTO|NACIMIENTO|FECHA)\s*[:=-]?\s*(.+)$/i },
+  { key: "prevision", label: "previsión", exact: ["PREVISION", "ASEGURADORA", "ISAPRE", "FONASA"], prefix: /^(?:MI\s+)?(?:PREVISION|ASEGURADORA|ISAPRE|FONASA)\s*[:=-]?\s*(.+)$/i },
+  { key: "email", label: "correo electrónico", exact: ["EMAIL", "CORREO", "CORREO ELECTRONICO", "MAIL"], prefix: /^(?:MI\s+)?(?:EMAIL|CORREO(?:\s+ELECTRONICO)?|MAIL)\s*[:=-]?\s*(.+)$/i },
+  { key: "fono", label: "teléfono", exact: ["TELEFONO", "FONO", "CELULAR", "WHATSAPP", "NUMERO", "NUMERO DE TELEFONO"], prefix: /^(?:MI\s+)?(?:TELEFONO|FONO|CELULAR|WHATSAPP|NUMERO(?:\s+DE\s+TELEFONO)?)\s*[:=-]?\s*(.+)$/i },
+  { key: "direccion", label: "dirección", exact: ["DIRECCION", "DOMICILIO"], prefix: /^(?:MI\s+)?(?:DIRECCION|DOMICILIO)\s*[:=-]?\s*(.+)$/i }
+];
+
+function parseBookingCorrectionFieldInput(userText) {
+  const text = String(userText || "").trim();
+  if (!text) return null;
+  const normalized = normalizeKey(text);
+
+  for (const config of BOOKING_CORRECTION_FIELD_CONFIG) {
+    const prefixed = text.match(config.prefix);
+    if (prefixed) {
+      const value = String(prefixed[1] || "").trim();
+      if (value) {
+        return { key: config.key, label: config.label, value };
+      }
+    }
+    if (config.exact.includes(normalized)) {
+      return { key: config.key, label: config.label, value: null };
+    }
+  }
+
+  return null;
+}
+
+function clearBookingFieldForCorrection(fieldKey, state) {
+  const cd = state?.contactDraft || {};
+  switch (fieldKey) {
+    case "rut":
+      cd.c_rut = null;
+      state.identity.verifiedRutAt = null;
+      break;
+    case "nombres":
+      cd.c_nombres = null;
+      break;
+    case "apPaterno": {
+      const { materno } = splitApellidos(cd.c_apellidos);
+      cd.c_apellidos = materno ? materno : null;
+      break;
+    }
+    case "apMaterno": {
+      const { paterno } = splitApellidos(cd.c_apellidos);
+      cd.c_apellidos = paterno ? paterno : null;
+      break;
+    }
+    case "nacimiento":
+      cd.c_fecha = null;
+      break;
+    case "prevision":
+      cd.c_aseguradora = null;
+      clearFonasaDerivedState(state);
+      break;
+    case "email":
+      cd.c_email = null;
+      break;
+    case "fono":
+      cd.c_tel1 = null;
+      cd.c_tel2 = null;
+      break;
+    case "direccion":
+      cd.c_direccion = null;
+      break;
+  }
+}
+
 function buildPatientDataFromState(state) {
   const cd = state?.contactDraft || {};
   const { paterno, materno } = splitApellidos(cd.c_apellidos);
+  const keepBookingPhoneMissing = state?.booking?.correctionField === "fono";
+  const fallbackWhatsappPhone = keepBookingPhoneMissing ? null : normalizePhone(state?.identity?.whatsappPhone || null);
   return {
     rut: cd.c_rut || "",
     nombres: cd.c_nombres || "",
@@ -759,7 +834,7 @@ function buildPatientDataFromState(state) {
     prevision: cd.c_aseguradora || "",
     nacimiento: cd.c_fecha || "",
     email: cd.c_email || "",
-    fono: cd.c_tel1 || "",
+    fono: cd.c_tel1 || fallbackWhatsappPhone || "",
     direccion: cd.c_direccion || ""
   };
 }
@@ -3135,6 +3210,14 @@ function updateDraftsFromText(state, text, info) {
     if (!state.contactDraft.c_tel2) {
       state.contactDraft.c_tel2 = phone;
     }
+  } else if (state.booking?.correctionField !== "fono") {
+    const inferredChannelPhone = normalizePhone(info?.channelDisplayName || state.identity?.whatsappPhone || null);
+    if (inferredChannelPhone && !state.contactDraft.c_tel1) {
+      state.contactDraft.c_tel1 = inferredChannelPhone;
+      if (!state.contactDraft.c_tel2) {
+        state.contactDraft.c_tel2 = inferredChannelPhone;
+      }
+    }
   }
 
   const rut = extractRut(cleanText);
@@ -3348,13 +3431,14 @@ function buildCalculatedDataBlock(state, originalText) {
 }
 
 function buildStateSummary(state) {
+  const effectivePhone = state.contactDraft.c_tel1 || state.identity.whatsappPhone || "";
   const parts = [
     `[ESTADO_ACTUAL]`,
     `c_rut=${state.contactDraft.c_rut || ""}`,
     `c_nombres=${state.contactDraft.c_nombres || ""}`,
     `c_apellidos=${state.contactDraft.c_apellidos || ""}`,
     `c_fecha=${state.contactDraft.c_fecha || ""}`,
-    `c_tel1=${state.contactDraft.c_tel1 || ""}`,
+    `c_tel1=${effectivePhone}`,
     `c_email=${state.contactDraft.c_email || ""}`,
     `c_aseguradora=${state.contactDraft.c_aseguradora || ""}`,
     `c_modalidad=${state.contactDraft.c_modalidad || ""}`,
@@ -3371,6 +3455,7 @@ function buildStateSummary(state) {
     `customerId=${state.identity.customerId || ""}`,
     `matchStatus=${state.identity.matchStatus || ""}`,
     `matchedBy=${state.identity.matchedBy || ""}`,
+    `whatsappPhone=${state.identity.whatsappPhone || ""}`,
     `isReturning=${state.customerMemory?.isReturning ? "si" : "no"}`,
     `saysExistingPatient=${state.identity.saysExistingPatient ? "si" : "no"}`,
     `sellContactFound=${state.identity.sellContactFound ? "si" : "no"}`,
@@ -3816,6 +3901,7 @@ function isMeasurementQuestionNeeded(state) {
 function appendAntoniaIntroduction(state, reply) {
   if (state.system.botMessagesSent === 1 && !state.system.introducedAsAntonia) {
     state.system.introducedAsAntonia = true;
+    if (normalizeKey(reply).includes("ANTONIA")) return reply;
     return `Hola, hablas con Antonia 😊\n\n${reply}`;
   }
   return reply;
@@ -3874,7 +3960,6 @@ Objetivo:
 - evita preguntas duras tipo flujo si ya entendiste la necesidad
 
 Identidad:
-- idealmente en tu segundo mensaje debes presentarte como Antonia
 - no digas que eres una IA
 
 Reglas operativas:
@@ -4434,8 +4519,13 @@ app.post("/messages", async (req, res) => {
         state.booking.pendingProfessional = null;
         state.booking.pendingSpecialty = null;
         state.booking.awaitingSlotChoice = false;
+        state.booking.awaitingRutVerification = false;
+        state.booking.awaitingPatientData = false;
+        state.booking.awaitingFieldCorrection = false;
+        state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
         state.booking.missingFields = null;
+        state.booking.correctionField = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -4480,7 +4570,9 @@ app.post("/messages", async (req, res) => {
 
         if (missing.length > 0) {
           state.booking.awaitingPatientData = true;
+          state.booking.awaitingFieldCorrection = false;
           state.booking.missingFields = missing.map((f) => f.key);
+          state.booking.correctionField = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
           const nextField = missing[0].label;
@@ -4502,8 +4594,10 @@ app.post("/messages", async (req, res) => {
         // All data available — always show confirmation before booking (never skip)
         {
           state.booking.awaitingPatientData = false;
+          state.booking.awaitingFieldCorrection = false;
           state.booking.awaitingConfirmation = true;
           state.booking.missingFields = null;
+          state.booking.correctionField = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
           const slot = choice.slot;
@@ -4616,6 +4710,9 @@ app.post("/messages", async (req, res) => {
         // Don't cancel — ask which data needs correction and go back to data collection
         state.booking.awaitingConfirmation = false;
         state.booking.awaitingPatientData = true;
+        state.booking.awaitingFieldCorrection = true;
+        state.booking.correctionField = null;
+        state.booking.missingFields = null;
         // Keep chosenSlot and other booking state intact so user can correct and re-confirm
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
@@ -4654,14 +4751,61 @@ app.post("/messages", async (req, res) => {
 
     // --- Antonia booking: patient providing missing data ---
     if ((state.booking.awaitingPatientData || state.booking.awaitingConfirmation) && state.booking.chosenSlot) {
+      if (state.booking.awaitingFieldCorrection) {
+        const correction = parseBookingCorrectionFieldInput(userText);
+        if (!correction) {
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: "Indícame cuál dato necesitas corregir: nombre, apellido paterno, apellido materno, RUT, fecha de nacimiento, previsión, email, teléfono o dirección.",
+            kind: "antonia_booking_correction_retry",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "collect_field_to_correct",
+              reason: "Booking: correction field not recognized"
+            }
+          }));
+        }
+
+        state.booking.awaitingFieldCorrection = false;
+        state.booking.correctionField = correction.key;
+        clearBookingFieldForCorrection(correction.key, state);
+
+        if (correction.value && tryMapSingleFieldResponse(correction.value, correction.key, state)) {
+          state.booking.correctionField = null;
+        } else if (!correction.value) {
+          state.booking.missingFields = [correction.key];
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: `Perfecto. Indícame tu ${correction.label} correcto.`,
+            kind: "antonia_booking_collect_corrected_field",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "collect_patient_data",
+              reason: "Booking: collecting corrected field value"
+            }
+          }));
+        }
+      }
+
       // If at least one field is missing, map the user's response to the next required field
       // (e.g., bot asks "me falta: apellido materno" → user replies "Morles")
       if (state.booking.missingFields?.length >= 1) {
-        tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
+        const mapped = tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
+        if (mapped && state.booking.correctionField === state.booking.missingFields[0]) {
+          state.booking.correctionField = null;
+        }
       }
       // Re-extract patient data (updateDraftsFromText may have captured new fields)
       const patientData = buildPatientDataFromState(state);
       const missing = getMissingBookingFields(patientData);
+      if (state.booking.correctionField && !missing.some((field) => field.key === state.booking.correctionField)) {
+        state.booking.correctionField = null;
+      }
 
       if (missing.length > 0) {
         state.booking.missingFields = missing.map((f) => f.key);
@@ -4686,8 +4830,10 @@ app.post("/messages", async (req, res) => {
       // All data collected — ask for confirmation before booking
       if (!state.booking.awaitingConfirmation) {
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingFieldCorrection = false;
         state.booking.awaitingConfirmation = true;
         state.booking.missingFields = null;
+        state.booking.correctionField = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
         const slot = state.booking.chosenSlot;
@@ -4728,9 +4874,11 @@ app.post("/messages", async (req, res) => {
         state.booking.awaitingSlotChoice = false;
         state.booking.awaitingRutVerification = false;
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingFieldCorrection = false;
         state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
         state.booking.missingFields = null;
+        state.booking.correctionField = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
         const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
@@ -4756,10 +4904,12 @@ app.post("/messages", async (req, res) => {
         console.error("ANTONIA BOOKING ERROR:", error.message);
         state.booking.awaitingRutVerification = false;
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingFieldCorrection = false;
         state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
         state.booking.pendingSlots = null;
         state.booking.missingFields = null;
+        state.booking.correctionField = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         const errorReply = "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web: https://clinyco.medinetapp.com/agendaweb/planned/";
         addToHistory(conversationId, "user", userText);
@@ -4886,9 +5036,11 @@ app.post("/messages", async (req, res) => {
             state.booking.awaitingSlotChoice = true;
             state.booking.awaitingRutVerification = false;
             state.booking.awaitingPatientData = false;
+            state.booking.awaitingFieldCorrection = false;
             state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
+            state.booking.correctionField = null;
             state.booking.slotReminderSent = false;
             await persistConversationSnapshot(conversationId, state, channelLabel);
           }
@@ -5318,9 +5470,11 @@ app.post("/messages", async (req, res) => {
               state.booking.awaitingSlotChoice = true;
               state.booking.awaitingRutVerification = false;
               state.booking.awaitingPatientData = false;
+              state.booking.awaitingFieldCorrection = false;
               state.booking.awaitingConfirmation = false;
               state.booking.chosenSlot = null;
               state.booking.missingFields = null;
+              state.booking.correctionField = null;
               state.booking.slotReminderSent = false;
               await persistConversationSnapshot(conversationId, state, channelLabel);
             }
