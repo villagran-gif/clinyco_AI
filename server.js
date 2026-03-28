@@ -2071,6 +2071,8 @@ function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      zendeskContactSyncKey: null,
+      zendeskContactSyncAt: null,
       supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
@@ -3330,6 +3332,41 @@ async function zendeskSupportGet(path, params = {}) {
   return data;
 }
 
+async function zendeskSupportPost(path, body = {}) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
 async function searchSupportByEmail(email) {
   if (!email) return [];
   const query = `type:user ${email}`;
@@ -3430,6 +3467,136 @@ async function searchSupportReal({ email, phone, name, channelDisplayName, sourc
     latestTicketId: tickets[0]?.id || null,
     users: filteredUsers,
     tickets
+  };
+}
+
+function isSocialMessagingSource(sourceType) {
+  const normalized = normalizeKey(sourceType || "");
+  return normalized === "INSTAGRAM" || normalized === "FACEBOOK" || normalized === "MESSENGER";
+}
+
+function normalizeZendeskContactEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  return email || null;
+}
+
+function buildZendeskContactSyncKey(userId, email, phone) {
+  return JSON.stringify({
+    userId: userId || null,
+    email: email || null,
+    phone: phone || null
+  });
+}
+
+async function listZendeskUserIdentities(userId) {
+  if (!userId) return [];
+  const data = await zendeskSupportGet(`/api/v2/users/${userId}/identities.json`);
+  return Array.isArray(data?.identities) ? data.identities : [];
+}
+
+async function createZendeskUserIdentity(userId, identity, options = {}) {
+  if (!userId || !identity?.type || !identity?.value) {
+    return null;
+  }
+  const data = await zendeskSupportPost(`/api/v2/users/${userId}/identities.json`, {
+    identity,
+    ...options
+  });
+  return data?.identity || null;
+}
+
+async function syncZendeskUserContactsFromState(state, info, context = {}) {
+  if (!isSocialMessagingSource(info?.sourceType)) {
+    return null;
+  }
+
+  if (!ZENDESK_SUBDOMAIN || !getZendeskSupportAuthHeader()) {
+    return null;
+  }
+
+  const supportUsers = Array.isArray(state?.identity?.supportRaw?.users)
+    ? state.identity.supportRaw.users
+    : [];
+
+  if (supportUsers.length !== 1) {
+    return null;
+  }
+
+  const zendeskUser = supportUsers[0] || null;
+  const zendeskUserId = zendeskUser?.id || null;
+  if (!zendeskUserId) {
+    return null;
+  }
+
+  const email = normalizeZendeskContactEmail(state?.contactDraft?.c_email);
+  const phone = normalizePhone(state?.contactDraft?.c_tel1 || null);
+
+  if (!email && !phone) {
+    return null;
+  }
+
+  const syncKey = buildZendeskContactSyncKey(zendeskUserId, email, phone);
+  if (state?.identity?.zendeskContactSyncKey === syncKey) {
+    return null;
+  }
+
+  const identities = await listZendeskUserIdentities(zendeskUserId);
+  const normalizedIdentityEmailValues = identities
+    .filter((identity) => identity?.type === "email")
+    .map((identity) => normalizeZendeskContactEmail(identity?.value))
+    .filter(Boolean);
+  const normalizedIdentityPhoneValues = identities
+    .filter((identity) => identity?.type === "phone_number")
+    .map((identity) => normalizePhone(identity?.value))
+    .filter(Boolean);
+  const existingEmails = new Set([
+    normalizeZendeskContactEmail(zendeskUser?.email),
+    ...normalizedIdentityEmailValues
+  ].filter(Boolean));
+  const existingPhones = new Set([
+    normalizePhone(zendeskUser?.phone),
+    ...normalizedIdentityPhoneValues
+  ].filter(Boolean));
+
+  let createdEmail = false;
+  let createdPhone = false;
+
+  if (email && !existingEmails.has(email)) {
+    await createZendeskUserIdentity(zendeskUserId, {
+      type: "email",
+      value: email
+    }, {
+      skip_verify_email: true
+    });
+    createdEmail = true;
+  }
+
+  if (phone && !existingPhones.has(phone)) {
+    await createZendeskUserIdentity(zendeskUserId, {
+      type: "phone_number",
+      value: phone
+    });
+    createdPhone = true;
+  }
+
+  state.identity.zendeskContactSyncKey = syncKey;
+  state.identity.zendeskContactSyncAt = new Date().toISOString();
+
+  const logParts = [
+    context?.conversationId ? `conversationId=${context.conversationId}` : null,
+    `zendeskUserId=${zendeskUserId}`,
+    email ? `email=${email}` : null,
+    phone ? `phone=${phone}` : null,
+    `emailAdded=${createdEmail ? "si" : "no"}`,
+    `phoneAdded=${createdPhone ? "si" : "no"}`
+  ].filter(Boolean).join(" ");
+  console.log(`ZENDESK_CONTACT_SYNC ${logParts}`);
+
+  return {
+    zendeskUserId,
+    emailAdded: createdEmail,
+    phoneAdded: createdPhone,
+    syncedAt: state.identity.zendeskContactSyncAt
   };
 }
 
@@ -4955,6 +5122,11 @@ app.post("/messages", async (req, res) => {
     // --- End open-help layer ---
 
     await maybeRunIdentitySearch(state, info);
+    try {
+      await syncZendeskUserContactsFromState(state, info, { conversationId });
+    } catch (error) {
+      console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
+    }
     let customerMemory = null;
     try {
       customerMemory = await ensureCustomerContext({
