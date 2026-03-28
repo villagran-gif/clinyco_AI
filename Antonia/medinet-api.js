@@ -584,14 +584,14 @@ export async function bookAgendaweb(opts) {
     tipoagenda: "",
     observacion: "Agendado vía AgendaWeb.",
 
-    // IMPORTANTE:
-    // Siempre vacíos. agendaweb-add parece romperse si estos vienen llenos.
-    nombre: "",
-    apellidos: "",
-    direccion: "",
-    sexo: "",
-    fecha_nacimiento: "",
-    aseguradora: "",
+    // Patient data — send when available (required for new patients,
+    // for existing patients backend looks them up by RUN)
+    nombre: opts.pacienteExiste ? "" : (opts.nombre || ""),
+    apellidos: opts.pacienteExiste ? "" : (opts.apellidos || ""),
+    direccion: opts.pacienteExiste ? "" : (opts.direccion || ""),
+    sexo: opts.pacienteExiste ? "" : (opts.sexo || ""),
+    fecha_nacimiento: opts.pacienteExiste ? "" : (opts.fechaNacimiento || ""),
+    aseguradora: opts.pacienteExiste ? "" : (opts.aseguradora || ""),
 
     telefono_fijo: opts.telefono || "",
     email: opts.email || "",
@@ -1004,6 +1004,12 @@ export async function bookAppointmentForPatient({
       email,
       telefono,
       pacienteExiste,
+      nombre: patientData?.nombres || "",
+      apellidos: [patientData?.apPaterno, patientData?.apMaterno].filter(Boolean).join(" "),
+      direccion: patientData?.direccion || "",
+      sexo: patientData?.sexo || "",
+      fechaNacimiento: patientData?.nacimiento || patientData?.fechaNacimiento || "",
+      aseguradora: patientData?.prevision || patientData?.aseguradora || "",
     });
 
     if (agendawebResult?.status === "agendado_correctamente") {

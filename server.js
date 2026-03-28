@@ -4425,7 +4425,7 @@ app.post("/messages", async (req, res) => {
     // Skip updateDraftsFromText during booking data collection to avoid
     // interfering with tryMapSingleFieldResponse (e.g. short answers like
     // "Morales" being misinterpreted as a professional name)
-    if (!state.booking?.awaitingPatientData && !state.booking?.awaitingConfirmation) {
+    if (!state.booking?.awaitingPatientData && !state.booking?.awaitingConfirmation && !state.booking?.awaitingFieldCorrection) {
       updateDraftsFromText(state, userText, info);
     }
     try {
@@ -4501,7 +4501,9 @@ app.post("/messages", async (req, res) => {
 
           if (missing.length > 0) {
             state.booking.awaitingPatientData = true;
+            state.booking.awaitingFieldCorrection = false;
             state.booking.missingFields = missing.map((f) => f.key);
+            state.booking.correctionField = null;
             await persistConversationSnapshot(conversationId, state, channelLabel);
             const nextField = missing[0].label;
             const autoMsg = autoFilledFields.length > 0
@@ -4524,8 +4526,10 @@ app.post("/messages", async (req, res) => {
 
           // All data available — show confirmation
           state.booking.awaitingPatientData = false;
+          state.booking.awaitingFieldCorrection = false;
           state.booking.awaitingConfirmation = true;
           state.booking.missingFields = null;
+          state.booking.correctionField = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
           const slot = state.booking.chosenSlot;
