@@ -554,14 +554,14 @@ export async function bookAgendaweb(opts) {
     tipoagenda: "",
     observacion: "Agendado vía AgendaWeb.",
 
-    // Paciente existente: vacíos (backend busca por RUT).
-    // Paciente nuevo: obligatorios.
-    nombre: opts.pacienteExiste !== false ? "" : (opts.nombre || ""),
-    apellidos: opts.pacienteExiste !== false ? "" : (opts.apellidos || ""),
-    direccion: opts.pacienteExiste !== false ? "" : (opts.direccion || ""),
-    sexo: opts.pacienteExiste !== false ? "" : (opts.sexo || ""),
-    fecha_nacimiento: opts.pacienteExiste !== false ? "" : (opts.fechaNacimiento || ""),
-    aseguradora: opts.pacienteExiste !== false ? "" : (opts.aseguradora || ""),
+    // Campos personales SIEMPRE vacíos — backend busca por RUT.
+    // Llenarlos causa 500 (tanto paciente nuevo como existente).
+    nombre: "",
+    apellidos: "",
+    direccion: "",
+    sexo: "",
+    fecha_nacimiento: "",
+    aseguradora: "",
 
     telefono_fijo: opts.telefono || "",
     email: opts.email || "",
@@ -951,30 +951,12 @@ export async function bookAppointmentForPatient({
   const tipoCitaId = Number(slot?.tipoCitaId || slot?.tipo || 0);
   const professionalId = Number(slot?.professionalId || slot?.profesional || 0);
 
-  // Datos de paciente nuevo (solo se usan si pacienteExiste === false)
-  const nombres = patientData?.nombres || "";
-  const apPaterno = patientData?.apPaterno || patientData?.apellido_paterno || "";
-  const apMaterno = patientData?.apMaterno || patientData?.apellido_materno || "";
-  const direccion = patientData?.direccion || "";
-  const fechaNac = patientData?.fechaNacimiento || patientData?.fecha_nacimiento || "";
-  const prevision = patientData?.prevision || patientData?.aseguradora || "";
-
   if (!run || !slot?.dataDia || !slot?.time || !specialtyId || !tipoCitaId || !professionalId) {
     return {
       success: false,
       source: "antonia_booking_invalid_input",
       message: "Faltan datos obligatorios para reservar.",
       patient_reply: "No pude completar la reserva porque faltan datos de la hora seleccionada.",
-    };
-  }
-
-  // Validación: paciente nuevo necesita al menos nombre y apellido
-  if (!pacienteExiste && (!nombres || (!apPaterno && !apMaterno))) {
-    return {
-      success: false,
-      source: "antonia_booking_invalid_input",
-      message: "Paciente nuevo requiere nombre y apellidos para agendar.",
-      patient_reply: "Para agendar como paciente nuevo necesito tu nombre completo.",
     };
   }
 
@@ -992,12 +974,6 @@ export async function bookAppointmentForPatient({
       email,
       telefono,
       pacienteExiste,
-      nombre: nombres,
-      apellidos: `${apPaterno} ${apMaterno}`.trim(),
-      direccion,
-      sexo: "indeterminado",
-      fechaNacimiento: fechaNac,
-      aseguradora: prevision,
     });
 
     if (agendawebResult?.status === "agendado_correctamente") {
@@ -1288,17 +1264,17 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
     };
   }
 
-  // ── Get tipoCitaId (needed for booking via agendaweb-add) ──
+  // ── Get tipoCitaId from proximos-cupos-all (matches DOM data-tipocita) ──
+  // fetchAppointmentTypesByContext returns wrong ID (e.g. 6 vs 25 for prof 69)
   let tipoCitaId = null;
   try {
-    const tipos = await fetchAppointmentTypesByContext(branchId, specialtyId, profId, 0);
-    if (Array.isArray(tipos) && tipos.length > 0) {
-      // Prefer the es_default type, otherwise first one
-      const defaultTipo = tipos.find((t) => t.es_default);
-      tipoCitaId = (defaultTipo || tipos[0]).id;
+    const allCupos = await fetchProximosCuposAll(branchId);
+    const profData = allCupos?.find(p => p.id === profId);
+    if (profData?.tipo_cita) {
+      tipoCitaId = profData.tipo_cita;
     }
   } catch (e) {
-    console.log(`[medinet-api] fetchAppointmentTypesByContext failed:`, e.message);
+    console.log(`[medinet-api] proximos-cupos-all tipoCitaId lookup failed:`, e.message);
   }
 
   // ── Primary: picker-fecha (same endpoint agendaweb UI uses, no auth) ──
