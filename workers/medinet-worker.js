@@ -13,6 +13,7 @@ import {
   loginJwt,
   fetchPaymentMethods,
   registerPayment,
+  lookupPatientByRut,
 } from "../Antonia/medinet-api.js";
 
 const execFileAsync = promisify(execFile);
@@ -219,6 +220,22 @@ app.get("/medinet/api/payment-methods", authMiddleware, async (_req, res) => {
 app.post("/medinet/api/register-payment/:appointmentId", authMiddleware, async (req, res) => {
   try { res.json(await registerPayment(req.params.appointmentId, req.body)); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Lookup patient by RUT (autocomplete + buscador-general).
+ * GET /medinet/api/patient-lookup?rut=252038957
+ */
+app.get("/medinet/api/patient-lookup", authMiddleware, async (req, res) => {
+  const { rut } = req.query;
+  if (!rut) return res.status(400).json({ error: "rut is required" });
+  try {
+    const result = await lookupPatientByRut(rut);
+    res.json(result || { found: false });
+  } catch (e) {
+    console.error("[medinet-worker] patient-lookup error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Legacy Puppeteer-based endpoints ─────────────────────────

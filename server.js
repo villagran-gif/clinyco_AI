@@ -160,6 +160,39 @@ async function callMedinetWorkerApiBook(payload = {}, timeoutMs = 60000) {
   return callMedinetWorkerPath("/medinet/api/book", payload, timeoutMs);
 }
 
+async function callMedinetWorkerPatientLookup(rut, timeoutMs = 10000) {
+  if (!MEDINET_WORKER_URL || !MEDINET_WORKER_TOKEN || !rut) return null;
+
+  const cleanRut = String(rut).replace(/[.\-\s]/g, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs + 2000);
+
+  try {
+    const res = await fetch(
+      `${MEDINET_WORKER_URL}/medinet/api/patient-lookup?rut=${encodeURIComponent(cleanRut)}`,
+      {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${MEDINET_WORKER_TOKEN}` },
+        signal: controller.signal,
+      }
+    );
+
+    if (!res.ok) {
+      console.error(`[medinet-worker] patient-lookup HTTP ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json();
+    if (data?.found === false) return null;
+    return data;
+  } catch (err) {
+    console.warn("[medinet-worker] patient-lookup error:", err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function useRemoteWorker() {
   return !!(MEDINET_WORKER_URL && MEDINET_WORKER_TOKEN);
 }
@@ -4389,7 +4422,12 @@ app.post("/messages", async (req, res) => {
     state.system.lastInboundMessageId = messageId || state.system.lastInboundMessageId || null;
     state.system.lastQuestionKey = null;
 
-    updateDraftsFromText(state, userText, info);
+    // Skip updateDraftsFromText during booking data collection to avoid
+    // interfering with tryMapSingleFieldResponse (e.g. short answers like
+    // "Morales" being misinterpreted as a professional name)
+    if (!state.booking?.awaitingPatientData && !state.booking?.awaitingConfirmation) {
+      updateDraftsFromText(state, userText, info);
+    }
     try {
       await ensureCustomerContext({
         conversationId,
@@ -4413,6 +4451,51 @@ app.post("/messages", async (req, res) => {
         if (normalizedProvided === knownRut) {
           // RUT matches — proceed to collect missing data or confirmation
           state.booking.awaitingRutVerification = false;
+
+          // ── Auto-completar datos del paciente desde Medinet ──
+          let autoFilledFields = [];
+          try {
+            const lookup = await callMedinetWorkerPatientLookup(state.contactDraft?.c_rut);
+            if (lookup && lookup.patientId) {
+              const p = lookup.profile || {};
+              const cd = state.contactDraft;
+              console.log("[booking] patient lookup OK | id:", lookup.patientId, "nombre:", lookup.nombre);
+
+              if (!cd.c_nombres && p.nombres) {
+                cd.c_nombres = p.nombres;
+                autoFilledFields.push("nombre");
+              }
+              if (!cd.c_apellidos && p.paterno) {
+                cd.c_apellidos = p.paterno;
+                autoFilledFields.push("apellido");
+              }
+              if (!cd.c_aseguradora && p.prevision?.nombre) {
+                cd.c_aseguradora = p.prevision.nombre;
+                autoFilledFields.push("previsión");
+              }
+              if (!cd.c_tel1 && (p.telefono_movil || lookup.phone)) {
+                cd.c_tel1 = p.telefono_movil || lookup.phone;
+                autoFilledFields.push("teléfono");
+              }
+              if (!cd.c_email && (p.email || lookup.email)) {
+                cd.c_email = p.email || lookup.email;
+                autoFilledFields.push("email");
+              }
+              if (!cd.c_direccion && p.direccion) {
+                cd.c_direccion = p.direccion;
+                autoFilledFields.push("dirección");
+              }
+
+              state.booking.medinetPatientId = lookup.patientId;
+              state.booking.pacienteExisteMedinet = true;
+            } else {
+              console.log("[booking] patient lookup: not found in Medinet");
+              state.booking.pacienteExisteMedinet = false;
+            }
+          } catch (lookupErr) {
+            console.warn("[booking] patient lookup failed:", lookupErr.message);
+          }
+
           const patientData = buildPatientDataFromState(state);
           const missing = getMissingBookingFields(patientData);
 
@@ -4421,7 +4504,10 @@ app.post("/messages", async (req, res) => {
             state.booking.missingFields = missing.map((f) => f.key);
             await persistConversationSnapshot(conversationId, state, channelLabel);
             const nextField = missing[0].label;
-            const reply = `RUT verificado correctamente. Para completar la reserva necesito tu ${nextField}. ¿Me lo puedes indicar?`;
+            const autoMsg = autoFilledFields.length > 0
+              ? `Encontré tus datos en nuestro sistema (${autoFilledFields.join(", ")}). `
+              : "";
+            const reply = `RUT verificado correctamente. ${autoMsg}Para completar la reserva necesito tu ${nextField}. ¿Me lo puedes indicar?`;
             addToHistory(conversationId, "user", userText);
             return res.json(await sendManagedReply({
               appId, conversationId, messageId, userText,
@@ -4431,7 +4517,7 @@ app.post("/messages", async (req, res) => {
               resolverDecision: {
                 stage: "antonia_booking",
                 nextAction: "collect_patient_data",
-                reason: "RUT verified, collecting missing patient data"
+                reason: `RUT verified, auto-filled ${autoFilledFields.length} fields, collecting remaining`
               }
             }));
           }
@@ -4443,7 +4529,9 @@ app.post("/messages", async (req, res) => {
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
           const slot = state.booking.chosenSlot;
-          const confirmReply = `RUT verificado correctamente.\n\nAntes de confirmar, verifica tus datos:\n\n` +
+          const autoMsg = autoFilledFields.length > 0
+            ? `Encontré tus datos en nuestro sistema. ` : "";
+          const confirmReply = `RUT verificado correctamente. ${autoMsg}\n\nAntes de confirmar, verifica tus datos:\n\n` +
             `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
             `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
             `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +

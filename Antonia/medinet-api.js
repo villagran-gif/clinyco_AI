@@ -406,7 +406,37 @@ export async function fetchPatientById(patientId) {
 
 /** Search patients by autocomplete */
 export async function searchPatients(query) {
-  return apiFetch(`/api/pacientes/autocomplete/filter/?search=${encodeURIComponent(query)}`);
+  return apiFetch(`/api/pacientes/autocomplete/filter/?query=${encodeURIComponent(query)}`);
+}
+
+/** Get full patient profile by ID (buscador-general) */
+export async function fetchPatientProfile(patientId) {
+  return apiFetch(`/api/pacientes/${patientId}/buscador-general/`);
+}
+
+/**
+ * Lookup patient by RUT: autocomplete → buscador-general.
+ * Returns combined patient data or null if not found.
+ */
+export async function lookupPatientByRut(rut) {
+  const cleanRut = String(rut || "").replace(/[.\-\s]/g, "");
+  if (!cleanRut) return null;
+
+  const results = await searchPatients(cleanRut);
+  if (!Array.isArray(results) || results.length === 0) return null;
+
+  const match = results[0];
+  const profile = await fetchPatientProfile(match.id).catch(() => null);
+
+  return {
+    patientId: match.id,
+    nombre: match.nombre || "",
+    run: match.run || "",
+    email: match.email || profile?.data?.email || "",
+    phone: match.phone || profile?.data?.telefono_movil || "",
+    insurer: match.insurer || "",
+    profile: profile?.data || null,
+  };
 }
 
 // ─── Availability / Slots ───────────────────────────────────────
@@ -1510,7 +1540,7 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
 // ─── Payments (JWT) ──────────────────────────────────────────────
 
 export async function registerPayment(appointmentId, data) {
-  return apiFetch(`/api-public/billing/appointments/${appointmentId}/register-payment/`, {
+  return apiFetch(`/api-public/schedule/appointment/${appointmentId}/register-payment/`, {
     method: "POST",
     body: data,
   });
