@@ -97,9 +97,11 @@ export function buildInitialConversationState() {
       awaitingSlotChoice: false,
       awaitingRutVerification: false,
       awaitingPatientData: false,
+      awaitingFieldCorrection: false,
       awaitingConfirmation: false,
       chosenSlot: null,
       missingFields: null,
+      correctionField: null,
       slotReminderSent: false
     },
     system: {
