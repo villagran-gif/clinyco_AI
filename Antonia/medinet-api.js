@@ -139,8 +139,8 @@ function clearJwtToken() {
 async function buildHeaders(path) {
   const h = { "Content-Type": "application/json" };
 
-  // /api-public/* and /api/v2/* endpoints use JWT auth (MEDINET_JWT prefix)
-  if (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) {
+  // /api-public/* endpoints use JWT auth (MEDINET_JWT prefix)
+  if (path.startsWith("/api-public/")) {
     try {
       const jwt = await getJwtToken();
       h.Authorization = `MEDINET_JWT ${jwt}`;
@@ -234,8 +234,8 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
 
     let res = await fetch(url, options);
 
-    // Auto-refresh JWT on 401 for /api-public/ and /api/v2/ endpoints (single retry)
-    if (res.status === 401 && (path.startsWith("/api-public/") || path.startsWith("/api/v2/")) && _jwtToken) {
+    // Auto-refresh JWT on 401 for /api-public/ endpoints (single retry)
+    if (res.status === 401 && path.startsWith("/api-public/") && _jwtToken) {
       clearJwtToken();
       const controller2 = new AbortController();
       const timer2 = setTimeout(() => controller2.abort(), timeout);
@@ -1507,17 +1507,4 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
   };
 }
 
-// ─── Payments (JWT) ──────────────────────────────────────────────
-
-export async function registerPayment(appointmentId, data) {
-  return apiFetch(`/api-public/billing/appointments/${appointmentId}/register-payment/`, {
-    method: "POST",
-    body: data,
-  });
-}
-
-export async function fetchPaymentMethods() {
-  return apiFetch("/api-public/billing/payments-methods/all/");
-}
-
-export { loginJwt, formatRutWithDots, DEFAULT_BRANCH_ID };
+export { formatRutWithDots, DEFAULT_BRANCH_ID };
