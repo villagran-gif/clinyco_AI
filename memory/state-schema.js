@@ -55,6 +55,8 @@ export function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      zendeskContactSyncKey: null,
+      zendeskContactSyncAt: null,
       supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
