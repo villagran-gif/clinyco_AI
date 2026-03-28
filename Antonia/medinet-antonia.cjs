@@ -283,6 +283,16 @@ async function openProfessionalAgenda(page, professionalId) {
   const targetRow = page.locator(`li.fila-profesional[data-id-profesional="${professionalId}"]`).first();
   await targetRow.waitFor({ state: 'visible', timeout: 15000 });
 
+  // ── Diagnostic: capture ALL network requests while slots load ──
+  const networkLog = [];
+  const onRequest = (request) => {
+    const url = request.url();
+    if (!/clinyco\.medinetapp\.com/i.test(url)) return;
+    if (/\.(css|js|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico)(\?|$)/i.test(url)) return;
+    networkLog.push({ method: request.method(), url });
+  };
+  page.on('request', onRequest);
+
   const primaryButton = targetRow.locator('button.btn-option').first();
   const fallbackButton = targetRow.locator('button.other-options.btn').first();
 
@@ -293,6 +303,17 @@ async function openProfessionalAgenda(page, professionalId) {
   }
 
   await waitForSlotsVisible(page, 20000);
+
+  // ── Dump captured network traffic ──
+  page.off('request', onRequest);
+  if (networkLog.length > 0) {
+    console.log('[SLOT-DIAGNOSTIC] Network requests during slot load for prof=' + professionalId + ':');
+    for (const entry of networkLog) {
+      console.log(`  ${entry.method} ${entry.url}`);
+    }
+  } else {
+    console.log('[SLOT-DIAGNOSTIC] No network requests captured during slot load (slots may be pre-rendered in HTML)');
+  }
 }
 
 async function selectCalendarDate(page, slotDate) {
@@ -455,6 +476,23 @@ async function main() {
 
   const browser = await chromium.launch({ headless: !headed });
   const page = await browser.newPage();
+
+  // ── Global diagnostic: log ALL API/data requests from agendaweb ──
+  page.on('response', async (response) => {
+    const url = response.url();
+    const method = response.request().method();
+    if (!/clinyco\.medinetapp\.com/i.test(url)) return;
+    if (/\.(css|js|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico)(\?|$)/i.test(url)) return;
+    if (/analytics|google-analytics|g\/collect|cloudflare|cdn-cgi/i.test(url)) return;
+    const status = response.status();
+    const contentType = (response.headers()['content-type'] || '');
+    let bodyLen = -1;
+    try {
+      const body = await response.body();
+      bodyLen = body ? body.length : 0;
+    } catch (_) {}
+    console.log(`[NET] ${method} ${status} ${url} (${bodyLen}b) ${contentType.split(';')[0]}`);
+  });
 
   try {
     await openBookingStepOne(page, rut, branchName);

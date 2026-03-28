@@ -554,8 +554,8 @@ export async function bookAgendaweb(opts) {
     tipoagenda: "",
     observacion: "Agendado vía AgendaWeb.",
 
-    // IMPORTANTE:
-    // Siempre vacíos. agendaweb-add parece romperse si estos vienen llenos.
+    // Campos personales SIEMPRE vacíos — backend busca por RUT.
+    // Llenarlos causa 500 (tanto paciente nuevo como existente).
     nombre: "",
     apellidos: "",
     direccion: "",
@@ -1099,72 +1099,35 @@ async function searchSlotsBySpecialty({ specialtyId, specialtyQuery, branchId = 
   // Capitalize first letter for display
   specialtyName = specialtyName.charAt(0).toUpperCase() + specialtyName.slice(1).toLowerCase();
 
-  // Try chatbot-optimized endpoint first (returns slots across all professionals)
+  // Find professionals for this specialty and use picker-fecha for each
   let slots = [];
   try {
-    const chatbotSlots = await fetchNextSlotsChatbot(branchId, specialtyId);
-    if (Array.isArray(chatbotSlots) && chatbotSlots.length > 0) {
-      for (const entry of chatbotSlots) {
-        if (slots.length >= MAX_SLOTS) break;
-        const date = entry.fecha || entry.date || entry.dia || "";
-        const time = entry.hora || entry.hour || entry.time || "";
-        if (!date || !time) continue;
-        slots.push({
-          date: isoToDisplayDate(date) || date,
-          time,
-          dataDia: date,
-          professional: entry.profesional || null,
-          professionalId: entry.profesional_id ? String(entry.profesional_id) : null,
-          specialty: entry.especialidad || specialtyName,
-          specialtyId,
-          duration: entry.duracion || 30,
-        });
+    const fullList = await fetchProfessionalsFull();
+    const matching = (Array.isArray(fullList) ? fullList : []).filter((prof) => {
+      if (!prof.es_activo || !prof.permite_agendaweb) return false;
+      const suc_esps = prof.sucursal_especialidades || [];
+      return suc_esps.some(
+        (se) => se.especialidad?.id === specialtyId && se.ubicacion?.id === branchId
+      );
+    });
+
+    for (const prof of matching) {
+      if (slots.length >= MAX_SLOTS) break;
+      const profId = prof.id;
+      const profName = `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
+
+      try {
+        const profSlots = await fetchPickerFechaSlots(branchId, specialtyId, profId);
+        for (const s of profSlots) {
+          if (slots.length >= MAX_SLOTS) break;
+          slots.push({ ...s, professional: profName, professionalId: String(profId), specialty: specialtyName, specialtyId });
+        }
+      } catch (e2) {
+        console.log(`[medinet-api] searchSlotsBySpecialty picker-fecha prof ${profId} failed:`, e2.message);
       }
     }
   } catch (e) {
-    console.log(`[medinet-api] searchSlotsBySpecialty chatbot(${branchId},${specialtyId}) failed:`, e.message);
-  }
-
-  // If chatbot returned nothing, find professionals for this specialty via full list
-  // (fetchProfessionalsFull works with Token auth; get_por_especialidad does not)
-  if (slots.length === 0) {
-    try {
-      const fullList = await fetchProfessionalsFull();
-      // Filter to professionals that have this specialty at this branch
-      const matching = (Array.isArray(fullList) ? fullList : []).filter((prof) => {
-        if (!prof.es_activo || !prof.permite_agendaweb) return false;
-        const suc_esps = prof.sucursal_especialidades || [];
-        return suc_esps.some(
-          (se) => se.especialidad?.id === specialtyId && se.ubicacion?.id === branchId
-        );
-      });
-
-      for (const prof of matching) {
-        if (slots.length >= MAX_SLOTS) break;
-        const profId = prof.id;
-        const profName = `${prof.nombres || ""} ${prof.paterno || ""}`.trim();
-        const tipoCita = Array.isArray(prof.tipos_cita) && prof.tipos_cita.length > 0 ? prof.tipos_cita[0] : null;
-        if (!tipoCita) continue;
-
-        try {
-          const profSlots = await searchAvailableSlots({
-            professionalId: profId,
-            ubicacionId: branchId,
-            especialidadId: specialtyId,
-            tipocitaId: tipoCita.id,
-            daysAhead: 14,
-          });
-          for (const s of profSlots) {
-            if (slots.length >= MAX_SLOTS) break;
-            slots.push({ ...s, professional: s.professional || profName, specialty: specialtyName, specialtyId });
-          }
-        } catch (e2) {
-          console.log(`[medinet-api] searchSlotsBySpecialty prof ${profId} slots failed:`, e2.message);
-        }
-      }
-    } catch (e) {
-      console.log(`[medinet-api] searchSlotsBySpecialty profs fallback failed:`, e.message);
-    }
+    console.log(`[medinet-api] searchSlotsBySpecialty profs fallback failed:`, e.message);
   }
 
   // Build patient-facing reply
@@ -1193,16 +1156,66 @@ async function searchSlotsBySpecialty({ specialtyId, specialtyQuery, branchId = 
 }
 
 /**
+ * Fetch slots from the agendaweb picker-fecha HTML endpoint (no auth required).
+ *
+ * This is the same endpoint the agendaweb UI uses to render the calendar.
+ * Returns server-rendered HTML with .table-horarios[data-dia] and
+ * button.btn-reservar[data-hora] — the real source of slot availability.
+ *
+ * @param {number} ubicacionId  Branch ID (e.g. 39)
+ * @param {number} especialidadId  Specialty ID (e.g. 1)
+ * @param {number|string} profesionalId  Professional ID (e.g. 58)
+ * @returns {Array<{date,time,dataDia}>} Up to MAX_SLOTS slots
+ */
+async function fetchPickerFechaSlots(ubicacionId, especialidadId, profesionalId) {
+  const path = `/agendaweb/planned/picker-fecha/${ubicacionId}/${especialidadId}/${profesionalId}/0/?is_resource=0`;
+  const html = await noAuthFetch(path, { timeout: 20000 });
+  if (typeof html !== "string" || !html) return [];
+
+  // Parse HTML: extract data-dia from table-horarios and data-hora from btn-reservar buttons
+  // Each table block looks like: <div class="table-horarios" data-dia="2026-03-30" ...>
+  //   <button class="btn-reservar" data-hora="12:20" ...>
+  const slots = [];
+  const tableRegex = /class="[^"]*table-horarios[^"]*"[^>]*data-dia="(\d{4}-\d{2}-\d{2})"/g;
+  const tables = [];
+  let tableMatch;
+  while ((tableMatch = tableRegex.exec(html)) !== null) {
+    tables.push({ dataDia: tableMatch[1], startIndex: tableMatch.index });
+  }
+
+  for (let i = 0; i < tables.length; i++) {
+    const { dataDia, startIndex } = tables[i];
+    // Slice HTML from this table to the next table (or end)
+    const endIndex = i + 1 < tables.length ? tables[i + 1].startIndex : html.length;
+    const tableHtml = html.slice(startIndex, endIndex);
+
+    // Extract all data-hora values from btn-reservar buttons in this table
+    const horaRegex = /class="[^"]*btn-reservar[^"]*"[^>]*data-hora="(\d{2}:\d{2})"/g;
+    let horaMatch;
+    while ((horaMatch = horaRegex.exec(tableHtml)) !== null) {
+      if (slots.length >= MAX_SLOTS) break;
+      slots.push({
+        date: isoToDisplayDate(dataDia),
+        time: horaMatch[1],
+        dataDia,
+      });
+    }
+    if (slots.length >= MAX_SLOTS) break;
+  }
+
+  console.log(`[medinet-api] picker-fecha(${ubicacionId}/${especialidadId}/${profesionalId}) → ${slots.length} slots from ${tables.length} dates`);
+  return slots;
+}
+
+/**
  * API-first professional search + slot discovery.
- * Uses only endpoints verified working with Token auth.
  *
  * Flow:
  *  1. findProfessional() → match by name (activos-list, public)
  *  1b. If no professional found, try findSpecialtyId() → specialty-based search
  *  2. fetchSpecialtiesForProfessional() → get specialty (Token auth)
- *  3. fetchAppointmentTypesByContext() → get tipo_cita (Token auth)
- *  4. fetchNextSlotsChatbot() → get available slots (Token auth)
- *  5. Falls back to fetchAvailableSlots() if chatbot endpoint has no data
+ *  3. fetchPickerFechaSlots() → parse agendaweb HTML for real availability (no auth)
+ *  4. Falls back to fetchAppointmentTypesByContext + cupos-disponibles if picker-fecha fails
  *
  * Returns object compatible with runMedinetAntonia response shape:
  *  { professional, specialty, available_slots, patient_reply, source }
@@ -1241,7 +1254,6 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
   const specialtyName = specialty?.nombre || "";
 
   if (!specialtyId) {
-    // Professional found but no specialty at this branch — return name only
     return {
       source: "api",
       professional: profName,
@@ -1252,45 +1264,36 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
     };
   }
 
-  // Try to get appointment types (needed for cupos-disponibles)
+  // ── Get tipoCitaId from proximos-cupos-all (matches DOM data-tipocita) ──
+  // fetchAppointmentTypesByContext returns wrong ID (e.g. 6 vs 25 for prof 69)
   let tipoCitaId = null;
   try {
-    const tipos = await fetchAppointmentTypesByContext(branchId, specialtyId, profId, false);
-    if (Array.isArray(tipos) && tipos.length > 0) {
-      tipoCitaId = tipos[0].id;
+    const allCupos = await fetchProximosCuposAll(branchId);
+    const profData = allCupos?.find(p => p.id === profId);
+    if (profData?.tipo_cita) {
+      tipoCitaId = profData.tipo_cita;
     }
   } catch (e) {
-    console.log(`[medinet-api] fetchAppointmentTypesByContext failed:`, e.message);
+    console.log(`[medinet-api] proximos-cupos-all tipoCitaId lookup failed:`, e.message);
   }
 
-  // Try chatbot-optimized slots endpoint first
+  // ── Primary: picker-fecha (same endpoint agendaweb UI uses, no auth) ──
   let slots = [];
   try {
-    const chatbotSlots = await fetchNextSlotsChatbot(branchId, specialtyId);
-    if (Array.isArray(chatbotSlots) && chatbotSlots.length > 0) {
-      for (const entry of chatbotSlots) {
-        if (slots.length >= MAX_SLOTS) break;
-        const date = entry.fecha || entry.date || entry.dia || "";
-        const time = entry.hora || entry.hour || entry.time || "";
-        if (!date || !time) continue;
-        // Filter for this specific professional if the endpoint returns all
-        if (entry.profesional_id && entry.profesional_id !== profId) continue;
-        slots.push({
-          date: isoToDisplayDate(date) || date,
-          time,
-          dataDia: date,
-          professional: entry.profesional || profName,
-          professionalId: String(profId),
-          specialty: entry.especialidad || specialtyName,
-          duration: entry.duracion || 30,
-        });
-      }
-    }
+    const rawSlots = await fetchPickerFechaSlots(branchId, specialtyId, profId);
+    slots = rawSlots.map((s) => ({
+      ...s,
+      professional: profName,
+      professionalId: String(profId),
+      specialty: specialtyName,
+      specialtyId,
+      tipoCitaId,
+    }));
   } catch (e) {
-    console.log(`[medinet-api] fetchNextSlotsChatbot(${branchId},${specialtyId}) failed:`, e.message);
+    console.log(`[medinet-api] fetchPickerFechaSlots failed:`, e.message);
   }
 
-  // If chatbot endpoint returned no slots and we have tipoCitaId, try cupos-disponibles
+  // ── Fallback: cupos-disponibles (if picker-fecha returned nothing) ──
   if (slots.length === 0 && tipoCitaId) {
     try {
       slots = await searchAvailableSlots({
