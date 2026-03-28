@@ -11,8 +11,18 @@ import {
   formatRutWithDots,
   DEFAULT_BRANCH_ID,
   loginJwt,
+  fetchCommunes,
+  validateProfile,
+  fetchAppointmentTypesV2,
+  fetchSpecialtiesV2,
   fetchPaymentMethods,
   registerPayment,
+  fetchPatientV2,
+  fetchPatientAppointments,
+  fetchPatientRecipes,
+  fetchPatientMedicalOrders,
+  fetchPatientSurgicalOrders,
+  fetchPatientExams,
 } from "../Antonia/medinet-api.js";
 
 const execFileAsync = promisify(execFile);
@@ -188,7 +198,7 @@ app.post("/medinet/api/book", authMiddleware, async (req, res) => {
   }
 });
 
-// ─── JWT / Payment endpoints (proxied through VPS to bypass Cloudflare) ───
+// ─── V2 / JWT endpoints (proxied through VPS to bypass Cloudflare) ───
 
 app.get("/medinet/api/jwt-login", authMiddleware, async (_req, res) => {
   try {
@@ -199,6 +209,26 @@ app.get("/medinet/api/jwt-login", authMiddleware, async (_req, res) => {
   }
 });
 
+app.get("/medinet/api/communes", authMiddleware, async (_req, res) => {
+  try { res.json(await fetchCommunes()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/validate-profile/:run", authMiddleware, async (req, res) => {
+  try { res.json(await validateProfile(req.params.run)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/appointment-types-v2", authMiddleware, async (_req, res) => {
+  try { res.json(await fetchAppointmentTypesV2()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/specialties-v2", authMiddleware, async (_req, res) => {
+  try { res.json(await fetchSpecialtiesV2()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/medinet/api/payment-methods", authMiddleware, async (_req, res) => {
   try { res.json(await fetchPaymentMethods()); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -206,6 +236,36 @@ app.get("/medinet/api/payment-methods", authMiddleware, async (_req, res) => {
 
 app.post("/medinet/api/register-payment/:appointmentId", authMiddleware, async (req, res) => {
   try { res.json(await registerPayment(req.params.appointmentId, req.body)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/patient/:id", authMiddleware, async (req, res) => {
+  try { res.json(await fetchPatientV2(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/patient/:id/appointments", authMiddleware, async (req, res) => {
+  try { res.json(await fetchPatientAppointments(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/patient/:id/recipes", authMiddleware, async (req, res) => {
+  try { res.json(await fetchPatientRecipes(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/patient/:id/medical-orders", authMiddleware, async (req, res) => {
+  try { res.json(await fetchPatientMedicalOrders(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/patient/:id/surgical-orders", authMiddleware, async (req, res) => {
+  try { res.json(await fetchPatientSurgicalOrders(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/medinet/api/patient/:id/exams", authMiddleware, async (req, res) => {
+  try { res.json(await fetchPatientExams(req.params.id)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
