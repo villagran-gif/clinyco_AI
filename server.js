@@ -4856,7 +4856,7 @@ app.post("/messages", async (req, res) => {
       }
 
       // Cache TTL check: refresh if stale (>30 min)
-      if (!useRemoteWorker() && isCacheStale()) {
+      if (isCacheStale()) {
         console.log("Medinet cache stale (>30 min), refreshing before fast-path...");
         await runMedinetAntoniaCache();
         KNOWN_AGENDA_PROFESSIONALS = buildKnownAgendaProfessionals();
