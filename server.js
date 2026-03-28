@@ -374,7 +374,20 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
-  // ── 1. Try no-auth REST API first (no browser, no token, no IP blocking) ──
+  // ── 1. Try picker-fecha API first (no auth, up to 6 slots) ──
+  try {
+    console.log("[medinet-search] path=api_picker | query:", safeQuery);
+    const apiResult = await searchSlotsViaApi({ query: safeQuery });
+    if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
+      console.log("[medinet-search] path=api_picker | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
+      return apiResult;
+    }
+    console.log("[medinet-search] path=api_picker | no slots found");
+  } catch (apiError) {
+    console.warn("[medinet-search] path=api_picker | ERROR:", apiError.message);
+  }
+
+  // ── 1b. Fallback to no-auth proximos-cupos (~1 slot) ──
   try {
     console.log("[medinet-search] path=api_noauth | query:", safeQuery);
     const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
@@ -385,20 +398,6 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
     console.log("[medinet-search] path=api_noauth | no slots found");
   } catch (noAuthError) {
     console.warn("[medinet-search] path=api_noauth | ERROR:", noAuthError.message);
-  }
-
-  // ── 1b. Try auth-based REST API if token is available ──
-  if (process.env.MEDINET_API_TOKEN) {
-    try {
-      console.log("[medinet-search] path=api_auth | query:", safeQuery);
-      const apiResult = await searchSlotsViaApi({ query: safeQuery });
-      if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
-        console.log("[medinet-search] path=api_auth | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
-        return apiResult;
-      }
-    } catch (apiError) {
-      console.warn("[medinet-search] path=api_auth | ERROR:", apiError.message);
-    }
   }
 
   // ── 2. Try remote API-only worker ──

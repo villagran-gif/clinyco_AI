@@ -106,21 +106,21 @@ app.post("/medinet/api/search", authMiddleware, async (req, res) => {
     const rut = formatRutWithDots(patientRut || MEDINET_RUT);
     const branch = Number(branchId || DEFAULT_BRANCH_ID);
 
-    // Check cupos in parallel with no-auth slot search
+    // Check cupos in parallel with picker-fecha slot search (up to 6 slots)
     const [cuposResult, searchResult] = await Promise.all([
       checkCupos(branch, rut).catch((e) => ({ status: false, mensaje: e.message })),
-      searchSlotsNoAuth({ query, branchId: branch }).catch((e) => {
-        console.log("[medinet-worker] noauth search failed, trying auth:", e.message);
+      searchSlotsViaApi({ query, branchId: branch }).catch((e) => {
+        console.log("[medinet-worker] picker-fecha search failed:", e.message);
         return null;
       }),
     ]);
 
-    // Fall back to auth-based search if no-auth returned no slots
+    // Fall back to no-auth search if picker-fecha returned no slots
     const finalResult = (searchResult?.available_slots?.length > 0)
       ? searchResult
-      : await searchSlotsViaApi({ query, branchId: branch }).catch((e) => {
-          console.log("[medinet-worker] auth search also failed:", e.message);
-          return searchResult || { source: "api_noauth", available_slots: [], patient_reply: null };
+      : await searchSlotsNoAuth({ query, branchId: branch }).catch((e) => {
+          console.log("[medinet-worker] noauth search also failed:", e.message);
+          return searchResult || { source: "api", available_slots: [], patient_reply: null };
         });
 
     return res.json({
