@@ -643,93 +643,6 @@ function splitApellidos(apellidos) {
   return { paterno: parts[0] || "", materno: "" };
 }
 
-/**
- * When exactly one field is missing, attempt to map the user's entire response to that field.
- * Handles natural conversational responses like:
- * Bot: "me falta: apellido materno"
- * User: "Morles"
- */
-function tryMapSingleFieldResponse(userText, missingFieldKey, state) {
-  const text = String(userText || "").trim();
-  if (!text || text.length < 2) return false;
-
-  const cd = state?.contactDraft || {};
-  const namePattern = /^[A-Za-záéíóúñÁÉÍÓÚÑüÜ\s'-]+$/;
-
-  switch (missingFieldKey) {
-    case "apMaterno": {
-      // Strip explicit label if present: "apellido materno: Morles" or "Morles"
-      const cleaned = text.replace(/^apellido\s+materno\s*[:.]\s*/i, "").trim();
-      if (cleaned.length >= 2 && namePattern.test(cleaned)) {
-        const { paterno } = splitApellidos(cd.c_apellidos);
-        state.contactDraft.c_apellidos = paterno
-          ? `${paterno} ${titleCaseWords(cleaned)}`
-          : titleCaseWords(cleaned);
-        return true;
-      }
-      break;
-    }
-    case "apPaterno": {
-      const cleaned = text.replace(/^apellido\s+paterno\s*[:.]\s*/i, "").trim();
-      if (cleaned.length >= 2 && namePattern.test(cleaned)) {
-        const { materno } = splitApellidos(cd.c_apellidos);
-        state.contactDraft.c_apellidos = titleCaseWords(cleaned) + (materno ? ` ${materno}` : "");
-        return true;
-      }
-      break;
-    }
-    case "nombres": {
-      const cleaned = text.replace(/^(nombre|nombres|nombre completo)\s*[:.]\s*/i, "").trim();
-      if (cleaned.length >= 2 && isUsablePersonName(cleaned)) {
-        const split = splitNames(cleaned);
-        if (split.nombres) {
-          state.contactDraft.c_nombres = split.nombres;
-          if (split.apellidos && !cd.c_apellidos) state.contactDraft.c_apellidos = split.apellidos;
-          return true;
-        }
-      }
-      break;
-    }
-    case "email": {
-      const email = extractEmail(text);
-      if (email) { state.contactDraft.c_email = email; return true; }
-      break;
-    }
-    case "fono": {
-      const phone = normalizePhone(text) || extractPhone(text);
-      if (phone) {
-        state.contactDraft.c_tel1 = phone;
-        if (!cd.c_tel2) state.contactDraft.c_tel2 = phone;
-        return true;
-      }
-      break;
-    }
-    case "rut": {
-      const rut = extractRut(text);
-      if (rut) { state.contactDraft.c_rut = formatRutHuman(rut) || rut; return true; }
-      break;
-    }
-    case "nacimiento": {
-      const dob = extractDate(text);
-      if (dob) { state.contactDraft.c_fecha = dob; return true; }
-      break;
-    }
-    case "prevision": {
-      const ins = parseAseguradora(text);
-      if (ins?.aseguradora) { state.contactDraft.c_aseguradora = ins.aseguradora; return true; }
-      break;
-    }
-    case "direccion": {
-      if (text.length >= 3 && !extractEmail(text)) {
-        state.contactDraft.c_direccion = titleCaseWords(normalizeSpaces(text));
-        return true;
-      }
-      break;
-    }
-  }
-  return false;
-}
-
 function buildPatientDataFromState(state) {
   const cd = state?.contactDraft || {};
   const { paterno, materno } = splitApellidos(cd.c_apellidos);
@@ -4488,10 +4401,6 @@ app.post("/messages", async (req, res) => {
       } else {
         // User sent non-slot text while awaitingSlotChoice — data was already captured by updateDraftsFromText.
         // The Playwright worker needs ALL patient data to fill the Medinet form.
-        // If exactly one field is missing, map the user's response directly to that field
-        if (state.booking.missingFields?.length === 1) {
-          tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
-        }
         // Check if data is complete: if yes → present slots; if no → ask for missing fields.
         const patientData = buildPatientDataFromState(state);
         const missing = getMissingBookingFields(patientData);
@@ -4606,10 +4515,15 @@ app.post("/messages", async (req, res) => {
 
     // --- Antonia booking: patient providing missing data ---
     if ((state.booking.awaitingPatientData || state.booking.awaitingConfirmation) && state.booking.chosenSlot) {
-      // If exactly one field is missing, map the user's response directly to that field
-      // (e.g., bot asks "me falta: apellido materno" → user replies "Morles")
-      if (state.booking.missingFields?.length === 1) {
-        tryMapSingleFieldResponse(userText, state.booking.missingFields[0], state);
+      // If the only missing field is "direccion" and updateDraftsFromText didn't capture it,
+      // treat the entire user text as the address (user naturally replies without "dirección:" prefix)
+      if (!state.contactDraft.c_direccion && state.booking.missingFields) {
+        const stillMissing = state.booking.missingFields;
+        const onlyDireccionMissing = stillMissing.length === 1 && stillMissing[0] === "direccion";
+        const textLooksLikeAddress = userText.trim().length >= 3 && !extractEmail(userText);
+        if (onlyDireccionMissing && textLooksLikeAddress) {
+          state.contactDraft.c_direccion = titleCaseWords(normalizeSpaces(userText.trim()));
+        }
       }
       // Re-extract patient data (updateDraftsFromText may have captured new fields)
       const patientData = buildPatientDataFromState(state);
