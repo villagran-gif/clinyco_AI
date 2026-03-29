@@ -33,6 +33,7 @@ import {
   formatRutHuman as formatValidatedRutHuman,
   normalizeRut
 } from "./extraction/identity-normalizers.js";
+import { calculateLeadScore } from "./scoring/lead-score.js";
 import {
   searchSlotsViaApi,
   searchSlotsNoAuth,
@@ -2175,6 +2176,7 @@ async function hydrateConversationCache(conversationId) {
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
+    state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
   } catch (error) {
@@ -4146,6 +4148,7 @@ app.post("/messages", async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+    state.leadScore = calculateLeadScore(state);
     try {
       await ensureCustomerContext({
         conversationId,
