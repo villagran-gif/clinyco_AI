@@ -65,7 +65,9 @@ export function buildInitialConversationState() {
       lastResolvedContext: null,
       verifiedRutAt: null,
       verifiedWhatsappAt: null,
-      verifiedPairAt: null
+      verifiedPairAt: null,
+      zendeskRequesterId: null,
+      zendeskTicketId: null
     },
     measurements: {
       weightKg: null,
