@@ -3434,6 +3434,126 @@ async function zendeskSupportPut(path, body = {}) {
   return data;
 }
 
+async function zendeskSupportGetByUrl(url) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const parsedUrl = new URL(String(url || ""));
+  const expectedHost = `${ZENDESK_SUBDOMAIN}.zendesk.com`;
+  if (parsedUrl.host !== expectedHost) {
+    throw new Error(`Unexpected Zendesk host: ${parsedUrl.host}`);
+  }
+
+  const response = await fetch(parsedUrl.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+function extractConversationIdFromUnknown(node, seen = new Set()) {
+  if (!node || typeof node !== "object") {
+    return null;
+  }
+
+  if (seen.has(node)) {
+    return null;
+  }
+  seen.add(node);
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const nested = extractConversationIdFromUnknown(item, seen);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (/^conversation[_-]?id$/i.test(key)) {
+      const normalized = normalizeZendeskEntityId(value);
+      if (normalized) return normalized;
+    }
+  }
+
+  for (const value of Object.values(node)) {
+    const nested = extractConversationIdFromUnknown(value, seen);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+async function fetchZendeskTicketAudits(ticketId) {
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
+  if (!normalizedTicketId) {
+    return [];
+  }
+
+  let nextUrl = `https://${ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/tickets/${encodeURIComponent(normalizedTicketId)}/audits.json`;
+  const audits = [];
+
+  while (nextUrl) {
+    const payload = await zendeskSupportGetByUrl(nextUrl);
+    const rows = Array.isArray(payload?.audits) ? payload.audits : [];
+    audits.push(...rows);
+    nextUrl = payload?.next_page || null;
+  }
+
+  return audits;
+}
+
+async function resolveConversationIdFromZendeskTicket(ticketId) {
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
+  if (!normalizedTicketId) {
+    return null;
+  }
+
+  const audits = await fetchZendeskTicketAudits(normalizedTicketId);
+
+  for (const audit of audits) {
+    const events = Array.isArray(audit?.events) ? audit.events : [];
+    for (const event of events) {
+      if (event?.type !== "ChatStartedEvent") continue;
+      const conversationId = extractConversationIdFromUnknown(event);
+      if (conversationId) {
+        return conversationId;
+      }
+    }
+  }
+
+  for (const audit of audits) {
+    const conversationId = extractConversationIdFromUnknown(audit);
+    if (conversationId) {
+      return conversationId;
+    }
+  }
+
+  return null;
+}
+
 async function searchSupportByEmail(email) {
   if (!email) return [];
   const query = `type:user ${email}`;
@@ -4360,12 +4480,32 @@ app.post("/ticket-assigned", async (req, res) => {
       ticketId
     } = extractZendeskTicketAssignment(req.body || {});
 
-    if (!conversation_id) {
-      return res.status(400).json({ ok: false, error: "Missing conversation_id" });
+    let conversationId = conversation_id;
+
+    if (!conversationId && ticketId) {
+      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
+      if (conversationId) {
+        console.log(
+          `TICKET_ASSIGNED_CONVERSATION_RESOLVED ticketId=${ticketId} conversationId=${conversationId}`
+        );
+      } else {
+        console.log(
+          `TICKET_ASSIGNED_CONVERSATION_NOT_FOUND ticketId=${ticketId} requesterId=${requesterId || "-"}`
+        );
+      }
     }
 
-    await hydrateConversationCache(conversation_id);
-    const state = getConversationState(conversation_id);
+    if (!conversationId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing conversation_id",
+        ticket_id: ticketId || null,
+        requester_id: requesterId || null
+      });
+    }
+
+    await hydrateConversationCache(conversationId);
+    const state = getConversationState(conversationId);
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
@@ -4380,7 +4520,7 @@ app.post("/ticket-assigned", async (req, res) => {
 
     if (requesterId || ticketId) {
       const linkLog = [
-        `conversationId=${conversation_id}`,
+        `conversationId=${conversationId}`,
         requesterId ? `zendeskRequesterId=${requesterId}` : null,
         ticketId ? `ticketId=${ticketId}` : null
       ].filter(Boolean).join(" ");
@@ -4395,18 +4535,18 @@ app.post("/ticket-assigned", async (req, res) => {
         authorDisplayName: null,
         sourceProfileName: state?.identity?.sourceProfileName || null
       }, {
-        conversationId: conversation_id,
+        conversationId,
         trigger: "ticket_assigned"
       });
     } catch (error) {
       console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
     }
 
-    console.log("AI disabled for conversation:", conversation_id);
+    console.log("AI disabled for conversation:", conversationId);
     console.log("Conversation state:", safeJson(state));
 
     await saveConversationEvent({
-      conversationId: conversation_id,
+      conversationId,
       info: {
         sourceType: "system",
         entryPoint: "ticket_assigned",
@@ -4426,13 +4566,15 @@ app.post("/ticket-assigned", async (req, res) => {
       }
     });
 
-    await persistConversationSnapshot(conversation_id, state, null);
-    await maybeSaveConversationSummary(conversation_id, state, "ticket_assigned");
+    await persistConversationSnapshot(conversationId, state, null);
+    await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
     return res.json({
       ok: true,
       event: event || "human_takeover",
-      conversation_id,
+      conversation_id: conversationId,
+      ticket_id: ticketId || null,
+      requester_id: requesterId || null,
       aiEnabled: state.system.aiEnabled
     });
   } catch (error) {
