@@ -2117,6 +2117,12 @@ function buildInitialConversationState() {
       lastOutboundText: null,
       lastOutboundReason: null,
       lastOutboundAt: null
+    },
+    leadScore: {
+      score: 0,
+      category: "frío",
+      reasons: [],
+      calculatedAt: null
     }
   };
 }
