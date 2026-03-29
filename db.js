@@ -157,6 +157,8 @@ export async function initDb() {
         ai_enabled boolean not null default true,
         human_taken_over boolean not null default false,
         assignee_id text,
+        zendesk_ticket_id text,
+        zendesk_requester_id text,
         bot_messages_sent integer not null default 0,
         introduced_as_antonia boolean not null default false,
         handoff_reason text,
@@ -220,6 +222,8 @@ export async function initDb() {
       alter table conversations add column if not exists channel_display_name text;
       alter table conversations add column if not exists source_profile_name text;
       alter table conversations add column if not exists whatsapp_phone text;
+      alter table conversations add column if not exists zendesk_ticket_id text;
+      alter table conversations add column if not exists zendesk_requester_id text;
 
       alter table customers add column if not exists rut text;
       alter table customers add column if not exists whatsapp_phone text;
@@ -340,12 +344,14 @@ export async function upsertConversationState(conversationId, channel, state) {
       ai_enabled,
       human_taken_over,
       assignee_id,
+      zendesk_ticket_id,
+      zendesk_requester_id,
       bot_messages_sent,
       introduced_as_antonia,
       handoff_reason,
       state_json
     )
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
     on conflict (conversation_id)
     do update set
       customer_id = excluded.customer_id,
@@ -357,6 +363,8 @@ export async function upsertConversationState(conversationId, channel, state) {
       ai_enabled = excluded.ai_enabled,
       human_taken_over = excluded.human_taken_over,
       assignee_id = excluded.assignee_id,
+      zendesk_ticket_id = excluded.zendesk_ticket_id,
+      zendesk_requester_id = excluded.zendesk_requester_id,
       bot_messages_sent = excluded.bot_messages_sent,
       introduced_as_antonia = excluded.introduced_as_antonia,
       handoff_reason = excluded.handoff_reason,
@@ -375,6 +383,8 @@ export async function upsertConversationState(conversationId, channel, state) {
       Boolean(system.aiEnabled),
       Boolean(system.humanTakenOver),
       system.assigneeId || null,
+      identity.zendeskTicketId || null,
+      identity.zendeskRequesterId || null,
       Number(system.botMessagesSent || 0),
       Boolean(system.introducedAsAntonia),
       system.handoffReason || null,
