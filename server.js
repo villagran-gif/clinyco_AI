@@ -2182,12 +2182,39 @@ async function hydrateConversationCache(conversationId) {
   return getConversationState(conversationId);
 }
 
+const lastSyncedLeadScore = new Map();
+
+async function syncLeadScoreToSupport(state, conversationId) {
+  try {
+    const supportUserId = state.identity?.supportRaw?.users?.[0]?.id;
+    if (!supportUserId) return;
+
+    const currentScore = state.leadScore?.score ?? 0;
+    if (lastSyncedLeadScore.get(conversationId) === currentScore) return;
+
+    const category = state.leadScore?.category ?? "frío";
+    const reasons = (state.leadScore?.reasons || []).join(", ");
+
+    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
+      user: {
+        user_fields: {
+          user_lead_score: `${category} (${currentScore}) — ${reasons}`
+        }
+      }
+    });
+    lastSyncedLeadScore.set(conversationId, currentScore);
+  } catch (error) {
+    console.error("SYNC_LEAD_SCORE_SUPPORT:", error.message);
+  }
+}
+
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
     state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
+    await syncLeadScoreToSupport(state, conversationId);
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
   }
@@ -3231,6 +3258,10 @@ function buildStateSummary(state) {
     `likelyClinicalRecordOnly=${state.identity.likelyClinicalRecordOnly ? "si" : "no"}`,
     `botMessagesSent=${state.system.botMessagesSent}`
   ];
+
+  if (state.leadScore?.score > 0) {
+    parts.push(`[LEAD_SCORE] ${state.leadScore.category} (${state.leadScore.score}) — ${(state.leadScore.reasons || []).join(", ")}`);
+  }
 
   if (state.identity.sellSummary) {
     parts.push(`[SELL_RESUMEN] ${state.identity.sellSummary}`);
@@ -5732,6 +5763,10 @@ app.post("/messages", async (req, res) => {
     applyResolverToState(state, resolverDecision);
     console.log("Resolver context:", safeJson(resolverContext));
     console.log("Resolver decision:", safeJson(resolverDecision));
+
+    if (resolverDecision) {
+      resolverDecision.leadScore = state.leadScore || null;
+    }
 
     const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);
     const hardDerive =
