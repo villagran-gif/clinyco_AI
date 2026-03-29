@@ -33,6 +33,7 @@ import {
   formatRutHuman as formatValidatedRutHuman,
   normalizeRut
 } from "./extraction/identity-normalizers.js";
+import { calculateLeadScore } from "./scoring/lead-score.js";
 import {
   searchSlotsViaApi,
   searchSlotsNoAuth,
@@ -2116,6 +2117,12 @@ function buildInitialConversationState() {
       lastOutboundText: null,
       lastOutboundReason: null,
       lastOutboundAt: null
+    },
+    leadScore: {
+      score: 0,
+      category: "frío",
+      reasons: [],
+      calculatedAt: null
     }
   };
 }
@@ -2181,11 +2188,69 @@ async function hydrateConversationCache(conversationId) {
   return getConversationState(conversationId);
 }
 
+const lastSyncedLeadScore = new Map();
+
+async function syncLeadScoreToSupport(state, conversationId) {
+  try {
+    let supportUserId = normalizeZendeskEntityId(state.identity?.zendeskRequesterId);
+    let source = supportUserId ? "requester_id" : null;
+
+    if (!supportUserId) {
+      const supportUsers = state.identity?.supportRaw?.users;
+      const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
+
+      // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
+      if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
+
+      // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
+      const matchedUser = supportUsers[0];
+      const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
+      const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
+      const userEmail = String(matchedUser.email || "").trim().toLowerCase();
+      const userPhone = normalizePhone(matchedUser.phone || null);
+
+      const strongMatch =
+        (stateEmail && userEmail && stateEmail === userEmail) ||
+        (statePhone && userPhone && statePhone === userPhone);
+
+      if (!strongMatch) return;
+
+      supportUserId = normalizeZendeskEntityId(matchedUser.id);
+      source = "support_strong_match";
+    }
+
+    if (!supportUserId) return;
+
+    const currentScore = state.leadScore?.score ?? 0;
+    const scoreSyncKey = `${supportUserId}:${currentScore}`;
+    if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
+
+    const category = state.leadScore?.category ?? "frío";
+    const reasons = (state.leadScore?.reasons || []).join(", ");
+
+    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
+      user: {
+        user_fields: {
+          user_lead_score: `${category} (${currentScore}) — ${reasons}`
+        }
+      }
+    });
+    lastSyncedLeadScore.set(conversationId, scoreSyncKey);
+    console.log(
+      `LEAD_SCORE_SYNC_SUPPORT conversationId=${conversationId} zendeskUserId=${supportUserId} source=${source} score=${currentScore}`
+    );
+  } catch (error) {
+    console.error("SYNC_LEAD_SCORE_SUPPORT:", error.message);
+  }
+}
+
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
+    state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
+    await syncLeadScoreToSupport(state, conversationId);
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
   }
@@ -3229,6 +3294,10 @@ function buildStateSummary(state) {
     `likelyClinicalRecordOnly=${state.identity.likelyClinicalRecordOnly ? "si" : "no"}`,
     `botMessagesSent=${state.system.botMessagesSent}`
   ];
+
+  if (state.leadScore?.score > 0) {
+    parts.push(`[LEAD_SCORE] ${state.leadScore.category} (${state.leadScore.score}) — ${(state.leadScore.reasons || []).join(", ")}`);
+  }
 
   if (state.identity.sellSummary) {
     parts.push(`[SELL_RESUMEN] ${state.identity.sellSummary}`);
@@ -4506,6 +4575,7 @@ app.post("/ticket-assigned", async (req, res) => {
 
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
+    const previousRequesterId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
@@ -4516,6 +4586,9 @@ app.post("/ticket-assigned", async (req, res) => {
     }
     if (ticketId) {
       state.identity.zendeskTicketId = ticketId;
+    }
+    if (requesterId && requesterId !== previousRequesterId) {
+      lastSyncedLeadScore.delete(conversationId);
     }
 
     if (requesterId || ticketId) {
@@ -4742,6 +4815,7 @@ app.post("/messages", async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+    state.leadScore = calculateLeadScore(state);
     try {
       await ensureCustomerContext({
         conversationId,
@@ -5729,6 +5803,10 @@ app.post("/messages", async (req, res) => {
     applyResolverToState(state, resolverDecision);
     console.log("Resolver context:", safeJson(resolverContext));
     console.log("Resolver decision:", safeJson(resolverDecision));
+
+    if (resolverDecision) {
+      resolverDecision.leadScore = state.leadScore || null;
+    }
 
     const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);
     const hardDerive =
