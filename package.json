@@ -13,7 +13,8 @@
     "import:medinet:csv": "node scripts/import-medinet-patients.js",
     "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
     "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv",
-    "start:medinet-worker": "node workers/medinet-worker.js"
+    "start:medinet-worker": "node workers/medinet-worker.js",
+    "start:medinet-ficha": "node Antonia/medinet-ficha.js"
   },
   "dependencies": {
     "@playwright/test": "^1.58.2",
