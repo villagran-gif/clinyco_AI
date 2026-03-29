@@ -2186,9 +2186,26 @@ const lastSyncedLeadScore = new Map();
 
 async function syncLeadScoreToSupport(state, conversationId) {
   try {
-    const supportUserId = state.identity?.supportRaw?.users?.[0]?.id;
-    if (!supportUserId) return;
+    const supportUsers = state.identity?.supportRaw?.users;
+    const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
 
+    // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
+    if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
+
+    // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
+    const matchedUser = supportUsers[0];
+    const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
+    const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
+    const userEmail = String(matchedUser.email || "").trim().toLowerCase();
+    const userPhone = normalizePhone(matchedUser.phone || null);
+
+    const strongMatch =
+      (stateEmail && userEmail && stateEmail === userEmail) ||
+      (statePhone && userPhone && statePhone === userPhone);
+
+    if (!strongMatch) return;
+
+    const supportUserId = matchedUser.id;
     const currentScore = state.leadScore?.score ?? 0;
     if (lastSyncedLeadScore.get(conversationId) === currentScore) return;
 
