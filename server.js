@@ -2186,28 +2186,38 @@ const lastSyncedLeadScore = new Map();
 
 async function syncLeadScoreToSupport(state, conversationId) {
   try {
-    const supportUsers = state.identity?.supportRaw?.users;
-    const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
+    let supportUserId = normalizeZendeskEntityId(state.identity?.zendeskRequesterId);
+    let source = supportUserId ? "requester_id" : null;
 
-    // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
-    if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
+    if (!supportUserId) {
+      const supportUsers = state.identity?.supportRaw?.users;
+      const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
 
-    // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
-    const matchedUser = supportUsers[0];
-    const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
-    const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
-    const userEmail = String(matchedUser.email || "").trim().toLowerCase();
-    const userPhone = normalizePhone(matchedUser.phone || null);
+      // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
+      if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
 
-    const strongMatch =
-      (stateEmail && userEmail && stateEmail === userEmail) ||
-      (statePhone && userPhone && statePhone === userPhone);
+      // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
+      const matchedUser = supportUsers[0];
+      const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
+      const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
+      const userEmail = String(matchedUser.email || "").trim().toLowerCase();
+      const userPhone = normalizePhone(matchedUser.phone || null);
 
-    if (!strongMatch) return;
+      const strongMatch =
+        (stateEmail && userEmail && stateEmail === userEmail) ||
+        (statePhone && userPhone && statePhone === userPhone);
 
-    const supportUserId = matchedUser.id;
+      if (!strongMatch) return;
+
+      supportUserId = normalizeZendeskEntityId(matchedUser.id);
+      source = "support_strong_match";
+    }
+
+    if (!supportUserId) return;
+
     const currentScore = state.leadScore?.score ?? 0;
-    if (lastSyncedLeadScore.get(conversationId) === currentScore) return;
+    const scoreSyncKey = `${supportUserId}:${currentScore}`;
+    if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
 
     const category = state.leadScore?.category ?? "frío";
     const reasons = (state.leadScore?.reasons || []).join(", ");
@@ -2219,7 +2229,10 @@ async function syncLeadScoreToSupport(state, conversationId) {
         }
       }
     });
-    lastSyncedLeadScore.set(conversationId, currentScore);
+    lastSyncedLeadScore.set(conversationId, scoreSyncKey);
+    console.log(
+      `LEAD_SCORE_SYNC_SUPPORT conversationId=${conversationId} zendeskUserId=${supportUserId} source=${source} score=${currentScore}`
+    );
   } catch (error) {
     console.error("SYNC_LEAD_SCORE_SUPPORT:", error.message);
   }
@@ -4556,6 +4569,7 @@ app.post("/ticket-assigned", async (req, res) => {
 
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
+    const previousRequesterId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
@@ -4566,6 +4580,9 @@ app.post("/ticket-assigned", async (req, res) => {
     }
     if (ticketId) {
       state.identity.zendeskTicketId = ticketId;
+    }
+    if (requesterId && requesterId !== previousRequesterId) {
+      lastSyncedLeadScore.delete(conversationId);
     }
 
     if (requesterId || ticketId) {
