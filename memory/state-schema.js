@@ -124,6 +124,12 @@ export function buildInitialConversationState() {
       lastOutboundText: null,
       lastOutboundReason: null,
       lastOutboundAt: null
+    },
+    leadScore: {
+      score: 0,
+      category: "frío",
+      reasons: [],
+      calculatedAt: null
     }
   };
 }
@@ -139,6 +145,7 @@ export function mergeConversationState(baseState, persistedState = {}) {
     customerMemory: { ...baseState.customerMemory, ...(persistedState.customerMemory || {}) },
     openHelp: { ...baseState.openHelp, ...(persistedState.openHelp || {}) },
     booking: { ...baseState.booking, ...(persistedState.booking || {}) },
-    system: { ...baseState.system, ...(persistedState.system || {}) }
+    system: { ...baseState.system, ...(persistedState.system || {}) },
+    leadScore: { ...baseState.leadScore, ...(persistedState.leadScore || {}) }
   };
 }

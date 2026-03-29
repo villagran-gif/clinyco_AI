@@ -251,6 +251,8 @@ export async function initDb() {
       alter table customer_channels add column if not exists external_id text;
       alter table customer_channels add column if not exists metadata_json jsonb not null default '{}'::jsonb;
 
+      alter table structured_leads add column if not exists score_category text default 'frío';
+
       alter table customer_conversation_summaries add column if not exists canal text;
       alter table customer_conversation_summaries add column if not exists procedimiento text;
       alter table customer_conversation_summaries add column if not exists stage_final text;
@@ -479,11 +481,14 @@ export async function upsertStructuredLead(conversationId, channel, state) {
       telefono,
       email,
       rut,
-      source_json
+      source_json,
+      score,
+      score_category
     )
     values (
       $1, $2, $3, $4, $5, $6, $7,
-      $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb
+      $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb,
+      $17, $18
     )
     on conflict (conversation_id)
     do update set
@@ -502,6 +507,8 @@ export async function upsertStructuredLead(conversationId, channel, state) {
       email = excluded.email,
       rut = excluded.rut,
       source_json = excluded.source_json,
+      score = excluded.score,
+      score_category = excluded.score_category,
       updated_at = now()
     `,
     [
@@ -525,7 +532,9 @@ export async function upsertStructuredLead(conversationId, channel, state) {
         dealDraft: state?.dealDraft || {},
         identity: state?.identity || {},
         system: state?.system || {}
-      })
+      }),
+      state?.leadScore?.score ?? 0,
+      state?.leadScore?.category ?? "frío"
     ]
   );
 }
