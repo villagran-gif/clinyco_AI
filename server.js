@@ -374,33 +374,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
 
-  // ── 1. Try picker-fecha API first (no auth, up to 6 slots) ──
-  try {
-    console.log("[medinet-search] path=api_picker | query:", safeQuery);
-    const apiResult = await searchSlotsViaApi({ query: safeQuery });
-    if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
-      console.log("[medinet-search] path=api_picker | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
-      return apiResult;
-    }
-    console.log("[medinet-search] path=api_picker | no slots found");
-  } catch (apiError) {
-    console.warn("[medinet-search] path=api_picker | ERROR:", apiError.message);
-  }
-
-  // ── 1b. Fallback to no-auth proximos-cupos (~1 slot) ──
-  try {
-    console.log("[medinet-search] path=api_noauth | query:", safeQuery);
-    const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
-    if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
-      console.log("[medinet-search] path=api_noauth | SUCCESS:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
-      return noAuthResult;
-    }
-    console.log("[medinet-search] path=api_noauth | no slots found");
-  } catch (noAuthError) {
-    console.warn("[medinet-search] path=api_noauth | ERROR:", noAuthError.message);
-  }
-
-  // ── 2. Try remote API-only worker ──
+  // ── 1. Try remote API-only worker (VPS Chile) ──
   if (useRemoteWorker()) {
     console.log("[medinet-search] path=remote api worker | query:", safeQuery);
 
