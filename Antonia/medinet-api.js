@@ -1308,6 +1308,10 @@ export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID })
     }
   }
 
+  // Filter out past dates
+  const todayIso = new Date().toISOString().slice(0, 10);
+  slots = slots.filter(s => s.dataDia >= todayIso);
+
   // Build patient-facing reply
   let patient_reply;
   if (slots.length > 0) {
@@ -1479,6 +1483,12 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
       }
     }
   }
+
+  // Filter out past dates
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const futureSlots = slots.filter(s => s.dataDia >= todayIso);
+  slots.length = 0;
+  slots.push(...futureSlots);
 
   // Step 5: Build patient reply
   let patient_reply = null;

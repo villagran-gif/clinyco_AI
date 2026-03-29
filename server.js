@@ -378,7 +378,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   try {
     console.log("[medinet-search] path=api_picker | query:", safeQuery);
     const apiResult = await searchSlotsViaApi({ query: safeQuery });
-    if (apiResult?.patient_reply || apiResult?.available_slots?.length > 0) {
+    if (apiResult?.available_slots?.length > 0) {
       console.log("[medinet-search] path=api_picker | SUCCESS:", apiResult.professional, "slots:", apiResult.available_slots?.length);
       return apiResult;
     }
@@ -391,7 +391,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
   try {
     console.log("[medinet-search] path=api_noauth | query:", safeQuery);
     const noAuthResult = await searchSlotsNoAuth({ query: safeQuery });
-    if (noAuthResult?.patient_reply || noAuthResult?.available_slots?.length > 0) {
+    if (noAuthResult?.available_slots?.length > 0) {
       console.log("[medinet-search] path=api_noauth | SUCCESS:", noAuthResult.professional, "slots:", noAuthResult.available_slots?.length);
       return noAuthResult;
     }
