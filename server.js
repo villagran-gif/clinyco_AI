@@ -2047,6 +2047,8 @@ function buildInitialConversationState() {
       supportRaw: null,
       zendeskContactSyncKey: null,
       zendeskContactSyncAt: null,
+      zendeskNotesSyncKey: null,
+      zendeskNotesSyncAt: null,
       supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
@@ -3341,6 +3343,41 @@ async function zendeskSupportPost(path, body = {}) {
   return data;
 }
 
+async function zendeskSupportPut(path, body = {}) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
+  const response = await fetch(url.toString(), {
+    method: "PUT",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
 async function searchSupportByEmail(email) {
   if (!email) return [];
   const query = `type:user ${email}`;
@@ -3462,6 +3499,65 @@ function buildZendeskContactSyncKey(userId, email, phone) {
   });
 }
 
+function buildZendeskNotesSyncKey(userId, notes) {
+  return JSON.stringify({
+    userId: userId || null,
+    notes: String(notes || "").trim() || null
+  });
+}
+
+function normalizeZendeskNotes(value) {
+  const text = String(value || "").replace(/\r\n/g, "\n").trim();
+  return text || null;
+}
+
+function formatPhoneForZendeskNotes(raw) {
+  const phone = normalizePhone(raw);
+  if (!phone) return null;
+  if (/^\+569\d{8}$/.test(phone)) {
+    return `${phone.slice(3, 4)} ${phone.slice(4, 8)} ${phone.slice(8)}`;
+  }
+  return phone;
+}
+
+function buildZendeskUserNotesFromState(state, info) {
+  const structured = parseStructuredLeadText(info?.userText || info?.rawMessage?.content?.text || "");
+  const contact = state?.contactDraft || {};
+  const deal = state?.dealDraft || {};
+
+  const fullName = normalizeSpaces(
+    structured.full_name ||
+    [contact.c_nombres, contact.c_apellidos].filter(Boolean).join(" ") ||
+    info?.authorDisplayName ||
+    info?.sourceProfileName ||
+    ""
+  );
+  const insurance = normalizeSpaces(
+    structured.insurance ||
+    (contact.c_aseguradora
+      ? (contact.c_modalidad ? `${contact.c_aseguradora} - ${contact.c_modalidad}` : contact.c_aseguradora)
+      : "")
+  );
+  const noteLines = [
+    contact.c_email ? `Email: ${contact.c_email}` : null,
+    fullName ? `Full name: ${fullName}` : null,
+    formatPhoneForZendeskNotes(structured.phone_number || contact.c_tel1 || contact.c_tel2)
+      ? `Phone number: ${formatPhoneForZendeskNotes(structured.phone_number || contact.c_tel1 || contact.c_tel2)}`
+      : null,
+    normalizeSpaces(structured.city || contact.c_comuna || "") ? `City: ${normalizeSpaces(structured.city || contact.c_comuna || "")}` : null,
+    insurance ? `¿Fonasa, Isapre o particular?: ${insurance}` : null,
+    normalizeSpaces(structured.weight || deal.dealPeso || "") ? `Peso: ${normalizeSpaces(structured.weight || deal.dealPeso || "")}` : null,
+    normalizeSpaces(structured.height || deal.dealEstatura || "") ? `Estatura: ${normalizeSpaces(structured.height || deal.dealEstatura || "")}` : null,
+    normalizeSpaces(structured.age || "") ? `Edad: ${normalizeSpaces(structured.age || "")}` : null
+  ].filter(Boolean);
+
+  if (!noteLines.length) {
+    return null;
+  }
+
+  return noteLines.join("\n");
+}
+
 async function listZendeskUserIdentities(userId) {
   if (!userId) return [];
   const data = await zendeskSupportGet(`/api/v2/users/${userId}/identities.json`);
@@ -3477,6 +3573,14 @@ async function createZendeskUserIdentity(userId, identity, options = {}) {
     ...options
   });
   return data?.identity || null;
+}
+
+async function updateZendeskUser(userId, user) {
+  if (!userId || !user || typeof user !== "object") {
+    return null;
+  }
+  const data = await zendeskSupportPut(`/api/v2/users/${userId}.json`, { user });
+  return data?.user || null;
 }
 
 async function syncZendeskUserContactsFromState(state, info, context = {}) {
@@ -3504,57 +3608,75 @@ async function syncZendeskUserContactsFromState(state, info, context = {}) {
 
   const email = normalizeZendeskContactEmail(state?.contactDraft?.c_email);
   const phone = normalizePhone(state?.contactDraft?.c_tel1 || null);
+  const noteText = buildZendeskUserNotesFromState(state, info);
+  const existingNotes = normalizeZendeskNotes(zendeskUser?.notes);
 
-  if (!email && !phone) {
+  if (!email && !phone && !noteText) {
     return null;
   }
 
   const syncKey = buildZendeskContactSyncKey(zendeskUserId, email, phone);
-  if (state?.identity?.zendeskContactSyncKey === syncKey) {
+  const notesSyncKey = buildZendeskNotesSyncKey(zendeskUserId, noteText);
+  const shouldSyncContacts = Boolean(email || phone) && state?.identity?.zendeskContactSyncKey !== syncKey;
+  const shouldSyncNotes = Boolean(noteText) &&
+    !existingNotes &&
+    state?.identity?.zendeskNotesSyncKey !== notesSyncKey;
+
+  if (!shouldSyncContacts && !shouldSyncNotes) {
     return null;
   }
 
-  const identities = await listZendeskUserIdentities(zendeskUserId);
-  const normalizedIdentityEmailValues = identities
-    .filter((identity) => identity?.type === "email")
-    .map((identity) => normalizeZendeskContactEmail(identity?.value))
-    .filter(Boolean);
-  const normalizedIdentityPhoneValues = identities
-    .filter((identity) => identity?.type === "phone_number")
-    .map((identity) => normalizePhone(identity?.value))
-    .filter(Boolean);
-  const existingEmails = new Set([
-    normalizeZendeskContactEmail(zendeskUser?.email),
-    ...normalizedIdentityEmailValues
-  ].filter(Boolean));
-  const existingPhones = new Set([
-    normalizePhone(zendeskUser?.phone),
-    ...normalizedIdentityPhoneValues
-  ].filter(Boolean));
-
   let createdEmail = false;
   let createdPhone = false;
+  let createdNotes = false;
 
-  if (email && !existingEmails.has(email)) {
-    await createZendeskUserIdentity(zendeskUserId, {
-      type: "email",
-      value: email
-    }, {
-      skip_verify_email: true
-    });
-    createdEmail = true;
+  if (shouldSyncContacts) {
+    const identities = await listZendeskUserIdentities(zendeskUserId);
+    const normalizedIdentityEmailValues = identities
+      .filter((identity) => identity?.type === "email")
+      .map((identity) => normalizeZendeskContactEmail(identity?.value))
+      .filter(Boolean);
+    const normalizedIdentityPhoneValues = identities
+      .filter((identity) => identity?.type === "phone_number")
+      .map((identity) => normalizePhone(identity?.value))
+      .filter(Boolean);
+    const existingEmails = new Set([
+      normalizeZendeskContactEmail(zendeskUser?.email),
+      ...normalizedIdentityEmailValues
+    ].filter(Boolean));
+    const existingPhones = new Set([
+      normalizePhone(zendeskUser?.phone),
+      ...normalizedIdentityPhoneValues
+    ].filter(Boolean));
+
+    if (email && !existingEmails.has(email)) {
+      await createZendeskUserIdentity(zendeskUserId, {
+        type: "email",
+        value: email
+      }, {
+        skip_verify_email: true
+      });
+      createdEmail = true;
+    }
+
+    if (phone && !existingPhones.has(phone)) {
+      await createZendeskUserIdentity(zendeskUserId, {
+        type: "phone_number",
+        value: phone
+      });
+      createdPhone = true;
+    }
+
+    state.identity.zendeskContactSyncKey = syncKey;
+    state.identity.zendeskContactSyncAt = new Date().toISOString();
   }
 
-  if (phone && !existingPhones.has(phone)) {
-    await createZendeskUserIdentity(zendeskUserId, {
-      type: "phone_number",
-      value: phone
-    });
-    createdPhone = true;
+  if (shouldSyncNotes) {
+    await updateZendeskUser(zendeskUserId, { notes: noteText });
+    createdNotes = true;
+    state.identity.zendeskNotesSyncKey = notesSyncKey;
+    state.identity.zendeskNotesSyncAt = new Date().toISOString();
   }
-
-  state.identity.zendeskContactSyncKey = syncKey;
-  state.identity.zendeskContactSyncAt = new Date().toISOString();
 
   const logParts = [
     context?.conversationId ? `conversationId=${context.conversationId}` : null,
@@ -3562,7 +3684,8 @@ async function syncZendeskUserContactsFromState(state, info, context = {}) {
     email ? `email=${email}` : null,
     phone ? `phone=${phone}` : null,
     `emailAdded=${createdEmail ? "si" : "no"}`,
-    `phoneAdded=${createdPhone ? "si" : "no"}`
+    `phoneAdded=${createdPhone ? "si" : "no"}`,
+    `notesAdded=${createdNotes ? "si" : "no"}`
   ].filter(Boolean).join(" ");
   console.log(`ZENDESK_CONTACT_SYNC ${logParts}`);
 
@@ -3570,7 +3693,10 @@ async function syncZendeskUserContactsFromState(state, info, context = {}) {
     zendeskUserId,
     emailAdded: createdEmail,
     phoneAdded: createdPhone,
-    syncedAt: state.identity.zendeskContactSyncAt
+    notesAdded: createdNotes,
+    syncedAt: createdNotes
+      ? state.identity.zendeskNotesSyncAt
+      : state.identity.zendeskContactSyncAt
   };
 }
 
