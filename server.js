@@ -5427,7 +5427,9 @@ app.post("/messages", async (req, res) => {
       // confirmed or inline correction — continue normal flow
     }
 
-    await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+    if (!state.identity.awaitingFinalConfirmation) {
+      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+    }
 
     // --- Awaiting missing data completion ---
     if (state.identity.awaitingMissingDataCompletion) {
@@ -5471,6 +5473,7 @@ app.post("/messages", async (req, res) => {
       state.identity.awaitingFinalConfirmation = false;
       if (isConfirm) {
         state.identity.savedDataConfirmed = true;
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         // Continue to normal flow
       } else if (isReject) {
         // Re-enter missing data completion to let them correct
@@ -5498,6 +5501,7 @@ app.post("/messages", async (req, res) => {
       }
       // Unclear response — treat as confirmed and continue
       state.identity.savedDataConfirmed = true;
+      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
     }
 
     if (shouldConfirmSavedData(state)) {
