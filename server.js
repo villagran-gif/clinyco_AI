@@ -86,6 +86,7 @@ const ENABLE_SELL_SEARCH = String(process.env.ENABLE_SELL_SEARCH || "true").toLo
 const ENABLE_SUPPORT_SEARCH = String(process.env.ENABLE_SUPPORT_SEARCH || "false").toLowerCase() === "true";
 const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.ZENDESK_API_EMAIL || null;
 const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
+const LEAD_SCORE_INFO_URL = String(process.env.LEAD_SCORE_INFO_URL || "").trim() || null;
 
 const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 30;
@@ -2221,18 +2222,22 @@ async function syncLeadScoreToSupport(state, conversationId) {
 
     if (!supportUserId) return;
 
+    const leadScoreSummary = formatLeadScoreSummary(state.leadScore);
+    const leadScoreDetail = formatLeadScoreDetail(state.leadScore);
+    const userFields = {
+      user_lead_score: leadScoreSummary,
+      user_lead_score_detail: leadScoreDetail
+    };
+    if (LEAD_SCORE_INFO_URL) {
+      userFields.user_lead_score_info_url = LEAD_SCORE_INFO_URL;
+    }
     const currentScore = state.leadScore?.score ?? 0;
-    const scoreSyncKey = `${supportUserId}:${currentScore}`;
+    const scoreSyncKey = `${supportUserId}:${leadScoreSummary}:${leadScoreDetail}:${LEAD_SCORE_INFO_URL || ""}`;
     if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
-
-    const category = state.leadScore?.category ?? "frío";
-    const reasons = (state.leadScore?.reasons || []).join(", ");
 
     await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
       user: {
-        user_fields: {
-          user_lead_score: `${category} (${currentScore}) — ${reasons}`
-        }
+        user_fields: userFields
       }
     });
     lastSyncedLeadScore.set(conversationId, scoreSyncKey);
@@ -2809,6 +2814,33 @@ function extractConversationInfo(payload) {
 function normalizeZendeskEntityId(value) {
   const normalized = String(value ?? "").trim();
   return normalized || null;
+}
+
+function leadScoreBadge(category) {
+  switch (String(category || "").toLowerCase()) {
+    case "caliente":
+      return "🔴";
+    case "tibio":
+      return "🟡";
+    case "frío":
+    case "frio":
+    default:
+      return "🔵";
+  }
+}
+
+function formatLeadScoreSummary(leadScore) {
+  const score = leadScore?.score ?? 0;
+  const category = String(leadScore?.category || "frío").toUpperCase();
+  const badge = leadScoreBadge(leadScore?.category);
+  return `${badge} ${category} (${score})`;
+}
+
+function formatLeadScoreDetail(leadScore) {
+  const summary = formatLeadScoreSummary(leadScore);
+  const reasons = Array.isArray(leadScore?.reasons) ? leadScore.reasons.filter(Boolean) : [];
+  if (!reasons.length) return summary;
+  return `${summary} = ${reasons.join(", ")}`;
 }
 
 function extractZendeskTicketAssignment(payload = {}) {
