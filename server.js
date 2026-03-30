@@ -2177,33 +2177,37 @@ const lastSyncedLeadScore = new Map();
 
 async function syncLeadScoreToSupport(state, conversationId) {
   try {
-    const supportUsers = state.identity?.supportRaw?.users;
-    const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
+    // ── Resolver target user ID con jerarquía ──
 
-    // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
-    if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
+    // NIVEL 1: zendeskRequesterId (canónico — de /ticket-assigned)
+    let targetUserId = state.identity?.zendeskRequesterId || null;
 
-    // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
-    const matchedUser = supportUsers[0];
-    const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
-    const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
-    const userEmail = String(matchedUser.email || "").trim().toLowerCase();
-    const userPhone = normalizePhone(matchedUser.phone || null);
+    // NIVEL 2: supportRaw con match fuerte (fallback)
+    if (!targetUserId) {
+      const supportUsers = state.identity?.supportRaw?.users;
+      const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
+      if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
 
-    const strongMatch =
-      (stateEmail && userEmail && stateEmail === userEmail) ||
-      (statePhone && userPhone && statePhone === userPhone);
+      const matchedUser = supportUsers[0];
+      const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
+      const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
+      const userEmail = String(matchedUser.email || "").trim().toLowerCase();
+      const userPhone = normalizePhone(matchedUser.phone || null);
+      const strongMatch =
+        (stateEmail && userEmail && stateEmail === userEmail) ||
+        (statePhone && userPhone && statePhone === userPhone);
+      if (!strongMatch) return;
 
-    if (!strongMatch) return;
+      targetUserId = matchedUser.id;
+    }
 
-    const supportUserId = matchedUser.id;
+    // ── Throttle: solo sync si score cambió ──
     const currentScore = state.leadScore?.score ?? 0;
     if (lastSyncedLeadScore.get(conversationId) === currentScore) return;
 
     const category = state.leadScore?.category ?? "frío";
     const reasons = (state.leadScore?.reasons || []).join(", ");
-
-    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
+    await zendeskSupportPut(`/api/v2/users/${targetUserId}.json`, {
       user: {
         user_fields: {
           user_lead_score: `${category} (${currentScore}) — ${reasons}`
@@ -4006,7 +4010,7 @@ app.post("/ticket-assigned", async (req, res) => {
     console.log("===== /ticket-assigned webhook =====");
     console.log("Body:", safeJson(req.body));
 
-    const { event, conversation_id, assignee_id } = req.body || {};
+    const { event, conversation_id, assignee_id, requester_id, ticket_id } = req.body || {};
 
     if (!conversation_id) {
       return res.status(400).json({ ok: false, error: "Missing conversation_id" });
@@ -4018,6 +4022,18 @@ app.post("/ticket-assigned", async (req, res) => {
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
     state.system.handoffReason = "ticket_assigned";
+
+    if (requester_id) {
+      state.identity.zendeskRequesterId = Number(requester_id) || null;
+    }
+    if (ticket_id) {
+      state.identity.zendeskTicketId = Number(ticket_id) || null;
+    }
+
+    // Forzar re-sync del lead score ahora que tenemos requester canónico
+    if (requester_id && state.leadScore?.score > 0) {
+      lastSyncedLeadScore.delete(conversation_id);
+    }
 
     console.log("AI disabled for conversation:", conversation_id);
     console.log("Conversation state:", safeJson(state));
