@@ -1,72 +1,79 @@
-Clinyco AI es un **lead score classifier para ventas médicas**, diseñado para analizar conversaciones, extraer señales clínicas y comerciales, clasificar prospectos según probabilidad de avance y apoyar la operación de cierre. Hoy ya estructura contexto conversacional, memoria de paciente e intención de agenda; y en sus siguientes etapas evolucionará hacia análisis de llamadas, predicción del mejor momento de contacto y coaching comercial en tiempo real para ## Resumen del proyecto
+Project Overview
 
-AntonIA es la protagonista que interactua con los clientes. 
+Clínyco.IA® is a platform under active development focused on the intelligent classification of medical and commercial leads. Its current core is not designed as just a conversational bot, but as a system capable of reading conversations, structuring relevant patient data, detecting real purchase or treatment intent, and assigning an objective commercial priority to support both conversion and clinical coordination.
 
-**Clinyco AI** es una plataforma en desarrollo orientada a la **clasificación inteligente de leads médicos y comerciales**. Su núcleo actual no está pensado solo como un bot conversacional, sino como un sistema capaz de **leer conversaciones, estructurar datos relevantes del paciente, detectar intención real de avance y asignar una prioridad comercial objetiva** para apoyar la conversión y la gestión clínica. 
+At its current stage, the project already implements a lead score classifier that scores each conversation on a 0–100 scale and classifies patients into categories such as cold, warm, or hot, using signals such as BMI, insurance profile, contact data, verified national ID (RUT), identified procedure, conversational engagement, scheduling intent, and channel context. This score is powered by a structured conversation state and is already connected to Zendesk operations, customer memory, and follow-up flows.
 
-En su estado actual, el proyecto ya implementa un **lead score classifier** que puntúa cada conversación en una escala de 0 a 100 y clasifica a los pacientes en categorías como **frío, tibio o caliente**, usando señales como IMC, previsión, datos de contacto, RUT verificado, procedimiento identificado, engagement conversacional, intención de agenda y contexto del canal. Este score se alimenta del estado conversacional estructurado y se integra con la operación sobre Zendesk, memoria de cliente y flujos de seguimiento. 
+On top of that foundation, Clínyco.IA® now works as an intelligence layer for medical customer service and healthcare sales: it receives conversations from Zendesk, interprets intent, organizes clinical and commercial information, maintains patient memory, detects closing opportunities, and activates scheduling or human handoff flows when needed. Conversation is the entry point, but the real goal is classification, prioritization, and improvement of commercial conversion.
 
-Sobre esa base, Clinyco AI hoy funciona como una capa de inteligencia aplicada a atención y ventas médicas: recibe conversaciones desde Zendesk, interpreta intención, organiza datos clínicos y comerciales, mantiene memoria por paciente, detecta oportunidades de cierre y activa flujos de agenda o derivación humana cuando corresponde. La conversación es el punto de entrada, pero el objetivo real es la **clasificación, priorización y mejora del cierre comercial**. 
+Current State
 
-## Estado actual
+At present, the system already supports:
+	•	classifying leads based on conversational and clinical signals
+	•	structuring contact, insurance, procedure, and other relevant patient indicators
+	•	maintaining conversational memory and historical context per patient
+	•	syncing useful information into Zendesk operations
+	•	supporting scheduling and commercial follow-up workflows
+	•	creating the foundation for more advanced analysis models
 
-Actualmente, el sistema ya permite:
+In recent iterations, the platform has also become more operationally robust. Recent improvements include:
+	•	stronger Zendesk synchronization, using the ticket requester as the canonical identity to avoid syncing data to the wrong user
+	•	more reliable lead score synchronization into Zendesk, including requester-based logic and enriched score formatting
+	•	improved Medinet integration, with API-first scheduling flows, dual authentication, JWT support for public scheduling endpoints, and more resilient booking fallbacks
+	•	safer and more stable booking flows, with reduced silent failures, better handling of unavailable slots, and fallback routes through worker infrastructure when direct access is blocked
+	•	stronger conversation persistence and customer memory, allowing structured follow-up and more reliable recovery of context
+	•	synchronization of knowledge sources from Google Sheets, making the assistant easier to update operationally without hardcoding everything into the prompt
 
-- clasificar leads según señales conversacionales y clínicas
-- estructurar información de contacto, previsión, procedimiento e indicadores relevantes
-- mantener memoria conversacional y contexto histórico por paciente
-- sincronizar información útil con la operación en Zendesk
-- apoyar procesos de agenda y seguimiento comercial
-- sentar la base para modelos de análisis más avanzados 
+Product Vision
 
-## Visión del proyecto
+Clínyco.IA® is being developed as an intelligence platform for medical sales and clinical coordination. The vision is not to remain a text-only chatbot, but to evolve into a system capable of:
+	•	classifying prospects with greater precision
+	•	analyzing closing patterns
+	•	recommending commercial actions
+	•	assisting human agents in real time
+	•	transforming conversations into operational decisions
 
-Clinyco AI está siendo desarrollado como una plataforma de inteligencia para ventas médicas y coordinación clínica. La visión no es quedarse en un chatbot de texto, sino evolucionar hacia un sistema capaz de:
+Future Expansion — Audio and Coaching
 
-- clasificar prospectos con mayor precisión
-- analizar patrones de cierre
-- recomendar acciones comerciales
-- asistir a agentes humanos en tiempo real
-- convertir conversaciones en decisiones operativas
+This is no longer aimed at being only a text bot. The goal is to build a commercial and clinical intelligence platform.
 
-## Expansión futura — audio y coaching
+Phase 7 — Call Integration
 
-Esto ya no apunta solo a un bot de texto. La meta es construir una **plataforma de inteligencia comercial y clínica**.
+Goal:
+	•	incorporate audio calls
+	•	capture transcripts
+	•	analyze successful calls
+	•	measure persuasion and quality
 
-### Fase 7 — Integración de llamadas
-**Objetivo:**
-- incorporar llamadas de audio
-- capturar transcripciones
-- analizar llamadas efectivas
-- medir persuasión y calidad
+Phase 8 — Effective Call Analysis
 
-### Fase 8 — Análisis de llamadas efectivas
-**Objetivo:**
-- detectar guiones que convierten mejor
-- detectar objeciones frecuentes
-- identificar tono, ritmo y momentos de cierre
+Goal:
+	•	detect the scripts that convert best
+	•	detect frequent objections
+	•	identify tone, pacing, and closing moments
 
-### Fase 9 — Predicción del mejor momento de contacto
-**Objetivo:**
-- recomendar cuándo contactar
-- sugerir si conviene texto, llamada o videollamada
-- detectar ventanas de mayor probabilidad de respuesta o cierre
+Phase 9 — Best Contact Timing Prediction
 
-### Fase 10 — Coach en tiempo real para agentes
-**Objetivo:**
-- asistir al agente en pantalla
-- sugerir siguiente guion
-- marcar objeciones
-- recomendar tono y respuesta
-- eventualmente entregar apoyo por audio “en una oreja”
+Goal:
+	•	recommend when to reach out
+	•	suggest whether text, phone call, or video call is best
+	•	detect time windows with the highest probability of reply or conversion
 
-## Proyección
+Phase 10 — Real-Time Agent Coach
 
-La evolución esperada de Clinyco AI es convertirse en un sistema mucho más potente, combinando varias capas de inteligencia:
+Goal:
+	•	assist the agent on screen
+	•	suggest the next script
+	•	flag objections
+	•	recommend tone and response
+	•	eventually provide audio support “in one ear”
 
-- **Antonia en texto**
-- **analista de conversaciones**
-- **predictor comercial**
-- **coach de ventas médicas**
+Projection
 
-En resumen, **Clinyco AI** busca convertirse en el motor de inteligencia que conecte conversación, scoring, predicción y apoyo operativo para mejorar la conversión comercial y la experiencia del paciente.
+The expected evolution of Clínyco.IA® is to become a much more powerful system by combining several layers of intelligence:
+	•	AntonIA® as the text interface
+	•	conversation analyst
+	•	commercial predictor
+	•	medical sales coach
+
+In summary, Clínyco.IA® is designed to become the intelligence engine that connects conversation, scoring, prediction, and operational support to improve both commercial conversion and patient experience.
