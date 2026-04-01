@@ -2833,7 +2833,8 @@ function formatLeadScoreSummary(leadScore) {
   const score = leadScore?.score ?? 0;
   const category = String(leadScore?.category || "frío").toUpperCase();
   const badge = leadScoreBadge(leadScore?.category);
-  return `${badge} ${category} (${score})`;
+  const pipeline = leadScore?.pipeline ? `"${leadScore.pipeline}"= ` : "";
+  return `${pipeline}${badge} ${category} (${score})`;
 }
 
 function formatLeadScoreDetail(leadScore) {
@@ -3330,7 +3331,8 @@ function buildStateSummary(state) {
   if (state.leadScore?.score > 0) {
     const ls = state.leadScore;
     const lsEmoji = ls.emoji || (ls.score >= 70 ? "🔴" : ls.score >= 40 ? "🟡" : "🔵");
-    parts.push(`[LEAD_SCORE] ${lsEmoji} ${ls.category.toUpperCase()} (${ls.score}) = ${(ls.reasons || []).join(", ")}`);
+    const lsPipeline = ls.pipeline ? `"${ls.pipeline}"= ` : "";
+    parts.push(`${lsPipeline}[LEAD_SCORE] ${lsEmoji} ${ls.category.toUpperCase()} (${ls.score}) = ${(ls.reasons || []).join(", ")}`);
   }
 
   if (state.identity.sellSummary) {

@@ -4,9 +4,18 @@
  * @param {object} state - conversation state completo
  * @returns {{ score: number, category: string, reasons: string[], calculatedAt: string }}
  */
+const PIPELINE_NAMES = {
+  1290779: "BARIÁTRICA",
+  4823817: "BALÓN",
+  4959507: "PLÁSTICA",
+  5049979: "GENERAL"
+};
+
 export function calculateLeadScore(state) {
   let score = 0;
   const reasons = [];
+  const pipelineId = state.dealDraft?.dealPipelineId || null;
+  const pipeline = PIPELINE_NAMES[pipelineId] || null;
 
   // ── IMC (max +25) ──
   const bmi = state.measurements?.bmi;
@@ -54,6 +63,8 @@ export function calculateLeadScore(state) {
     score: capped,
     category,
     emoji,
+    pipeline,
+    pipelineId,
     reasons,
     calculatedAt: new Date().toISOString()
   };
