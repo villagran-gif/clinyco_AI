@@ -20,7 +20,11 @@ import {
   linkConversationToCustomer,
   addCustomerChannel,
   getCustomerSummaries,
-  trackLeadScoreChange
+  trackLeadScoreChange,
+  insertPrediction,
+  updateObservation,
+  updateComparison,
+  getLatestPendingPrediction
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -4687,6 +4691,40 @@ app.post("/ticket-assigned", async (req, res) => {
     await persistConversationSnapshot(conversationId, state, null);
     await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
+    // ── EugenIA: predict best next question at takeover ──
+    try {
+      const bestNext = getNextBestQuestion(
+        state,
+        state.identity?.supportRaw || null,
+        state.identity?.sellRaw || null,
+        ""
+      );
+      if (bestNext?.question && dbEnabled()) {
+        const interes = String(state.dealDraft?.dealInteres || "").toUpperCase();
+        const pipelineKey = interes.includes("BALON") ? "balon"
+          : interes.includes("PLASTICA") ? "plastica"
+          : interes.includes("BARIATRICA") || interes.includes("MANGA") || interes.includes("BYPASS") ? "bariatrica"
+          : interes.includes("COLECISTECTOMIA") || interes.includes("HERNIA") || interes.includes("ANTIRREFLUJO") ? "general"
+          : null;
+        await insertPrediction({
+          conversationId,
+          turnNumber: state.system?.botMessagesSent || 0,
+          aiSuggestedAction: bestNext.question,
+          aiSuggestedIntent: bestNext.missingFields?.[0] || bestNext.nextAction || null,
+          leadScoreAtPrediction: state.leadScore?.score ?? 0,
+          pipeline: pipelineKey,
+          stateSnapshot: {
+            missingFields: bestNext.missingFields,
+            caseType: bestNext.caseType,
+            reason: bestNext.reason
+          }
+        });
+        console.log(`EUGENIA_PREDICT conversationId=${conversationId} intent=${bestNext.missingFields?.[0] || "none"} score=${state.leadScore?.score ?? 0}`);
+      }
+    } catch (predErr) {
+      console.error("EUGENIA_PREDICT_ERROR:", predErr.message);
+    }
+
     return res.json({
       ok: true,
       event: event || "human_takeover",
@@ -4763,6 +4801,47 @@ app.post("/messages", async (req, res) => {
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
       await maybeSaveConversationSummary(conversationId, state, channelLabel);
+
+      // ── EugenIA: observe human action & compare with prediction ──
+      try {
+        if (userText && dbEnabled()) {
+          const pending = await getLatestPendingPrediction(conversationId);
+          if (pending) {
+            await updateObservation(pending.id, {
+              humanActualAction: userText
+            });
+
+            // Simple intent comparison
+            const predicted = String(pending.ai_suggested_action || "").toLowerCase();
+            const actual = String(userText || "").toLowerCase();
+            const sharedWords = predicted.split(/\s+/).filter(w => w.length > 3 && actual.includes(w));
+            const matchScore = Math.min(sharedWords.length / Math.max(predicted.split(/\s+/).filter(w => w.length > 3).length, 1), 1);
+            const matchType = matchScore >= 0.6 ? "same_intent"
+              : matchScore >= 0.3 ? "partial_match"
+              : "different_topic";
+
+            await updateComparison(pending.id, { matchType, matchScore: Math.round(matchScore * 100) / 100 });
+            console.log(`EUGENIA_OBSERVE conversationId=${conversationId} matchType=${matchType} matchScore=${matchScore.toFixed(2)}`);
+
+            // Generate next prediction for the following turn
+            const bestNext = getNextBestQuestion(state, state.identity?.supportRaw || null, state.identity?.sellRaw || null, userText);
+            if (bestNext?.question) {
+              await insertPrediction({
+                conversationId,
+                turnNumber: (pending.turn_number || 0) + 1,
+                aiSuggestedAction: bestNext.question,
+                aiSuggestedIntent: bestNext.missingFields?.[0] || bestNext.nextAction || null,
+                leadScoreAtPrediction: state.leadScore?.score ?? 0,
+                pipeline: pending.pipeline,
+                stateSnapshot: { missingFields: bestNext.missingFields, caseType: bestNext.caseType, reason: bestNext.reason }
+              });
+            }
+          }
+        }
+      } catch (obsErr) {
+        console.error("EUGENIA_OBSERVE_ERROR:", obsErr.message);
+      }
+
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -4816,6 +4895,30 @@ app.post("/messages", async (req, res) => {
         resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
       });
       await persistConversationSnapshot(conversationId, state, channelLabel);
+
+      // ── EugenIA: patient messaged while human has control — predict best next action for agent ──
+      try {
+        if (userText && dbEnabled()) {
+          const bestNext = getNextBestQuestion(state, state.identity?.supportRaw || null, state.identity?.sellRaw || null, userText);
+          if (bestNext?.question) {
+            const lastPrediction = await getLatestPendingPrediction(conversationId);
+            const turnNumber = lastPrediction ? (lastPrediction.turn_number || 0) + 1 : 1;
+            await insertPrediction({
+              conversationId,
+              turnNumber,
+              aiSuggestedAction: bestNext.question,
+              aiSuggestedIntent: bestNext.missingFields?.[0] || bestNext.nextAction || null,
+              leadScoreAtPrediction: state.leadScore?.score ?? 0,
+              pipeline: lastPrediction?.pipeline || null,
+              stateSnapshot: { missingFields: bestNext.missingFields, caseType: bestNext.caseType, reason: bestNext.reason }
+            });
+            console.log(`EUGENIA_PREDICT_ON_PATIENT_MSG conversationId=${conversationId} intent=${bestNext.missingFields?.[0] || "none"}`);
+          }
+        }
+      } catch (predErr) {
+        console.error("EUGENIA_PREDICT_ON_PATIENT_MSG_ERROR:", predErr.message);
+      }
+
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
