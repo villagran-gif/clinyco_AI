@@ -5,10 +5,10 @@
  * @returns {{ score: number, category: string, reasons: string[], calculatedAt: string }}
  */
 const PIPELINE_NAMES = {
-  1290779: "BARIÁTRICA",
-  4823817: "BALÓN",
-  4959507: "PLÁSTICA",
-  5049979: "GENERAL"
+  1290779: '🅱️"BARIÁTRICA"',
+  4823817: '🟢"BALÓN"',
+  4959507: '🅿️"PLÁSTICA"',
+  5049979: 'Ⓖ"GENERAL"'
 };
 
 export function calculateLeadScore(state) {
