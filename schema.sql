@@ -111,6 +111,7 @@ create table if not exists eugenia_predictions (
   turn_number integer not null default 1,
 
   -- Step 1: EugenIA prediction (at human takeover or each patient message)
+  prediction_type text not null default 'question',
   ai_suggested_action text not null,
   ai_suggested_intent text,
   ai_confidence numeric(3,2),

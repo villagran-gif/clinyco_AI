@@ -24,7 +24,7 @@ import {
   insertPrediction,
   updateObservation,
   updateComparison,
-  getLatestPendingPrediction
+  getLatestPendingPredictions
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -2195,6 +2195,20 @@ async function hydrateConversationCache(conversationId) {
 }
 
 const lastSyncedLeadScore = new Map();
+
+function inferBestNextAction(bestNext) {
+  const stage = bestNext?.resolved?.stage || "";
+  const nextAction = bestNext?.nextAction || "";
+  if (stage === "ready_for_handoff" || stage === "handoff_without_call") return "Derivar a coordinación humana";
+  if (stage === "agenda_without_direct_access") return "Enviar link agenda web";
+  if (stage === "schedule_request") return "Buscar horas en Medinet";
+  if (stage === "awaiting_measurements") return "Solicitar peso y estatura";
+  if (nextAction === "derive_or_send_web") return "Derivar a agente o enviar link agenda web";
+  if (nextAction === "schedule") return "Ofrecer agendar evaluación";
+  if (nextAction === "collect_ficha") return "Recopilar ficha clínica";
+  if (bestNext?.shouldDerive) return "Derivar a agente humano";
+  return "Continuar recopilando datos";
+}
 
 async function syncLeadScoreToSupport(state, conversationId) {
   try {
@@ -4691,7 +4705,7 @@ app.post("/ticket-assigned", async (req, res) => {
     await persistConversationSnapshot(conversationId, state, null);
     await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
-    // ── EugenIA: predict best next question at takeover ──
+    // ── EugenIA: predict best next QUESTION + ACTION at takeover ──
     try {
       const bestNext = getNextBestQuestion(
         state,
@@ -4706,20 +4720,17 @@ app.post("/ticket-assigned", async (req, res) => {
           : interes.includes("BARIATRICA") || interes.includes("MANGA") || interes.includes("BYPASS") ? "bariatrica"
           : interes.includes("COLECISTECTOMIA") || interes.includes("HERNIA") || interes.includes("ANTIRREFLUJO") ? "general"
           : null;
-        await insertPrediction({
+        const commonPred = {
           conversationId,
           turnNumber: state.system?.botMessagesSent || 0,
-          aiSuggestedAction: bestNext.question,
-          aiSuggestedIntent: bestNext.missingFields?.[0] || bestNext.nextAction || null,
           leadScoreAtPrediction: state.leadScore?.score ?? 0,
           pipeline: pipelineKey,
-          stateSnapshot: {
-            missingFields: bestNext.missingFields,
-            caseType: bestNext.caseType,
-            reason: bestNext.reason
-          }
-        });
-        console.log(`EUGENIA_PREDICT conversationId=${conversationId} intent=${bestNext.missingFields?.[0] || "none"} score=${state.leadScore?.score ?? 0}`);
+          stateSnapshot: { missingFields: bestNext.missingFields, caseType: bestNext.caseType, reason: bestNext.reason }
+        };
+        await insertPrediction({ ...commonPred, predictionType: "question", aiSuggestedAction: bestNext.question, aiSuggestedIntent: bestNext.missingFields?.[0] || null });
+        const actionLabel = inferBestNextAction(bestNext);
+        await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel, aiSuggestedIntent: bestNext.nextAction || null });
+        console.log(`EUGENIA_PREDICT conversationId=${conversationId} question="${bestNext.missingFields?.[0] || "none"}" action="${actionLabel}" score=${state.leadScore?.score ?? 0}`);
       }
     } catch (predErr) {
       console.error("EUGENIA_PREDICT_ERROR:", predErr.message);
@@ -4802,39 +4813,40 @@ app.post("/messages", async (req, res) => {
       await persistConversationSnapshot(conversationId, state, channelLabel);
       await maybeSaveConversationSummary(conversationId, state, channelLabel);
 
-      // ── EugenIA: observe human action & compare with prediction ──
+      // ── EugenIA: observe human action & compare with both predictions ──
       try {
         if (userText && dbEnabled()) {
-          const pending = await getLatestPendingPrediction(conversationId);
-          if (pending) {
-            await updateObservation(pending.id, {
-              humanActualAction: userText
-            });
-
-            // Simple intent comparison
-            const predicted = String(pending.ai_suggested_action || "").toLowerCase();
+          const pendingList = await getLatestPendingPredictions(conversationId);
+          if (pendingList.length > 0) {
             const actual = String(userText || "").toLowerCase();
-            const sharedWords = predicted.split(/\s+/).filter(w => w.length > 3 && actual.includes(w));
-            const matchScore = Math.min(sharedWords.length / Math.max(predicted.split(/\s+/).filter(w => w.length > 3).length, 1), 1);
-            const matchType = matchScore >= 0.6 ? "same_intent"
-              : matchScore >= 0.3 ? "partial_match"
-              : "different_topic";
+            let maxTurn = 0;
+            let pipelineKey = null;
 
-            await updateComparison(pending.id, { matchType, matchScore: Math.round(matchScore * 100) / 100 });
-            console.log(`EUGENIA_OBSERVE conversationId=${conversationId} matchType=${matchType} matchScore=${matchScore.toFixed(2)}`);
+            for (const pending of pendingList) {
+              await updateObservation(pending.id, { humanActualAction: userText });
+              const predicted = String(pending.ai_suggested_action || "").toLowerCase();
+              const sharedWords = predicted.split(/\s+/).filter(w => w.length > 3 && actual.includes(w));
+              const matchScore = Math.min(sharedWords.length / Math.max(predicted.split(/\s+/).filter(w => w.length > 3).length, 1), 1);
+              const matchType = matchScore >= 0.6 ? "same_intent" : matchScore >= 0.3 ? "partial_match" : "different_topic";
+              await updateComparison(pending.id, { matchType, matchScore: Math.round(matchScore * 100) / 100 });
+              console.log(`EUGENIA_OBSERVE conversationId=${conversationId} type=${pending.prediction_type} matchType=${matchType} matchScore=${matchScore.toFixed(2)}`);
+              if (pending.turn_number > maxTurn) maxTurn = pending.turn_number;
+              if (pending.pipeline) pipelineKey = pending.pipeline;
+            }
 
-            // Generate next prediction for the following turn
+            // Generate next dual prediction
             const bestNext = getNextBestQuestion(state, state.identity?.supportRaw || null, state.identity?.sellRaw || null, userText);
             if (bestNext?.question) {
-              await insertPrediction({
+              const commonPred = {
                 conversationId,
-                turnNumber: (pending.turn_number || 0) + 1,
-                aiSuggestedAction: bestNext.question,
-                aiSuggestedIntent: bestNext.missingFields?.[0] || bestNext.nextAction || null,
+                turnNumber: maxTurn + 1,
                 leadScoreAtPrediction: state.leadScore?.score ?? 0,
-                pipeline: pending.pipeline,
+                pipeline: pipelineKey,
                 stateSnapshot: { missingFields: bestNext.missingFields, caseType: bestNext.caseType, reason: bestNext.reason }
-              });
+              };
+              await insertPrediction({ ...commonPred, predictionType: "question", aiSuggestedAction: bestNext.question, aiSuggestedIntent: bestNext.missingFields?.[0] || null });
+              const actionLabel = inferBestNextAction(bestNext);
+              await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel, aiSuggestedIntent: bestNext.nextAction || null });
             }
           }
         }
@@ -4896,23 +4908,25 @@ app.post("/messages", async (req, res) => {
       });
       await persistConversationSnapshot(conversationId, state, channelLabel);
 
-      // ── EugenIA: patient messaged while human has control — predict best next action for agent ──
+      // ── EugenIA: patient messaged while human has control — predict QUESTION + ACTION ──
       try {
         if (userText && dbEnabled()) {
           const bestNext = getNextBestQuestion(state, state.identity?.supportRaw || null, state.identity?.sellRaw || null, userText);
           if (bestNext?.question) {
-            const lastPrediction = await getLatestPendingPrediction(conversationId);
-            const turnNumber = lastPrediction ? (lastPrediction.turn_number || 0) + 1 : 1;
-            await insertPrediction({
+            const pendingList = await getLatestPendingPredictions(conversationId);
+            const maxTurn = pendingList.length > 0 ? Math.max(...pendingList.map(p => p.turn_number || 0)) : 0;
+            const pipelineKey = pendingList.find(p => p.pipeline)?.pipeline || null;
+            const commonPred = {
               conversationId,
-              turnNumber,
-              aiSuggestedAction: bestNext.question,
-              aiSuggestedIntent: bestNext.missingFields?.[0] || bestNext.nextAction || null,
+              turnNumber: maxTurn + 1,
               leadScoreAtPrediction: state.leadScore?.score ?? 0,
-              pipeline: lastPrediction?.pipeline || null,
+              pipeline: pipelineKey,
               stateSnapshot: { missingFields: bestNext.missingFields, caseType: bestNext.caseType, reason: bestNext.reason }
-            });
-            console.log(`EUGENIA_PREDICT_ON_PATIENT_MSG conversationId=${conversationId} intent=${bestNext.missingFields?.[0] || "none"}`);
+            };
+            await insertPrediction({ ...commonPred, predictionType: "question", aiSuggestedAction: bestNext.question, aiSuggestedIntent: bestNext.missingFields?.[0] || null });
+            const actionLabel = inferBestNextAction(bestNext);
+            await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel, aiSuggestedIntent: bestNext.nextAction || null });
+            console.log(`EUGENIA_PREDICT_ON_PATIENT_MSG conversationId=${conversationId} question="${bestNext.missingFields?.[0] || "none"}" action="${actionLabel}"`);
           }
         }
       } catch (predErr) {

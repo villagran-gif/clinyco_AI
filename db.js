@@ -221,6 +221,7 @@ export async function initDb() {
         id bigserial primary key,
         conversation_id text not null,
         turn_number integer not null default 1,
+        prediction_type text not null default 'question',
         ai_suggested_action text not null,
         ai_suggested_intent text,
         ai_confidence numeric(3,2),
@@ -297,6 +298,8 @@ export async function initDb() {
       alter table customer_conversation_summaries add column if not exists stage_final text;
       alter table customer_conversation_summaries add column if not exists outcome text;
       alter table customer_conversation_summaries add column if not exists key_facts jsonb not null default '{}'::jsonb;
+
+      alter table eugenia_predictions add column if not exists prediction_type text not null default 'question';
     `);
 
     await client.query(`
@@ -1157,6 +1160,7 @@ export function getOutcomeScore(pipeline, phase) {
 export async function insertPrediction({
   conversationId,
   turnNumber = 1,
+  predictionType = "question",
   aiSuggestedAction,
   aiSuggestedIntent = null,
   aiConfidence = null,
@@ -1171,6 +1175,7 @@ export async function insertPrediction({
     insert into eugenia_predictions (
       conversation_id,
       turn_number,
+      prediction_type,
       ai_suggested_action,
       ai_suggested_intent,
       ai_confidence,
@@ -1178,12 +1183,13 @@ export async function insertPrediction({
       pipeline,
       state_snapshot_json
     )
-    values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
     returning *
     `,
     [
       conversationId,
       turnNumber,
+      predictionType,
       aiSuggestedAction,
       aiSuggestedIntent,
       aiConfidence,
@@ -1280,6 +1286,27 @@ export async function getLatestPendingPrediction(conversationId) {
     `,
     [conversationId]
   );
+}
+
+export async function getLatestPendingPredictions(conversationId) {
+  if (!conversationId) return [];
+
+  const { rows } = await getPool().query(
+    `
+    select *
+    from eugenia_predictions
+    where conversation_id = $1
+      and human_actual_action is null
+      and turn_number = (
+        select max(turn_number) from eugenia_predictions
+        where conversation_id = $1 and human_actual_action is null
+      )
+    order by prediction_type
+    `,
+    [conversationId]
+  );
+
+  return rows;
 }
 
 export async function getGoldSamples(limit = 50) {
