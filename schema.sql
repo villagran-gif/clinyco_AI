@@ -171,6 +171,23 @@ on customer_conversation_summaries (customer_id, created_at desc);
 create unique index if not exists customer_conversation_summaries_conversation_unique_idx
 on customer_conversation_summaries (conversation_id);
 
+create table if not exists lead_score_history (
+  id bigserial primary key,
+  conversation_id text not null,
+  score integer not null,
+  previous_score integer,
+  delta integer not null default 0,
+  category text not null,
+  pipeline text,
+  reasons text[],
+  trigger_type text,
+  message_number integer,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists lead_score_history_conversation_idx
+on lead_score_history (conversation_id, created_at);
+
 create index if not exists eugenia_predictions_conversation_idx
 on eugenia_predictions (conversation_id, turn_number);
 

@@ -19,7 +19,8 @@ import {
   upsertCustomer,
   linkConversationToCustomer,
   addCustomerChannel,
-  getCustomerSummaries
+  getCustomerSummaries,
+  trackLeadScoreChange
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -2252,10 +2253,18 @@ async function syncLeadScoreToSupport(state, conversationId) {
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
+    const previousScore = state.leadScore?.score ?? 0;
     state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
     await syncLeadScoreToSupport(state, conversationId);
+    await trackLeadScoreChange(
+      conversationId,
+      state.leadScore,
+      previousScore,
+      channel || "message",
+      state.system?.botMessagesSent || 0
+    );
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
   }

@@ -203,6 +203,20 @@ export async function initDb() {
         updated_at timestamptz not null default now()
       );
 
+      create table if not exists lead_score_history (
+        id bigserial primary key,
+        conversation_id text not null,
+        score integer not null,
+        previous_score integer,
+        delta integer not null default 0,
+        category text not null,
+        pipeline text,
+        reasons text[],
+        trigger_type text,
+        message_number integer,
+        created_at timestamptz not null default now()
+      );
+
       create table if not exists eugenia_predictions (
         id bigserial primary key,
         conversation_id text not null,
@@ -324,6 +338,9 @@ export async function initDb() {
 
       create unique index if not exists customer_conversation_summaries_conversation_unique_idx
       on customer_conversation_summaries (conversation_id);
+
+      create index if not exists lead_score_history_conversation_idx
+      on lead_score_history (conversation_id, created_at);
 
       create index if not exists eugenia_predictions_conversation_idx
       on eugenia_predictions (conversation_id, turn_number);
@@ -1012,6 +1029,66 @@ export async function refreshCustomerConversationStats(customerId) {
   );
 
   return rows[0] || null;
+}
+
+// ── Lead Score History ──
+
+export async function trackLeadScoreChange(conversationId, leadScore, previousScore, triggerType = null, messageNumber = null) {
+  if (!conversationId) return null;
+  const score = leadScore?.score ?? 0;
+  const prev = previousScore ?? 0;
+  const delta = score - prev;
+
+  // Only record if score actually changed
+  if (delta === 0 && prev !== 0) return null;
+
+  const { rows } = await getPool().query(
+    `
+    insert into lead_score_history (
+      conversation_id,
+      score,
+      previous_score,
+      delta,
+      category,
+      pipeline,
+      reasons,
+      trigger_type,
+      message_number
+    )
+    values ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9)
+    returning *
+    `,
+    [
+      conversationId,
+      score,
+      prev,
+      delta,
+      leadScore?.category || "frío",
+      leadScore?.pipeline || null,
+      leadScore?.reasons || [],
+      triggerType,
+      messageNumber
+    ]
+  );
+
+  return rows[0] || null;
+}
+
+export async function getLeadScoreHistory(conversationId, limit = 50) {
+  if (!conversationId) return [];
+
+  const { rows } = await getPool().query(
+    `
+    select *
+    from lead_score_history
+    where conversation_id = $1
+    order by created_at asc
+    limit $2
+    `,
+    [conversationId, limit]
+  );
+
+  return rows;
 }
 
 // ── EugenIA Predictions ──
