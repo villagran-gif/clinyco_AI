@@ -2210,6 +2210,86 @@ function inferBestNextAction(bestNext) {
   return "Continuar recopilando datos";
 }
 
+async function publishEugeniaNote(ticketId, state, bestNext, previousScore = null) {
+  if (!ticketId) return;
+  try {
+    const ls = state.leadScore || {};
+    const lsEmoji = ls.emoji || (ls.score >= 70 ? "🔴" : ls.score >= 40 ? "🟡" : "🔵");
+    const pipeline = ls.pipeline ? `${ls.pipeline}= ` : "";
+    const reasons = (ls.reasons || []).join(", ");
+    const scoreLine = `${pipeline}${lsEmoji} ${(ls.category || "frío").toUpperCase()} (${ls.score || 0}) = ${reasons || "sin datos aún"}`;
+
+    // Patient info
+    const caseType = state.identity?.caseType;
+    const sellRaw = state.identity?.sellRaw;
+    const hasDeal = sellRaw?.deals?.length > 0;
+    const contact = state.contactDraft || {};
+    const deal = state.dealDraft || {};
+    const measurements = state.measurements || {};
+
+    let patientBlock = "";
+    if (hasDeal) {
+      const d = sellRaw.deals[0];
+      const nombre = [contact.c_nombres, contact.c_apellidos].filter(Boolean).join(" ") || d?.name || "—";
+      const fase = d?.stage_name || "—";
+      patientBlock = `👤 PACIENTE CONOCIDO (Deal en Sell)\n   ${nombre}`;
+      if (contact.c_rut) patientBlock += ` | RUT: ${contact.c_rut}`;
+      if (contact.c_tel1) patientBlock += `\n   📞 ${contact.c_tel1}`;
+      if (contact.c_email) patientBlock += ` | ✉️ ${contact.c_email}`;
+      patientBlock += `\n   Fase: ${fase}`;
+      if (deal.dealInteres) patientBlock += ` | Cirugía: ${deal.dealInteres}`;
+      if (contact.c_aseguradora) patientBlock += `\n   Previsión: ${contact.c_aseguradora}`;
+      if (measurements.bmi) patientBlock += ` | IMC: ${measurements.bmi}`;
+    } else {
+      patientBlock = "👤 PACIENTE NUEVO";
+      if (contact.c_tel1) patientBlock += ` | 📞 ${contact.c_tel1}`;
+      if (contact.c_email) patientBlock += ` | ✉️ ${contact.c_email}`;
+    }
+
+    // Score delta
+    let deltaLine = "";
+    if (previousScore !== null && previousScore !== ls.score) {
+      const delta = (ls.score || 0) - previousScore;
+      const arrow = delta > 0 ? "⬆️" : "⬇️";
+      deltaLine = `\n${arrow} Score: ${previousScore} → ${ls.score} (${delta > 0 ? "+" : ""}${delta})`;
+    }
+
+    // Missing fields
+    const missing = bestNext?.missingFields || [];
+    const missingLine = missing.length > 0 ? `\n📊 Datos faltantes: ${missing.join(", ")}` : "";
+
+    const actionLabel = inferBestNextAction(bestNext);
+
+    const body = [
+      "💡 EugenIA Coach",
+      "",
+      patientBlock,
+      "",
+      scoreLine,
+      deltaLine,
+      "",
+      `📋 Siguiente pregunta sugerida:`,
+      `   "${bestNext?.question || "—"}"`,
+      "",
+      `🎯 Siguiente acción sugerida:`,
+      `   "${actionLabel}"`,
+      missingLine
+    ].filter(l => l !== undefined).join("\n").trim();
+
+    await zendeskSupportPost(`/api/v2/tickets/${ticketId}/comments.json`, {
+      ticket: {
+        comment: {
+          body,
+          public: false
+        }
+      }
+    });
+    console.log(`EUGENIA_NOTE_PUBLISHED ticketId=${ticketId} score=${ls.score}`);
+  } catch (error) {
+    console.error("EUGENIA_NOTE_ERROR:", error.message);
+  }
+}
+
 async function syncLeadScoreToSupport(state, conversationId) {
   try {
     let supportUserId = normalizeZendeskEntityId(state.identity?.zendeskRequesterId);
@@ -4731,6 +4811,12 @@ app.post("/ticket-assigned", async (req, res) => {
         const actionLabel = inferBestNextAction(bestNext);
         await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel, aiSuggestedIntent: bestNext.nextAction || null });
         console.log(`EUGENIA_PREDICT conversationId=${conversationId} question="${bestNext.missingFields?.[0] || "none"}" action="${actionLabel}" score=${state.leadScore?.score ?? 0}`);
+
+        // Publish first note at takeover (turn 0)
+        const ticketIdForNote = ticketId || state.identity?.zendeskTicketId;
+        if (ticketIdForNote) {
+          await publishEugeniaNote(ticketIdForNote, state, bestNext, null);
+        }
       }
     } catch (predErr) {
       console.error("EUGENIA_PREDICT_ERROR:", predErr.message);
@@ -4927,6 +5013,14 @@ app.post("/messages", async (req, res) => {
             const actionLabel = inferBestNextAction(bestNext);
             await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel, aiSuggestedIntent: bestNext.nextAction || null });
             console.log(`EUGENIA_PREDICT_ON_PATIENT_MSG conversationId=${conversationId} question="${bestNext.missingFields?.[0] || "none"}" action="${actionLabel}"`);
+
+            // Publish note every 2 patient messages
+            const ticketId = state.identity?.zendeskTicketId;
+            const turnNum = maxTurn + 1;
+            if (ticketId && turnNum % 2 === 0) {
+              const prevScore = pendingList[0]?.lead_score_at_prediction ?? null;
+              await publishEugeniaNote(ticketId, state, bestNext, prevScore);
+            }
           }
         }
       } catch (predErr) {
