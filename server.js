@@ -3328,7 +3328,9 @@ function buildStateSummary(state) {
   ];
 
   if (state.leadScore?.score > 0) {
-    parts.push(`[LEAD_SCORE] ${state.leadScore.category} (${state.leadScore.score}) — ${(state.leadScore.reasons || []).join(", ")}`);
+    const ls = state.leadScore;
+    const lsEmoji = ls.emoji || (ls.score >= 70 ? "🔴" : ls.score >= 40 ? "🟡" : "🔵");
+    parts.push(`[LEAD_SCORE] ${lsEmoji} ${ls.category.toUpperCase()} (${ls.score}) = ${(ls.reasons || []).join(", ")}`);
   }
 
   if (state.identity.sellSummary) {

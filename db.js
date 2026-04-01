@@ -203,6 +203,31 @@ export async function initDb() {
         updated_at timestamptz not null default now()
       );
 
+      create table if not exists eugenia_predictions (
+        id bigserial primary key,
+        conversation_id text not null,
+        turn_number integer not null default 1,
+        ai_suggested_action text not null,
+        ai_suggested_intent text,
+        ai_confidence numeric(3,2),
+        lead_score_at_prediction integer,
+        pipeline text,
+        predicted_at timestamptz not null default now(),
+        human_actual_action text,
+        human_actual_intent text,
+        observed_at timestamptz,
+        match_type text,
+        match_score numeric(3,2),
+        compared_at timestamptz,
+        outcome_phase text,
+        outcome_score integer,
+        outcome_at timestamptz,
+        is_gold_sample boolean not null default false,
+        gold_reason text,
+        state_snapshot_json jsonb,
+        created_at timestamptz not null default now()
+      );
+
       create table if not exists customer_conversation_summaries (
         id bigserial primary key,
         customer_id bigint not null references customers(id) on delete cascade,
@@ -299,6 +324,13 @@ export async function initDb() {
 
       create unique index if not exists customer_conversation_summaries_conversation_unique_idx
       on customer_conversation_summaries (conversation_id);
+
+      create index if not exists eugenia_predictions_conversation_idx
+      on eugenia_predictions (conversation_id, turn_number);
+
+      create index if not exists eugenia_predictions_gold_idx
+      on eugenia_predictions (is_gold_sample)
+      where is_gold_sample = true;
     `);
 
     console.log("Database ready");
@@ -977,6 +1009,239 @@ export async function refreshCustomerConversationStats(customerId) {
     returning c.*
     `,
     [customerId]
+  );
+
+  return rows[0] || null;
+}
+
+// ── EugenIA Predictions ──
+
+const OUTCOME_SCORES = {
+  bariatrica: {
+    "CERRADO OPERADO": 100,
+    "CERRADO AGENDADO": 80,
+    "PROCESO PREOP": 40,
+    "PROCESO PRE-OPERATORIO": 40,
+    "EXAMENES ENVIADOS": 20,
+    "EXAMENES PRE-PAD ENVIADOS": 20,
+    "ORDEN DE EXAMENES": 20,
+    "CANDIDATO": 10,
+    "CANDIDATOS": 10,
+    "SIN RESPUESTA": 0,
+    "SUSPENDIDO": 0,
+    "DESCALIFICADO": 0
+  },
+  balon: {
+    "CERRADO INSTALADO": 100,
+    "CERRADO AGENDADO": 80,
+    "CONTROLES PRE-INSTALACIÓN": 40,
+    "PROCESO PREOP": 40,
+    "EXAMENES ALLURION": 20,
+    "EXAMENES ORBERA": 20,
+    "CANDIDATO": 10,
+    "CANDIDATOS": 10,
+    "SIN RESPUESTA": 0,
+    "SUSPENDIDO": 0,
+    "DESCALIFICADO": 0
+  },
+  plastica: {
+    "CERRADO OPERADO": 100,
+    "CERRADO AGENDADO": 80,
+    "PROCESO PRE-OPERATORIO": 40,
+    "PROCESO PREOP": 40,
+    "ORDEN DE EXAMENES": 20,
+    "CANDIDATO": 10,
+    "CANDIDATOS": 10,
+    "SUSPENDIDO": 0,
+    "DESCALIFICADO": 0
+  },
+  general: {
+    "CERRADO OPERADO": 100,
+    "CERRADO AGENDADO": 80,
+    "PROCESO PRE-OPERATORIO": 40,
+    "PROCESO PREOP": 40,
+    "ORDEN DE EXAMENES": 20,
+    "EXAMENES ENVIADOS": 20,
+    "CANDIDATO": 10,
+    "CANDIDATOS": 10,
+    "SIN RESPUESTA": 0,
+    "SUSPENDIDO": 0,
+    "DESCALIFICADO": 0
+  }
+};
+
+export function getOutcomeScore(pipeline, phase) {
+  const map = OUTCOME_SCORES[pipeline] || OUTCOME_SCORES.bariatrica;
+  const normalized = String(phase || "").trim().toUpperCase();
+  if (normalized in map) return map[normalized];
+  return null;
+}
+
+export async function insertPrediction({
+  conversationId,
+  turnNumber = 1,
+  aiSuggestedAction,
+  aiSuggestedIntent = null,
+  aiConfidence = null,
+  leadScoreAtPrediction = null,
+  pipeline = null,
+  stateSnapshot = null
+}) {
+  if (!conversationId || !aiSuggestedAction) return null;
+
+  const { rows } = await getPool().query(
+    `
+    insert into eugenia_predictions (
+      conversation_id,
+      turn_number,
+      ai_suggested_action,
+      ai_suggested_intent,
+      ai_confidence,
+      lead_score_at_prediction,
+      pipeline,
+      state_snapshot_json
+    )
+    values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+    returning *
+    `,
+    [
+      conversationId,
+      turnNumber,
+      aiSuggestedAction,
+      aiSuggestedIntent,
+      aiConfidence,
+      leadScoreAtPrediction,
+      pipeline,
+      JSON.stringify(stateSnapshot || {})
+    ]
+  );
+
+  return rows[0] || null;
+}
+
+export async function updateObservation(predictionId, {
+  humanActualAction,
+  humanActualIntent = null
+}) {
+  if (!predictionId || !humanActualAction) return null;
+
+  const { rows } = await getPool().query(
+    `
+    update eugenia_predictions
+    set
+      human_actual_action = $2,
+      human_actual_intent = $3,
+      observed_at = now()
+    where id = $1
+    returning *
+    `,
+    [predictionId, humanActualAction, humanActualIntent]
+  );
+
+  return rows[0] || null;
+}
+
+export async function updateComparison(predictionId, {
+  matchType,
+  matchScore = null
+}) {
+  if (!predictionId || !matchType) return null;
+
+  const { rows } = await getPool().query(
+    `
+    update eugenia_predictions
+    set
+      match_type = $2,
+      match_score = $3,
+      compared_at = now()
+    where id = $1
+    returning *
+    `,
+    [predictionId, matchType, matchScore]
+  );
+
+  return rows[0] || null;
+}
+
+export async function updateOutcome(predictionId, {
+  outcomePhase,
+  outcomeScore,
+  isGoldSample = false,
+  goldReason = null
+}) {
+  if (!predictionId) return null;
+
+  const { rows } = await getPool().query(
+    `
+    update eugenia_predictions
+    set
+      outcome_phase = $2,
+      outcome_score = $3,
+      outcome_at = now(),
+      is_gold_sample = $4,
+      gold_reason = $5
+    where id = $1
+    returning *
+    `,
+    [predictionId, outcomePhase, outcomeScore, isGoldSample, goldReason]
+  );
+
+  return rows[0] || null;
+}
+
+export async function getLatestPendingPrediction(conversationId) {
+  if (!conversationId) return null;
+
+  return queryOne(
+    `
+    select *
+    from eugenia_predictions
+    where conversation_id = $1
+      and human_actual_action is null
+    order by turn_number desc, id desc
+    limit 1
+    `,
+    [conversationId]
+  );
+}
+
+export async function getGoldSamples(limit = 50) {
+  const { rows } = await getPool().query(
+    `
+    select *
+    from eugenia_predictions
+    where is_gold_sample = true
+    order by outcome_score desc, created_at desc
+    limit $1
+    `,
+    [limit]
+  );
+
+  return rows;
+}
+
+export async function getPredictionStats(conversationId = null) {
+  const whereClause = conversationId
+    ? "where conversation_id = $1"
+    : "where 1=1";
+  const params = conversationId ? [conversationId] : [];
+
+  const { rows } = await getPool().query(
+    `
+    select
+      count(*) as total_predictions,
+      count(human_actual_action) as total_observed,
+      count(match_type) as total_compared,
+      count(outcome_phase) as total_with_outcome,
+      count(*) filter (where is_gold_sample) as total_gold_samples,
+      round(avg(match_score) filter (where match_score is not null), 2) as avg_match_score,
+      round(avg(outcome_score) filter (where outcome_score is not null), 1) as avg_outcome_score,
+      count(*) filter (where match_type = 'exact_match') as exact_matches,
+      count(*) filter (where match_type = 'same_intent') as same_intent,
+      count(*) filter (where match_type = 'different_topic') as different_topic
+    ${whereClause}
+    `,
+    params
   );
 
   return rows[0] || null;

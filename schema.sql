@@ -105,6 +105,40 @@ create table if not exists customer_conversation_summaries (
   created_at timestamptz not null default now()
 );
 
+create table if not exists eugenia_predictions (
+  id bigserial primary key,
+  conversation_id text not null,
+  turn_number integer not null default 1,
+
+  -- Step 1: EugenIA prediction (at human takeover or each patient message)
+  ai_suggested_action text not null,
+  ai_suggested_intent text,
+  ai_confidence numeric(3,2),
+  lead_score_at_prediction integer,
+  pipeline text,
+  predicted_at timestamptz not null default now(),
+
+  -- Step 2: Human agent actual action
+  human_actual_action text,
+  human_actual_intent text,
+  observed_at timestamptz,
+
+  -- Step 3: Comparison
+  match_type text,
+  match_score numeric(3,2),
+  compared_at timestamptz,
+
+  -- Step 4: Outcome (from Sell pipeline phase)
+  outcome_phase text,
+  outcome_score integer,
+  outcome_at timestamptz,
+  is_gold_sample boolean not null default false,
+  gold_reason text,
+
+  state_snapshot_json jsonb,
+  created_at timestamptz not null default now()
+);
+
 create unique index if not exists conversation_messages_unique_message
 on conversation_messages (conversation_id, message_id, role)
 where message_id is not null;
@@ -136,3 +170,10 @@ on customer_conversation_summaries (customer_id, created_at desc);
 
 create unique index if not exists customer_conversation_summaries_conversation_unique_idx
 on customer_conversation_summaries (conversation_id);
+
+create index if not exists eugenia_predictions_conversation_idx
+on eugenia_predictions (conversation_id, turn_number);
+
+create index if not exists eugenia_predictions_gold_idx
+on eugenia_predictions (is_gold_sample)
+where is_gold_sample = true;
