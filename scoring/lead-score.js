@@ -56,6 +56,12 @@ export function calculateLeadScore(state) {
   // ── Canal WhatsApp (+5) ──
   if (state.identity?.channelSourceType === "whatsapp") { score += 5; reasons.push("WhatsApp(+5)"); }
 
+  // ── Condición médica confirmada (+10) ──
+  const interes = String(state.dealDraft?.dealInteres || "").toUpperCase();
+  const CONDITIONS = ["COLELITIASIS", "HERNIA", "ANTIRREFLUJO", "VESICULA", "COLECISTECTOMIA"];
+  const matchedCondition = CONDITIONS.find(c => interes.includes(c));
+  if (matchedCondition) { score += 10; reasons.push(`${matchedCondition.toLowerCase()}(+10)`); }
+
   // ── Urgencia: pidió agendar (+10) ──
   if (state.booking?.pendingSlots || state.booking?.pendingProfessional) {
     score += 10; reasons.push("pidió agendar(+10)");
