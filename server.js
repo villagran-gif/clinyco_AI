@@ -86,6 +86,7 @@ const ENABLE_SELL_SEARCH = String(process.env.ENABLE_SELL_SEARCH || "true").toLo
 const ENABLE_SUPPORT_SEARCH = String(process.env.ENABLE_SUPPORT_SEARCH || "false").toLowerCase() === "true";
 const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.ZENDESK_API_EMAIL || null;
 const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
+const LEAD_SCORE_INFO_URL = String(process.env.LEAD_SCORE_INFO_URL || "").trim() || null;
 
 const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 30;
@@ -2046,6 +2047,15 @@ function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      zendeskRequesterId: null,
+      zendeskRequesterLinkedAt: null,
+      zendeskTicketId: null,
+      zendeskContactSyncKey: null,
+      zendeskContactSyncAt: null,
+      zendeskNotesSyncKey: null,
+      zendeskNotesSyncAt: null,
+      directMessageEmail: null,
+      directMessagePhone: null,
       supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
@@ -2108,6 +2118,12 @@ function buildInitialConversationState() {
       lastOutboundText: null,
       lastOutboundReason: null,
       lastOutboundAt: null
+    },
+    leadScore: {
+      score: 0,
+      category: "frío",
+      reasons: [],
+      calculatedAt: null
     }
   };
 }
@@ -2177,44 +2193,57 @@ const lastSyncedLeadScore = new Map();
 
 async function syncLeadScoreToSupport(state, conversationId) {
   try {
-    // ── Resolver target user ID con jerarquía ──
+    let supportUserId = normalizeZendeskEntityId(state.identity?.zendeskRequesterId);
+    let source = supportUserId ? "requester_id" : null;
 
-    // NIVEL 1: zendeskRequesterId (canónico — de /ticket-assigned)
-    let targetUserId = state.identity?.zendeskRequesterId || null;
-
-    // NIVEL 2: supportRaw con match fuerte (fallback)
-    if (!targetUserId) {
+    if (!supportUserId) {
       const supportUsers = state.identity?.supportRaw?.users;
       const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
+
+      // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
       if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
 
+      // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
       const matchedUser = supportUsers[0];
       const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
       const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
       const userEmail = String(matchedUser.email || "").trim().toLowerCase();
       const userPhone = normalizePhone(matchedUser.phone || null);
+
       const strongMatch =
         (stateEmail && userEmail && stateEmail === userEmail) ||
         (statePhone && userPhone && statePhone === userPhone);
+
       if (!strongMatch) return;
 
-      targetUserId = matchedUser.id;
+      supportUserId = normalizeZendeskEntityId(matchedUser.id);
+      source = "support_strong_match";
     }
 
-    // ── Throttle: solo sync si score cambió ──
-    const currentScore = state.leadScore?.score ?? 0;
-    if (lastSyncedLeadScore.get(conversationId) === currentScore) return;
+    if (!supportUserId) return;
 
-    const category = state.leadScore?.category ?? "frío";
-    const reasons = (state.leadScore?.reasons || []).join(", ");
-    await zendeskSupportPut(`/api/v2/users/${targetUserId}.json`, {
+    const leadScoreSummary = formatLeadScoreSummary(state.leadScore);
+    const leadScoreDetail = formatLeadScoreDetail(state.leadScore);
+    const userFields = {
+      user_lead_score: leadScoreSummary,
+      user_lead_score_detail: leadScoreDetail
+    };
+    if (LEAD_SCORE_INFO_URL) {
+      userFields.user_lead_score_info_url = LEAD_SCORE_INFO_URL;
+    }
+    const currentScore = state.leadScore?.score ?? 0;
+    const scoreSyncKey = `${supportUserId}:${leadScoreSummary}:${leadScoreDetail}:${LEAD_SCORE_INFO_URL || ""}`;
+    if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
+
+    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
       user: {
-        user_fields: {
-          user_lead_score: `${category} (${currentScore}) — ${reasons}`
-        }
+        user_fields: userFields
       }
     });
-    lastSyncedLeadScore.set(conversationId, currentScore);
+    lastSyncedLeadScore.set(conversationId, scoreSyncKey);
+    console.log(
+      `LEAD_SCORE_SYNC_SUPPORT conversationId=${conversationId} zendeskUserId=${supportUserId} source=${source} score=${currentScore}`
+    );
   } catch (error) {
     console.error("SYNC_LEAD_SCORE_SUPPORT:", error.message);
   }
@@ -2422,11 +2451,15 @@ function handleSavedDataConfirmationResponse(state, userText) {
 
   if (rejectsData) {
     // Clear saved data so the bot asks fresh questions
+    state.contactDraft.c_rut = null;
     state.contactDraft.c_nombres = null;
     state.contactDraft.c_apellidos = null;
+    state.contactDraft.c_fecha = null;
     state.contactDraft.c_aseguradora = null;
     state.contactDraft.c_modalidad = null;
     state.contactDraft.c_email = null;
+    state.contactDraft.c_tel1 = null;
+    state.contactDraft.c_tel2 = null;
     state.contactDraft.c_direccion = null;
     state.contactDraft.c_comuna = null;
     state.dealDraft.dealInteres = null;
@@ -2436,6 +2469,8 @@ function handleSavedDataConfirmationResponse(state, userText) {
     state.measurements.heightCm = null;
     state.measurements.bmi = null;
     state.measurements.bmiCategory = null;
+    state.identity.directMessageEmail = null;
+    state.identity.directMessagePhone = null;
     state.identity.savedDataConfirmed = true;
     return { confirmed: true, cleared: true, message: "Perfecto, borro los datos anteriores. Cuéntame, ¿en qué te puedo ayudar?" };
   }
@@ -2776,6 +2811,74 @@ function extractConversationInfo(payload) {
   };
 }
 
+function normalizeZendeskEntityId(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+}
+
+function leadScoreBadge(category) {
+  switch (String(category || "").toLowerCase()) {
+    case "caliente":
+      return "🔴";
+    case "tibio":
+      return "🟡";
+    case "frío":
+    case "frio":
+    default:
+      return "🔵";
+  }
+}
+
+function formatLeadScoreSummary(leadScore) {
+  const score = leadScore?.score ?? 0;
+  const category = String(leadScore?.category || "frío").toUpperCase();
+  const badge = leadScoreBadge(leadScore?.category);
+  return `${badge} ${category} (${score})`;
+}
+
+function formatLeadScoreDetail(leadScore) {
+  const summary = formatLeadScoreSummary(leadScore);
+  const reasons = Array.isArray(leadScore?.reasons) ? leadScore.reasons.filter(Boolean) : [];
+  if (!reasons.length) return summary;
+  return `${summary} = ${reasons.join(", ")}`;
+}
+
+function extractZendeskTicketAssignment(payload = {}) {
+  const conversationId = normalizeZendeskEntityId(
+    payload?.conversation_id ??
+    payload?.conversationId ??
+    payload?.ticket?.conversation_id ??
+    payload?.ticket?.conversationId
+  );
+  const assigneeId = normalizeZendeskEntityId(
+    payload?.assignee_id ??
+    payload?.assigneeId ??
+    payload?.ticket?.assignee_id ??
+    payload?.ticket?.assigneeId
+  );
+  const requesterId = normalizeZendeskEntityId(
+    payload?.requester_id ??
+    payload?.requesterId ??
+    payload?.ticket?.requester_id ??
+    payload?.ticket?.requesterId ??
+    payload?.requester?.id
+  );
+  const ticketId = normalizeZendeskEntityId(
+    payload?.ticket_id ??
+    payload?.ticketId ??
+    payload?.ticket?.id ??
+    payload?.ticket?.ticket_id
+  );
+
+  return {
+    event: payload?.event || null,
+    conversationId,
+    assigneeId,
+    requesterId,
+    ticketId
+  };
+}
+
 function hasScheduleIntent(text) {
   const normalized = normalizeKey(text);
   return [
@@ -2967,7 +3070,10 @@ function updateDraftsFromText(state, text, info) {
   const structured = parseStructuredLeadText(cleanText);
 
   const email = extractEmail(cleanText) || extractEmail(structured.email);
-  if (email) state.contactDraft.c_email = email;
+  if (email) {
+    state.contactDraft.c_email = email;
+    state.identity.directMessageEmail = email;
+  }
 
   const phone = extractPhone(cleanText) || normalizePhone(structured.phone_number);
   if (phone) {
@@ -2975,6 +3081,7 @@ function updateDraftsFromText(state, text, info) {
     if (!state.contactDraft.c_tel2) {
       state.contactDraft.c_tel2 = phone;
     }
+    state.identity.directMessagePhone = phone;
   }
 
   const rut = extractRut(cleanText);
@@ -3358,25 +3465,194 @@ async function zendeskSupportGet(path, params = {}) {
   return data;
 }
 
-async function zendeskSupportPut(path, body = {}) {
-  if (!ZENDESK_SUBDOMAIN) throw new Error("Missing ZENDESK_SUBDOMAIN");
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-
-  const url = `https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`;
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: { Authorization: authHeader, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`Zendesk Support PUT failed: ${response.status} ${raw}`);
+async function zendeskSupportPost(path, body = {}) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
   }
 
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body || {})
+  });
+
   const raw = await response.text();
-  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+async function zendeskSupportPut(path, body = {}) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
+  const response = await fetch(url.toString(), {
+    method: "PUT",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+async function zendeskSupportGetByUrl(url) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const parsedUrl = new URL(String(url || ""));
+  const expectedHost = `${ZENDESK_SUBDOMAIN}.zendesk.com`;
+  if (parsedUrl.host !== expectedHost) {
+    throw new Error(`Unexpected Zendesk host: ${parsedUrl.host}`);
+  }
+
+  const response = await fetch(parsedUrl.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+function extractConversationIdFromUnknown(node, seen = new Set()) {
+  if (!node || typeof node !== "object") {
+    return null;
+  }
+
+  if (seen.has(node)) {
+    return null;
+  }
+  seen.add(node);
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const nested = extractConversationIdFromUnknown(item, seen);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (/^conversation[_-]?id$/i.test(key)) {
+      const normalized = normalizeZendeskEntityId(value);
+      if (normalized) return normalized;
+    }
+  }
+
+  for (const value of Object.values(node)) {
+    const nested = extractConversationIdFromUnknown(value, seen);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+async function fetchZendeskTicketAudits(ticketId) {
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
+  if (!normalizedTicketId) {
+    return [];
+  }
+
+  let nextUrl = `https://${ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/tickets/${encodeURIComponent(normalizedTicketId)}/audits.json`;
+  const audits = [];
+
+  while (nextUrl) {
+    const payload = await zendeskSupportGetByUrl(nextUrl);
+    const rows = Array.isArray(payload?.audits) ? payload.audits : [];
+    audits.push(...rows);
+    nextUrl = payload?.next_page || null;
+  }
+
+  return audits;
+}
+
+async function resolveConversationIdFromZendeskTicket(ticketId) {
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
+  if (!normalizedTicketId) {
+    return null;
+  }
+
+  const audits = await fetchZendeskTicketAudits(normalizedTicketId);
+
+  for (const audit of audits) {
+    const events = Array.isArray(audit?.events) ? audit.events : [];
+    for (const event of events) {
+      if (event?.type !== "ChatStartedEvent") continue;
+      const conversationId = extractConversationIdFromUnknown(event);
+      if (conversationId) {
+        return conversationId;
+      }
+    }
+  }
+
+  for (const audit of audits) {
+    const conversationId = extractConversationIdFromUnknown(audit);
+    if (conversationId) {
+      return conversationId;
+    }
+  }
+
+  return null;
 }
 
 async function searchSupportByEmail(email) {
@@ -3480,6 +3756,293 @@ async function searchSupportReal({ email, phone, name, channelDisplayName, sourc
     users: filteredUsers,
     tickets
   };
+}
+
+function isSocialMessagingSource(sourceType) {
+  const normalized = normalizeKey(sourceType || "");
+  return normalized === "INSTAGRAM" ||
+    normalized === "FACEBOOK" ||
+    normalized === "MESSENGER" ||
+    normalized === "WHATSAPP";
+}
+
+function normalizeZendeskContactEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  return email || null;
+}
+
+function buildZendeskContactSyncKey(userId, email, phone) {
+  return JSON.stringify({
+    userId: userId || null,
+    email: email || null,
+    phone: phone || null
+  });
+}
+
+function buildZendeskNotesSyncKey(userId, notes) {
+  return JSON.stringify({
+    userId: userId || null,
+    notes: String(notes || "").trim() || null
+  });
+}
+
+function normalizeZendeskNotes(value) {
+  const text = String(value || "").replace(/\r\n/g, "\n").trim();
+  return text || null;
+}
+
+function formatPhoneForZendeskNotes(raw) {
+  const phone = normalizePhone(raw);
+  if (!phone) return null;
+  if (/^\+569\d{8}$/.test(phone)) {
+    return `${phone.slice(3, 4)} ${phone.slice(4, 8)} ${phone.slice(8)}`;
+  }
+  return phone;
+}
+
+function formatZendeskNotesValue(value) {
+  return normalizeSpaces(String(value || "").replace(/\r\n/g, "\n").replace(/\n+/g, " "));
+}
+
+function calculateAgeFromBirthDate(raw) {
+  const text = String(raw || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return null;
+  }
+
+  const birthDate = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return null;
+  }
+
+  const today = new Date();
+  let age = today.getUTCFullYear() - birthDate.getUTCFullYear();
+  const monthDiff = today.getUTCMonth() - birthDate.getUTCMonth();
+  const dayDiff = today.getUTCDate() - birthDate.getUTCDate();
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+    age -= 1;
+  }
+  return age >= 0 ? String(age) : null;
+}
+
+function buildZendeskUserNotesFromState(state, info, options = {}) {
+  const confirmed = Boolean(options.confirmed);
+  const structured = parseStructuredLeadText(info?.userText || info?.rawMessage?.content?.text || "");
+  const contact = state?.contactDraft || {};
+  const deal = state?.dealDraft || {};
+  const directEmail = normalizeZendeskContactEmail(state?.identity?.directMessageEmail);
+  const directPhone = normalizePhone(state?.identity?.directMessagePhone || null);
+
+  const fullName = formatZendeskNotesValue(
+    (confirmed ? [contact.c_nombres, contact.c_apellidos].filter(Boolean).join(" ") : "") ||
+    structured.full_name ||
+    info?.authorDisplayName ||
+    info?.sourceProfileName ||
+    ""
+  );
+  const insurance = formatZendeskNotesValue(
+    contact.c_aseguradora
+      ? (contact.c_modalidad ? `${contact.c_aseguradora} - ${contact.c_modalidad}` : contact.c_aseguradora)
+      : (structured.insurance || "")
+  );
+  const age = formatZendeskNotesValue(structured.age || calculateAgeFromBirthDate(contact.c_fecha) || "");
+  const noteLines = [
+    `RUT: ${formatZendeskNotesValue(contact.c_rut) || ""}`,
+    `Correo electrónico: ${formatZendeskNotesValue((confirmed ? contact.c_email : null) || directEmail || structured.email) || ""}`,
+    `Nombre completo: ${fullName || ""}`,
+    `Teléfono: ${formatPhoneForZendeskNotes((confirmed ? (contact.c_tel1 || contact.c_tel2) : null) || directPhone || structured.phone_number) || ""}`,
+    `Ciudad: ${formatZendeskNotesValue(contact.c_comuna || structured.city) || ""}`,
+    `Dirección: ${formatZendeskNotesValue(contact.c_direccion) || ""}`,
+    `Servicio o interés: ${formatZendeskNotesValue(deal.dealInteres) || ""}`,
+    `¿Fonasa, Isapre o particular?: ${insurance || ""}`,
+    `Peso: ${formatZendeskNotesValue(deal.dealPeso || state?.measurements?.weightKg) || ""}`,
+    `Estatura: ${formatZendeskNotesValue(deal.dealEstatura || state?.measurements?.heightCm) || ""}`,
+    `Edad: ${age || ""}`
+  ];
+
+  return noteLines.join("\n");
+}
+
+function hasConfirmedZendeskSyncData(state) {
+  return Boolean(state?.identity?.savedDataConfirmed) &&
+    !state?.identity?.awaitingMissingDataCompletion &&
+    !state?.identity?.awaitingFinalConfirmation;
+}
+
+function buildZendeskSyncPayloadFromState(state, info) {
+  const confirmed = hasConfirmedZendeskSyncData(state);
+  const email = confirmed
+    ? normalizeZendeskContactEmail(state?.contactDraft?.c_email)
+    : normalizeZendeskContactEmail(state?.identity?.directMessageEmail);
+  const phone = confirmed
+    ? normalizePhone(state?.contactDraft?.c_tel1 || null)
+    : normalizePhone(state?.identity?.directMessagePhone || null);
+  const notes = buildZendeskUserNotesFromState(state, info, { confirmed });
+
+  return {
+    confirmed,
+    email,
+    phone,
+    notes
+  };
+}
+
+async function getZendeskUser(userId) {
+  if (!userId) return null;
+  const data = await zendeskSupportGet(`/api/v2/users/${userId}.json`);
+  return data?.user || null;
+}
+
+async function listZendeskUserIdentities(userId) {
+  if (!userId) return [];
+  const data = await zendeskSupportGet(`/api/v2/users/${userId}/identities.json`);
+  return Array.isArray(data?.identities) ? data.identities : [];
+}
+
+async function createZendeskUserIdentity(userId, identity, options = {}) {
+  if (!userId || !identity?.type || !identity?.value) {
+    return null;
+  }
+  const data = await zendeskSupportPost(`/api/v2/users/${userId}/identities.json`, {
+    identity,
+    ...options
+  });
+  return data?.identity || null;
+}
+
+async function updateZendeskUser(userId, user) {
+  if (!userId || !user || typeof user !== "object") {
+    return null;
+  }
+  const data = await zendeskSupportPut(`/api/v2/users/${userId}.json`, { user });
+  return data?.user || null;
+}
+
+async function syncZendeskUserContactsFromState(state, info, context = {}) {
+  const sourceType = info?.sourceType || state?.identity?.channelSourceType || null;
+  if (!isSocialMessagingSource(sourceType)) {
+    return null;
+  }
+
+  if (!ZENDESK_SUBDOMAIN || !getZendeskSupportAuthHeader()) {
+    return null;
+  }
+
+  const { confirmed, email, phone, notes: noteText } = buildZendeskSyncPayloadFromState(state, info);
+
+  if (!email && !phone && !noteText) {
+    return null;
+  }
+
+  const zendeskUserId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
+  if (!zendeskUserId) {
+    const logParts = [
+      context?.conversationId ? `conversationId=${context.conversationId}` : null,
+      "reason=requester_not_resolved",
+      `mode=${confirmed ? "confirmed" : "direct_message"}`,
+      email ? `email=${email}` : null,
+      phone ? `phone=${phone}` : null
+    ].filter(Boolean).join(" ");
+    console.log(`ZENDESK_CONTACT_SYNC_SKIPPED ${logParts}`);
+    return null;
+  }
+
+  const zendeskUser = await getZendeskUser(zendeskUserId);
+  const existingNotes = normalizeZendeskNotes(zendeskUser?.notes);
+
+  const syncKey = buildZendeskContactSyncKey(zendeskUserId, email, phone);
+  const notesSyncKey = buildZendeskNotesSyncKey(zendeskUserId, noteText);
+  const shouldSyncContacts = Boolean(email || phone) && state?.identity?.zendeskContactSyncKey !== syncKey;
+  const shouldSyncNotes = Boolean(noteText) &&
+    existingNotes !== normalizeZendeskNotes(noteText);
+
+  if (!shouldSyncContacts && !shouldSyncNotes) {
+    return null;
+  }
+
+  let createdEmail = false;
+  let createdPhone = false;
+  let createdNotes = false;
+
+  if (shouldSyncContacts) {
+    const identities = await listZendeskUserIdentities(zendeskUserId);
+    const normalizedIdentityEmailValues = identities
+      .filter((identity) => identity?.type === "email")
+      .map((identity) => normalizeZendeskContactEmail(identity?.value))
+      .filter(Boolean);
+    const normalizedIdentityPhoneValues = identities
+      .filter((identity) => identity?.type === "phone_number")
+      .map((identity) => normalizePhone(identity?.value))
+      .filter(Boolean);
+    const existingEmails = new Set([
+      normalizeZendeskContactEmail(zendeskUser?.email),
+      ...normalizedIdentityEmailValues
+    ].filter(Boolean));
+    const existingPhones = new Set([
+      normalizePhone(zendeskUser?.phone),
+      ...normalizedIdentityPhoneValues
+    ].filter(Boolean));
+
+    if (email && !existingEmails.has(email)) {
+      await createZendeskUserIdentity(zendeskUserId, {
+        type: "email",
+        value: email
+      }, {
+        skip_verify_email: true
+      });
+      createdEmail = true;
+    }
+
+    if (phone && !existingPhones.has(phone)) {
+      await createZendeskUserIdentity(zendeskUserId, {
+        type: "phone_number",
+        value: phone
+      });
+      createdPhone = true;
+    }
+
+    state.identity.zendeskContactSyncKey = syncKey;
+    state.identity.zendeskContactSyncAt = new Date().toISOString();
+  }
+
+  if (shouldSyncNotes) {
+    await updateZendeskUser(zendeskUserId, { notes: noteText });
+    createdNotes = true;
+    state.identity.zendeskNotesSyncKey = notesSyncKey;
+    state.identity.zendeskNotesSyncAt = new Date().toISOString();
+  }
+
+  const logParts = [
+    context?.conversationId ? `conversationId=${context.conversationId}` : null,
+    `zendeskUserId=${zendeskUserId}`,
+    `mode=${confirmed ? "confirmed" : "direct_message"}`,
+    context?.trigger ? `trigger=${context.trigger}` : null,
+    email ? `email=${email}` : null,
+    phone ? `phone=${phone}` : null,
+    `emailAdded=${createdEmail ? "si" : "no"}`,
+    `phoneAdded=${createdPhone ? "si" : "no"}`,
+    `notesAdded=${createdNotes ? "si" : "no"}`
+  ].filter(Boolean).join(" ");
+  console.log(`ZENDESK_CONTACT_SYNC ${logParts}`);
+
+  return {
+    zendeskUserId,
+    emailAdded: createdEmail,
+    phoneAdded: createdPhone,
+    notesAdded: createdNotes,
+    syncedAt: createdNotes
+      ? state.identity.zendeskNotesSyncAt
+      : state.identity.zendeskContactSyncAt
+  };
+}
+
+async function safelySyncZendeskUserContactsFromState(state, info, context = {}) {
+  try {
+    return await syncZendeskUserContactsFromState(state, info, context);
+  } catch (error) {
+    console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
+    return null;
+  }
 }
 
 function updateStateFromSellSearch(state, sellData) {
@@ -4010,36 +4573,85 @@ app.post("/ticket-assigned", async (req, res) => {
     console.log("===== /ticket-assigned webhook =====");
     console.log("Body:", safeJson(req.body));
 
-    const { event, conversation_id, assignee_id, requester_id, ticket_id } = req.body || {};
+    const {
+      event,
+      conversationId: conversation_id,
+      assigneeId: assignee_id,
+      requesterId,
+      ticketId
+    } = extractZendeskTicketAssignment(req.body || {});
 
-    if (!conversation_id) {
-      return res.status(400).json({ ok: false, error: "Missing conversation_id" });
+    let conversationId = conversation_id;
+
+    if (!conversationId && ticketId) {
+      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
+      if (conversationId) {
+        console.log(
+          `TICKET_ASSIGNED_CONVERSATION_RESOLVED ticketId=${ticketId} conversationId=${conversationId}`
+        );
+      } else {
+        console.log(
+          `TICKET_ASSIGNED_CONVERSATION_NOT_FOUND ticketId=${ticketId} requesterId=${requesterId || "-"}`
+        );
+      }
     }
 
-    await hydrateConversationCache(conversation_id);
-    const state = getConversationState(conversation_id);
+    if (!conversationId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing conversation_id",
+        ticket_id: ticketId || null,
+        requester_id: requesterId || null
+      });
+    }
+
+    await hydrateConversationCache(conversationId);
+    const state = getConversationState(conversationId);
+    const previousRequesterId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
     state.system.handoffReason = "ticket_assigned";
-
-    if (requester_id) {
-      state.identity.zendeskRequesterId = Number(requester_id) || null;
+    if (requesterId) {
+      state.identity.zendeskRequesterId = requesterId;
+      state.identity.zendeskRequesterLinkedAt = state.identity.zendeskRequesterLinkedAt || new Date().toISOString();
     }
-    if (ticket_id) {
-      state.identity.zendeskTicketId = Number(ticket_id) || null;
+    if (ticketId) {
+      state.identity.zendeskTicketId = ticketId;
     }
-
-    // Forzar re-sync del lead score ahora que tenemos requester canónico
-    if (requester_id && state.leadScore?.score > 0) {
-      lastSyncedLeadScore.delete(conversation_id);
+    if (requesterId && requesterId !== previousRequesterId) {
+      lastSyncedLeadScore.delete(conversationId);
     }
 
-    console.log("AI disabled for conversation:", conversation_id);
+    if (requesterId || ticketId) {
+      const linkLog = [
+        `conversationId=${conversationId}`,
+        requesterId ? `zendeskRequesterId=${requesterId}` : null,
+        ticketId ? `ticketId=${ticketId}` : null
+      ].filter(Boolean).join(" ");
+      console.log(`ZENDESK_REQUESTER_LINKED ${linkLog}`);
+    }
+
+    try {
+      await syncZendeskUserContactsFromState(state, {
+        sourceType: state?.identity?.channelSourceType || null,
+        userText: null,
+        rawMessage: null,
+        authorDisplayName: null,
+        sourceProfileName: state?.identity?.sourceProfileName || null
+      }, {
+        conversationId,
+        trigger: "ticket_assigned"
+      });
+    } catch (error) {
+      console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
+    }
+
+    console.log("AI disabled for conversation:", conversationId);
     console.log("Conversation state:", safeJson(state));
 
     await saveConversationEvent({
-      conversationId: conversation_id,
+      conversationId,
       info: {
         sourceType: "system",
         entryPoint: "ticket_assigned",
@@ -4059,13 +4671,15 @@ app.post("/ticket-assigned", async (req, res) => {
       }
     });
 
-    await persistConversationSnapshot(conversation_id, state, null);
-    await maybeSaveConversationSummary(conversation_id, state, "ticket_assigned");
+    await persistConversationSnapshot(conversationId, state, null);
+    await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
     return res.json({
       ok: true,
       event: event || "human_takeover",
-      conversation_id,
+      conversation_id: conversationId,
+      ticket_id: ticketId || null,
+      requester_id: requesterId || null,
       aiEnabled: state.system.aiEnabled
     });
   } catch (error) {
@@ -5037,6 +5651,7 @@ app.post("/messages", async (req, res) => {
       if (confirmResult.needsCompletion && confirmResult.message) {
         // Data confirmed but missing fields remain — ask to complete
         state.identity.awaitingMissingDataCompletion = true;
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -5048,6 +5663,7 @@ app.post("/messages", async (req, res) => {
         }));
       }
       if (confirmResult.message) {
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
           reply: confirmResult.message,
@@ -5057,6 +5673,10 @@ app.post("/messages", async (req, res) => {
         }));
       }
       // confirmed or inline correction — continue normal flow
+    }
+
+    if (!state.identity.awaitingFinalConfirmation) {
+      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
     }
 
     // --- Awaiting missing data completion ---
@@ -5101,6 +5721,7 @@ app.post("/messages", async (req, res) => {
       state.identity.awaitingFinalConfirmation = false;
       if (isConfirm) {
         state.identity.savedDataConfirmed = true;
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         // Continue to normal flow
       } else if (isReject) {
         // Re-enter missing data completion to let them correct
@@ -5128,6 +5749,7 @@ app.post("/messages", async (req, res) => {
       }
       // Unclear response — treat as confirmed and continue
       state.identity.savedDataConfirmed = true;
+      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
     }
 
     if (shouldConfirmSavedData(state)) {
