@@ -87,6 +87,8 @@ const ENABLE_SUPPORT_SEARCH = String(process.env.ENABLE_SUPPORT_SEARCH || "false
 const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.ZENDESK_API_EMAIL || null;
 const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
 const LEAD_SCORE_INFO_URL = String(process.env.LEAD_SCORE_INFO_URL || "").trim() || null;
+const EUGENIA_ENABLED = String(process.env.EUGENIA_ENABLED || "true").toLowerCase() === "true";
+const EUGENIA_MODEL = process.env.EUGENIA_MODEL || OPENAI_MODEL;
 
 const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 30;
@@ -2124,6 +2126,24 @@ function buildInitialConversationState() {
       category: "frío",
       reasons: [],
       calculatedAt: null
+    },
+    eugenia: {
+      lastInternalNoteKey: null,
+      lastInternalNoteAt: null,
+      lastInternalNoteTicketId: null,
+      lastPredictedAction: null,
+      lastPredictedConfidence: null,
+      lastPredictedReason: null,
+      lastPredictedAt: null,
+      lastInternalNotePreview: null
+    },
+    shadow: {
+      lastHumanActualAction: null,
+      lastHumanActualActionAt: null,
+      lastHumanActualText: null,
+      lastComparedPrediction: null,
+      lastComparisonAligned: null,
+      lastComparisonAt: null
     }
   };
 }
@@ -2843,6 +2863,345 @@ function formatLeadScoreDetail(leadScore) {
   return `${summary} = ${reasons.join(", ")}`;
 }
 
+function humanizeEugeniaAction(action) {
+  switch (String(action || "")) {
+    case "confirm_booking":
+      return "Confirmar reserva";
+    case "close_and_schedule":
+      return "Cerrar y coordinar evaluación";
+    case "clarify_objections_and_advance":
+      return "Resolver objeción y avanzar";
+    case "collect_missing_data":
+      return "Recolectar datos faltantes";
+    case "share_web_agenda":
+      return "Compartir agenda web";
+    case "handoff_only":
+      return "Derivar sin profundizar";
+    case "educate_and_qualify":
+    default:
+      return "Educar y calificar";
+  }
+}
+
+function buildEugeniaMissingFields(state) {
+  const missing = new Set(
+    Array.isArray(state?.identity?.lastMissingFields) ? state.identity.lastMissingFields.filter(Boolean) : []
+  );
+  if (!state?.dealDraft?.dealInteres) missing.add("procedimiento");
+  if (!state?.contactDraft?.c_aseguradora) missing.add("prevision");
+  const phone = normalizePhone(
+    state?.contactDraft?.c_tel1 ||
+    state?.contactDraft?.c_tel2 ||
+    state?.identity?.directMessagePhone ||
+    null
+  );
+  if (!phone) missing.add("telefono");
+  return Array.from(missing);
+}
+
+function predictEugeniaAction(state) {
+  const leadScore = state?.leadScore?.score ?? 0;
+  const missingFields = buildEugeniaMissingFields(state);
+  const interestKey = normalizeKey(state?.dealDraft?.dealInteres || "");
+  const needsMeasurements = /(MANGA|BYPASS|BALON|BARIATRICA|BARIATRICO|BARIATRICA|ABDOMEN|PLASTICA|PLASTICO)/.test(interestKey);
+  const hasMeasurements = Boolean(
+    state?.measurements?.weightKg &&
+    (state?.measurements?.heightM || state?.measurements?.heightCm || state?.dealDraft?.dealEstatura)
+  );
+  if (needsMeasurements && !hasMeasurements) {
+    missingFields.push("medidas");
+  }
+
+  if (state?.booking?.chosenSlot) {
+    return {
+      action: "confirm_booking",
+      confidence: 0.95,
+      reason: "Ya existe una hora elegida; conviene confirmar detalles finales.",
+      missingFields: Array.from(new Set(missingFields))
+    };
+  }
+
+  if (missingFields.length) {
+    return {
+      action: "collect_missing_data",
+      confidence: 0.86,
+      reason: `Faltan datos clave para avanzar: ${Array.from(new Set(missingFields)).join(", ")}.`,
+      missingFields: Array.from(new Set(missingFields))
+    };
+  }
+
+  if (leadScore >= 70) {
+    return {
+      action: "close_and_schedule",
+      confidence: 0.84,
+      reason: "Lead caliente con datos suficientes para intentar cierre o coordinación.",
+      missingFields: []
+    };
+  }
+
+  if (leadScore >= 40) {
+    return {
+      action: "clarify_objections_and_advance",
+      confidence: 0.72,
+      reason: "Lead tibio: conviene despejar objeciones antes de empujar el cierre.",
+      missingFields: []
+    };
+  }
+
+  return {
+    action: "educate_and_qualify",
+    confidence: 0.6,
+    reason: "Lead frío o temprano; conviene orientar y validar interés real.",
+    missingFields: []
+  };
+}
+
+function buildEugeniaSuggestedMessage(state, prediction) {
+  const missingText = prediction?.missingFields?.length
+    ? prediction.missingFields.join(", ")
+    : "sin faltantes críticos";
+  switch (prediction?.action) {
+    case "confirm_booking":
+      return "Confirma hora elegida, canal de contacto y preparación previa en un solo mensaje.";
+    case "close_and_schedule":
+      return "Propón coordinar evaluación ahora o compartir la agenda web, evitando seguir explorando.";
+    case "clarify_objections_and_advance":
+      return "Valida la principal duda del paciente y termina con una pregunta concreta de avance.";
+    case "collect_missing_data":
+      return `Pide en un solo bloque los datos faltantes (${missingText}) antes de ofrecer coordinación.`;
+    case "handoff_only":
+      return "Toma control, confirma canal de seguimiento y evita abrir nuevas preguntas clínicas.";
+    case "share_web_agenda":
+      return "Comparte la agenda web y explica que también puedes coordinar manualmente si lo prefiere.";
+    case "educate_and_qualify":
+    default:
+      return "Explica el paso siguiente en lenguaje simple y busca una señal clara de interés o intención.";
+  }
+}
+
+function buildEugeniaSystemPrompt() {
+  return `
+Eres EugenIA, coach interno de Clinyco para agentes humanos.
+
+Tu salida se publica como nota privada en Zendesk Support. Nunca le hablas al paciente.
+
+Objetivo:
+- resumir el caso en clave comercial y clínica
+- sugerir la próxima acción más útil para la agente
+- advertir faltantes o riesgos
+- proponer un próximo mensaje breve que la agente podría enviar
+
+Reglas:
+- responde en español chileno profesional
+- máximo 5 líneas
+- texto plano, sin markdown complejo
+- no inventes datos
+- prioriza cierre, avance comercial, objeciones y señales clínicas
+- si faltan datos, dilo sin rodeos
+
+Formato exacto:
+[EUGENIA]
+Lead score: ...
+Acción sugerida: ...
+Riesgo/Faltante: ...
+Mensaje sugerido: ...
+`.trim();
+}
+
+function buildEugeniaHistoryExcerpt(history = []) {
+  const recent = Array.isArray(history) ? history.slice(-8) : [];
+  if (!recent.length) return "Sin historial reciente.";
+  return recent
+    .map((item) => {
+      const role = item?.role === "assistant" ? "Antonia" : item?.role === "user" ? "Paciente" : "Sistema";
+      const content = normalizeSpaces(String(item?.content || "")).slice(0, 220);
+      return `${role}: ${content}`;
+    })
+    .join("\n");
+}
+
+async function askOpenAIInternalNote({ systemPrompt, stateSummary, historyBlock }) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+  if (!openai) {
+    throw new Error("OpenAI client not initialized");
+  }
+
+  const response = await openai.chat.completions.create({
+    model: EUGENIA_MODEL,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "system", content: stateSummary },
+      { role: "user", content: `Historial reciente:\n${historyBlock}` }
+    ]
+  });
+
+  return response.choices?.[0]?.message?.content?.trim() || "";
+}
+
+function buildEugeniaFallbackNote(state, prediction) {
+  const scoreDetail = formatLeadScoreDetail(state?.leadScore);
+  const action = humanizeEugeniaAction(prediction?.action);
+  const riskText = prediction?.missingFields?.length
+    ? prediction.missingFields.join(", ")
+    : prediction?.reason || "Sin riesgo crítico detectado.";
+  return [
+    "[EUGENIA]",
+    `Lead score: ${scoreDetail}`,
+    `Acción sugerida: ${action} (${Math.round((prediction?.confidence || 0) * 100)}%)`,
+    `Riesgo/Faltante: ${riskText}`,
+    `Mensaje sugerido: ${buildEugeniaSuggestedMessage(state, prediction)}`
+  ].join("\n");
+}
+
+function buildEugeniaNoteKey(ticketId, state, prediction) {
+  return JSON.stringify({
+    ticketId: normalizeZendeskEntityId(ticketId),
+    requesterId: normalizeZendeskEntityId(state?.identity?.zendeskRequesterId),
+    leadScore: state?.leadScore?.score ?? 0,
+    action: prediction?.action || null,
+    missing: Array.isArray(prediction?.missingFields) ? prediction.missingFields : []
+  });
+}
+
+async function postZendeskInternalTicketNote(ticketId, body) {
+  if (!ticketId || !String(body || "").trim()) {
+    return null;
+  }
+  const data = await zendeskSupportPut(`/api/v2/tickets/${ticketId}.json`, {
+    ticket: {
+      comment: {
+        body,
+        public: false
+      }
+    }
+  });
+  return data?.ticket || null;
+}
+
+async function maybeRunEugeniaForHandoff({ conversationId, state, ticketId }) {
+  if (!EUGENIA_ENABLED) return null;
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId || state?.identity?.zendeskTicketId);
+  if (!normalizedTicketId) return null;
+  if (!ZENDESK_SUBDOMAIN || !getZendeskSupportAuthHeader()) return null;
+
+  const prediction = predictEugeniaAction(state);
+  const predictedAt = new Date().toISOString();
+  state.eugenia.lastPredictedAction = prediction.action;
+  state.eugenia.lastPredictedConfidence = prediction.confidence;
+  state.eugenia.lastPredictedReason = prediction.reason;
+  state.eugenia.lastPredictedAt = predictedAt;
+
+  const noteKey = buildEugeniaNoteKey(normalizedTicketId, state, prediction);
+  if (state.eugenia.lastInternalNoteKey === noteKey) {
+    if (dbEnabled()) {
+      await upsertConversationState(conversationId, null, state);
+    }
+    console.log(`EUGENIA_INTERNAL_NOTE_SKIPPED conversationId=${conversationId} ticketId=${normalizedTicketId} reason=duplicate`);
+    return { skipped: "duplicate" };
+  }
+
+  const historyBlock = buildEugeniaHistoryExcerpt(getHistory(conversationId));
+  const stateSummary = [
+    buildStateSummary(state),
+    `[EUGENIA_PREDICCION] action=${prediction.action} confidence=${prediction.confidence} reason=${prediction.reason}`,
+    prediction?.missingFields?.length ? `[EUGENIA_FALTANTES] ${prediction.missingFields.join(", ")}` : null
+  ].filter(Boolean).join("\n");
+
+  let noteBody = "";
+  try {
+    noteBody = await askOpenAIInternalNote({
+      systemPrompt: buildEugeniaSystemPrompt(),
+      stateSummary,
+      historyBlock
+    });
+  } catch (error) {
+    console.error("EUGENIA_OPENAI_ERROR:", error.message);
+  }
+
+  if (!noteBody) {
+    noteBody = buildEugeniaFallbackNote(state, prediction);
+  }
+
+  await postZendeskInternalTicketNote(normalizedTicketId, noteBody);
+  state.eugenia.lastInternalNoteKey = noteKey;
+  state.eugenia.lastInternalNoteAt = new Date().toISOString();
+  state.eugenia.lastInternalNoteTicketId = normalizedTicketId;
+  state.eugenia.lastInternalNotePreview = noteBody.slice(0, 280);
+
+  if (dbEnabled()) {
+    await upsertConversationState(conversationId, null, state);
+  }
+
+  console.log(
+    `EUGENIA_INTERNAL_NOTE conversationId=${conversationId} ticketId=${normalizedTicketId} action=${prediction.action} score=${state?.leadScore?.score ?? 0}`
+  );
+
+  return {
+    ticketId: normalizedTicketId,
+    action: prediction.action
+  };
+}
+
+function classifyHumanAgentAction(text) {
+  const normalized = normalizeKey(text || "");
+  if (!normalized) return null;
+  if (normalized.includes("AGENDA WEB") || normalized.includes("MEDINETAPP")) {
+    return "share_web_agenda";
+  }
+  if (
+    normalized.includes("TRAMO") ||
+    normalized.includes("FONASA") ||
+    normalized.includes("ISAPRE") ||
+    normalized.includes("CORREO") ||
+    normalized.includes("EMAIL") ||
+    normalized.includes("TELEFONO") ||
+    normalized.includes("WHATSAPP") ||
+    normalized.includes("RUT") ||
+    normalized.includes("PESO") ||
+    normalized.includes("ESTATURA") ||
+    normalized.includes("PROCEDIMIENTO")
+  ) {
+    return "collect_missing_data";
+  }
+  if (
+    normalized.includes("AGENTE") ||
+    normalized.includes("TE CONTACTE") ||
+    normalized.includes("TE CONTACTE") ||
+    normalized.includes("TE ESCRIBAN")
+  ) {
+    return "handoff_only";
+  }
+  if (hasScheduleIntent(text) || normalized.includes("EVALUACION") || normalized.includes("COORDINAR")) {
+    return "close_and_schedule";
+  }
+  if (
+    normalized.includes("COBERTURA") ||
+    normalized.includes("PAD") ||
+    normalized.includes("BONO") ||
+    normalized.includes("PROCESO") ||
+    normalized.includes("EXPLIC")
+  ) {
+    return "educate_and_qualify";
+  }
+  return "clarify_objections_and_advance";
+}
+
+function isEugeniaPredictionAligned(predicted, actual) {
+  if (!predicted || !actual) return null;
+  if (predicted === actual) return true;
+  const compatible = {
+    close_and_schedule: new Set(["share_web_agenda", "confirm_booking"]),
+    confirm_booking: new Set(["close_and_schedule"]),
+    collect_missing_data: new Set(["clarify_objections_and_advance"]),
+    clarify_objections_and_advance: new Set(["collect_missing_data", "educate_and_qualify"]),
+    educate_and_qualify: new Set(["clarify_objections_and_advance"]),
+    handoff_only: new Set(["share_web_agenda"])
+  };
+  return compatible[predicted]?.has(actual) || false;
+}
+
 function extractZendeskTicketAssignment(payload = {}) {
   const conversationId = normalizeZendeskEntityId(
     payload?.conversation_id ??
@@ -3329,6 +3688,18 @@ function buildStateSummary(state) {
 
   if (state.leadScore?.score > 0) {
     parts.push(`[LEAD_SCORE] ${state.leadScore.category} (${state.leadScore.score}) — ${(state.leadScore.reasons || []).join(", ")}`);
+  }
+
+  if (state.eugenia?.lastPredictedAction) {
+    parts.push(
+      `[EUGENIA] action=${state.eugenia.lastPredictedAction} confidence=${state.eugenia.lastPredictedConfidence || ""}`
+    );
+  }
+
+  if (state.shadow?.lastHumanActualAction) {
+    parts.push(
+      `[EUGENIA_SHADOW] actual=${state.shadow.lastHumanActualAction} aligned=${state.shadow.lastComparisonAligned === null ? "" : state.shadow.lastComparisonAligned ? "si" : "no"}`
+    );
   }
 
   if (state.identity.sellSummary) {
@@ -4672,6 +5043,15 @@ app.post("/ticket-assigned", async (req, res) => {
     });
 
     await persistConversationSnapshot(conversationId, state, null);
+    try {
+      await maybeRunEugeniaForHandoff({
+        conversationId,
+        state,
+        ticketId
+      });
+    } catch (error) {
+      console.error("EUGENIA HANDOFF ERROR:", error.message);
+    }
     await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
     return res.json({
@@ -4730,6 +5110,21 @@ app.post("/messages", async (req, res) => {
       state.system.aiEnabled = false;
       state.system.humanTakenOver = true;
       state.system.handoffReason = "human_business_message_detected";
+      const businessText = normalizeSpaces(info?.rawMessage?.content?.text || "");
+      const actualAction = classifyHumanAgentAction(businessText);
+      if (actualAction) {
+        const predictedAction = state.eugenia?.lastPredictedAction || null;
+        const aligned = isEugeniaPredictionAligned(predictedAction, actualAction);
+        state.shadow.lastHumanActualAction = actualAction;
+        state.shadow.lastHumanActualActionAt = new Date().toISOString();
+        state.shadow.lastHumanActualText = businessText.slice(0, 280);
+        state.shadow.lastComparedPrediction = predictedAction;
+        state.shadow.lastComparisonAligned = aligned;
+        state.shadow.lastComparisonAt = new Date().toISOString();
+        console.log(
+          `EUGENIA_SHADOW_COMPARE conversationId=${conversationId} predicted=${predictedAction || "-"} actual=${actualAction} aligned=${aligned === null ? "unknown" : aligned ? "yes" : "no"}`
+        );
+      }
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
 
