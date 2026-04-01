@@ -17,11 +17,17 @@ export function calculateLeadScore(state) {
   const pipelineId = state.dealDraft?.dealPipelineId || null;
   const pipeline = PIPELINE_NAMES[pipelineId] || null;
 
-  // ── IMC (max +25) ──
+  // ── IMC (max +25) — invertido para plástica ──
   const bmi = state.measurements?.bmi;
-  if (bmi >= 35)      { score += 25; reasons.push("IMC >= 35(+25)"); }
-  else if (bmi >= 30) { score += 15; reasons.push("IMC 30-35(+15)"); }
-  else if (bmi >= 25) { score += 5;  reasons.push("IMC 25-30(+5)"); }
+  const isPlastica = pipelineId === 4959507;
+  if (isPlastica) {
+    if (bmi && bmi <= 27)      { score += 25; reasons.push("IMC ≤ 27(+25)"); }
+    else if (bmi && bmi <= 30) { score += 15; reasons.push("IMC 27-30(+15)"); }
+  } else {
+    if (bmi >= 35)      { score += 25; reasons.push("IMC >= 35(+25)"); }
+    else if (bmi >= 30) { score += 15; reasons.push("IMC 30-35(+15)"); }
+    else if (bmi >= 25) { score += 5;  reasons.push("IMC 25-30(+5)"); }
+  }
 
   // ── Previsión (+15) ──
   if (state.contactDraft?.c_aseguradora) { score += 15; reasons.push("previsión(+15)"); }
