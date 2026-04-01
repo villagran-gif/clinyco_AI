@@ -2260,6 +2260,18 @@ async function publishEugeniaNote(ticketId, state, bestNext, previousScore = nul
 
     const actionLabel = inferBestNextAction(bestNext);
 
+    // Copy-paste version with natural tone
+    const copyPasteMap = {
+      identity_min: "Hola! Para poder ayudarte mejor, ¿me compartes tu teléfono o correo electrónico?",
+      dealInteres: "Cuéntame, ¿qué procedimiento o evaluación te interesa? Así te puedo orientar mejor 😊",
+      c_aseguradora: "¿Cuál es tu previsión de salud? Por ejemplo Fonasa, Banmédica, Cruz Blanca, Consalud o particular",
+      c_modalidad: "¿Me indicas tu tramo de Fonasa? Puede ser A, B, C o D",
+      dealPeso: "Para orientarte mejor necesito saber tu peso en kilos, ¿me lo puedes indicar?",
+      dealEstatura: "¿Y tu estatura? Puedes escribirla en metros, por ejemplo 1.70"
+    };
+    const firstMissing = (bestNext?.missingFields || [])[0];
+    const copyPaste = copyPasteMap[firstMissing] || (bestNext?.question || "—");
+
     const body = [
       "💡 EugenIA Coach",
       "",
@@ -2270,6 +2282,9 @@ async function publishEugeniaNote(ticketId, state, bestNext, previousScore = nul
       "",
       `📋 Siguiente pregunta sugerida:`,
       `   "${bestNext?.question || "—"}"`,
+      "",
+      `✏️ Copiar y pegar:`,
+      `   ${copyPaste}`,
       "",
       `🎯 Siguiente acción sugerida:`,
       `   "${actionLabel}"`,
