@@ -1614,10 +1614,10 @@ function detectProcedure(text) {
   if (/\b(MANGA GASTRICA|MANGA|BYPASS|BARIATRICA|BARIATRICO|BARIATRICA)\b/.test(normalized)) {
     return { key: "BARIATRICA", label: "Cirugía bariátrica", pipelineId: 1290779 };
   }
-  if (/\b(PLASTICA|ABDOMINOPLASTIA|LIPO|MAMOPLASTIA|RINOPLASTIA|CIRUGIA PLASTICA)\b/.test(normalized)) {
+  if (/\b(PLASTICA|ABDOMINOPLASTIA|LIPO|LIPOSUCCION|LIPOESCULTURA|MAMOPLASTIA|MASTOPEXIA|RINOPLASTIA|CIRUGIA PLASTICA|RECONSTRUCCION|PARED ABDOMINAL|CIRUGIA DE ABDOMEN|CIRUGIA.*ABDOMEN|ABDOMEN|PANNICULECTOMIA|LIFTING|BLEFAROPLASTIA)\b/.test(normalized)) {
     return { key: "PLASTICA", label: "Cirugía plástica", pipelineId: 4959507 };
   }
-  if (/\b(COLECISTECTOMIA|COLECISTECTOMIA|VESICULA|Vesícula|HERNIA|CIRUGIA GENERAL|ENDOSCOPIA|ENDOSCOPÍA)\b/i.test(text)) {
+  if (/\b(COLECISTECTOMIA|VESICULA|HERNIA|CIRUGIA GENERAL|ENDOSCOPIA|ANTIRREFLUJO|REFLUJO|CIRUGIA DIGESTIVA)\b/.test(normalized)) {
     return { key: "GENERAL", label: "Cirugía general", pipelineId: 5049979 };
   }
   if (/\b(NUTRICION|NUTRICIONISTA|NUTRI)\b/.test(normalized)) {
@@ -3017,13 +3017,17 @@ function extractProfessionalReference(text) {
 
   const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})\b/i);
   if (withConMatch) {
-    // Reject time/date expressions mistakenly captured as professional names
-    // e.g. "para la segunda semana de abril" should NOT extract "segunda semana"
     const candidateNorm = normalizeKey(withConMatch[1]);
+    // Reject time/date expressions
     const isTimeExpression = /\b(PRIMERA|SEGUNDA|TERCERA|CUARTA|ULTIMA|PROXIMA|SIGUIENTE|ESTA|ESA|OTRA|SEMANA|MES|LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO|ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE|MANANA|HOY|AYER|TARDE|NOCHE)\b/.test(candidateNorm);
-    if (!isTimeExpression) {
-      return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
-    }
+    if (isTimeExpression) return { professionalName: null, matchType: null };
+    // Reject common functional words that are not professional names
+    const NON_NAME_WORDS = /\b(CORRECTAMENTE|AGENDAR|AGENDA|CONFIRMAR|RESERVAR|CONSULTAR|PREGUNTAR|SABER|AVERIGUAR|PODER|AYUDAR|ATENDER|ORIENTAR|COMPLETAR|VERIFICAR|REVISAR|INFORMAR|INFORMACION|DATOS|PACIENTE|PACIENTES|VALOR|PRECIO|PRECIOS|PROCEDIMIENTO|PROCEDIMIENTOS|CIRUGIA|OPERACION|EVALUACION|HORA|HORAS|CITA|CONTROL|FAVOR|MEJOR|BIEN|SIEMPRE|NUNCA|NADA|ALGO|TODO|ESTO|ELLA|USTED|USTEDES|NOSOTROS|QUE|QUIEN|DONDE|CUANDO|COMO|PODER|AYUDARTE|ATENDERTE|ORIENTARTE|AYUDARME|ATENDERME|ORIENTARME)\b/.test(candidateNorm);
+    if (NON_NAME_WORDS) return { professionalName: null, matchType: null };
+    // Reject if candidate is a single word shorter than 4 chars (likely not a name)
+    const candidateWords = candidateNorm.split(/\s+/).filter(Boolean);
+    if (candidateWords.length === 1 && candidateWords[0].length < 4) return { professionalName: null, matchType: null };
+    return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
   }
 
   return { professionalName: null, matchType: null };
@@ -3078,6 +3082,12 @@ function buildAntoniaFastPathCandidate(text, state) {
   const noFastPath = { shouldTry: false, reason: null, query: null, trigger: null };
 
   if (state.system.humanTakenOver || !state.system.aiEnabled) return noFastPath;
+
+  // Reject self-text contamination: user pasted a bot template
+  const normalizedInput = normalizeKey(text);
+  if (/PARA AGENDAR CORRECTAMENTE|DATOS DEL PACIENTE|CONFIRMAR TUS DATOS|HABLAS CON ANTONIA/.test(normalizedInput)) {
+    return noFastPath;
+  }
 
   const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
 
@@ -3340,6 +3350,12 @@ function shouldAskOpenHelpQuestion(state, userText) {
   if (resolvedStage === "schedule_request" || resolvedStage === "missing_insurance" || resolvedStage === "missing_modality" || resolvedStage === "missing_interest") return false;
   const insuranceInfo = parseAseguradora(userText);
   if (insuranceInfo?.aseguradora || insuranceInfo?.isIsapreGeneric) return false;
+  // Don't interrupt if user has already provided meaningful data (insurance, weight, phone, etc.)
+  if (state.contactDraft?.c_aseguradora || state.contactDraft?.c_modalidad) return false;
+  if (state.measurements?.weightKg || state.measurements?.heightM) return false;
+  if (state.contactDraft?.c_tel1 && state.contactDraft?.c_tel1 !== state.identity?.whatsappPhone) return false;
+  // Don't interrupt if the current message mentions a procedure (even if detectProcedure didn't catch it in prior turns)
+  if (detectProcedure(userText)) return false;
   return true;
 }
 
