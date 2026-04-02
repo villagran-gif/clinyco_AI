@@ -1,6 +1,6 @@
-export async function publishPrivateTicketNote({ zendeskSupportPost, ticketId, body }) {
+export async function publishPrivateTicketNote({ zendeskSupportPut, ticketId, body }) {
   if (!ticketId) return null;
-  return zendeskSupportPost(`/api/v2/tickets/${ticketId}/comments.json`, {
+  return zendeskSupportPut(`/api/v2/tickets/${ticketId}.json`, {
     ticket: {
       comment: {
         body,

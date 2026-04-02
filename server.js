@@ -4710,7 +4710,7 @@ app.post("/ticket-assigned", async (req, res) => {
         ticketId: ticketId || state.identity?.zendeskTicketId || null,
         state,
         resolverDecision: resolverForNote,
-        zendeskSupportPost,
+        zendeskSupportPut,
         logger: console
       });
     } catch (eugeniaErr) {
@@ -4925,7 +4925,7 @@ app.post("/messages", async (req, res) => {
           ticketId: state.identity?.zendeskTicketId || null,
           state,
           resolverDecision: resolverForMutedPatient,
-          zendeskSupportPost,
+          zendeskSupportPut,
           logger: console
         });
       } catch (eugeniaErr) {
