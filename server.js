@@ -1818,7 +1818,7 @@ function normalizeAseguradoraValue(value) {
 
 function normalizeMeasurementNumber(value) {
   if (value === null || value === undefined) return null;
-  const cleaned = String(value).replace(/,/g, ".").replace(/[^0-9.]/g, "").trim();
+  const cleaned = String(value).replace(/[,:]/g, ".").replace(/[^0-9.]/g, "").trim();
   if (!cleaned) return null;
   const number = Number(cleaned);
   return Number.isFinite(number) ? number : null;
@@ -1859,8 +1859,8 @@ function parseMeasurements(text) {
   }
 
   const explicitHeightMeters =
-    normalized.match(/(?:altura|estatura|mido)\s*:?\s*(1[.,]\d{1,2}|2[.,]0{1,2})\s*(?:m|mt|mts|metro|metros)?\b/i) ||
-    normalized.match(/\b(1[.,]\d{1,2}|2[.,]0{1,2})\s*(?:m|mt|mts|metro|metros)\b/i);
+    normalized.match(/(?:altura|estatura|mido)\s*:?\s*(1[.,:]\d{1,2}|2[.,:]\d{1,2})\s*(?:m|mt|mts|metro|metros)?\b/i) ||
+    normalized.match(/\b(1[.,:]\d{1,2}|2[.,:]\d{1,2})\s*(?:m|mt|mts|metro|metros)\b/i);
 
   if (explicitHeightMeters) {
     heightM = normalizeMeasurementNumber(explicitHeightMeters[1]);
