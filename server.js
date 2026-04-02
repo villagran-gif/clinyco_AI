@@ -4859,6 +4859,28 @@ app.post("/messages", async (req, res) => {
           } else if (stateField in (state.dealDraft || {})) {
             state.dealDraft[stateField] = value;
           }
+          // Recalculate measurements + BMI when peso/estatura change
+          const fieldLower = field.toLowerCase();
+          if (fieldLower === "peso" || fieldLower === "estatura") {
+            const rawNum = parseFloat(String(value).replace(",", "."));
+            if (!isNaN(rawNum)) {
+              if (fieldLower === "peso") {
+                state.measurements.weightKg = rawNum;
+                state.dealDraft.dealPeso = rawNum;
+              } else {
+                const hM = rawNum > 3 ? Math.round((rawNum / 100) * 100) / 100 : rawNum;
+                state.measurements.heightM = hM;
+                state.measurements.heightCm = Math.round(hM * 100);
+                state.dealDraft.dealEstatura = hM;
+              }
+              const w = state.measurements.weightKg;
+              const h = state.measurements.heightM;
+              if (w && h) {
+                state.measurements.bmi = calculateBMI(w, h);
+                state.measurements.bmiCategory = getBMICategory(state.measurements.bmi);
+              }
+            }
+          }
           state.leadScore = calculateLeadScore(state);
           console.log(`AGENT_CORRECTION field=${stateField} value=${value} conversationId=${conversationId}`);
         }
