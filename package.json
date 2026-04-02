@@ -8,6 +8,7 @@
     "start": "node server.js",
     "monitor:ai": "bash scripts/run-ai-observability.sh",
     "support:master": "node scripts/build-support-master-table.js",
+    "outcomes:sync": "node scripts/sync-outcomes.js",
     "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js",
     "preview:knowledge": "node scripts/preview-knowledge-row.js",
     "seed:customers": "node scripts/seed-customers-from-leads.js",
