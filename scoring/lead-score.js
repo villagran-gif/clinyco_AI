@@ -67,6 +67,17 @@ export function calculateLeadScore(state) {
     score += 10; reasons.push("pidió agendar(+10)");
   }
 
+  // ── Modalidad Fonasa especificada (+5) ──
+  if (state.contactDraft?.c_modalidad) { score += 5; reasons.push("modalidad(+5)"); }
+
+  // ── Nombre completo (+5) ──
+  if (state.contactDraft?.c_nombres && state.contactDraft?.c_apellidos) {
+    score += 5; reasons.push("nombre completo(+5)");
+  }
+
+  // ── Paciente recurrente (+5) ──
+  if (state.customerMemory?.isReturning === true) { score += 5; reasons.push("recurrente(+5)"); }
+
   const capped = Math.min(score, 100);
   const category = capped >= 70 ? "caliente" : capped >= 40 ? "tibio" : "frío";
   const emoji = capped >= 70 ? "🔴" : capped >= 40 ? "🟡" : "🔵";
