@@ -2869,6 +2869,42 @@ function inferBestNextAction(resolverDecision) {
   return "Continuar recopilando datos";
 }
 
+function parseStructuredAgentDirectives(text) {
+  const directives = [];
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const correctionMatch = line.match(/^CORREGIR:\s*([^=]+?)\s*=\s*(.+)$/i);
+    if (correctionMatch) {
+      directives.push({
+        type: "corregir",
+        field: correctionMatch[1].trim(),
+        value: correctionMatch[2].trim()
+      });
+      continue;
+    }
+
+    const pipelineMatch = line.match(/^PIPELINE:\s*(.+)$/i);
+    if (pipelineMatch) {
+      directives.push({
+        type: "pipeline",
+        value: pipelineMatch[1].trim()
+      });
+      continue;
+    }
+
+    const noteMatch = line.match(/^NOTA:\s*(.+)$/i);
+    if (noteMatch) {
+      directives.push({
+        type: "nota",
+        value: noteMatch[1].trim()
+      });
+    }
+  }
+  return directives;
+}
+
 const COPY_PASTE_MAP = {
   identity_min: "Hola! Para poder ayudarte mejor, ¿me compartes tu teléfono o correo electrónico?",
   dealInteres: "Cuéntame, ¿qué procedimiento o evaluación te interesa? Así te puedo orientar mejor \uD83D\uDE0A",
@@ -4840,59 +4876,22 @@ app.post("/messages", async (req, res) => {
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
 
-      // ── Agent corrections: CORREGIR: / PIPELINE: / NOTA: ──
+      // ── EugenIA observes structured agent directives, but never mutates Antonia state ──
       try {
-        const msgText = userText || "";
-        const corregirMatch = msgText.match(/CORREGIR:\s*(\w+)\s*=\s*(.+)/i);
-        if (corregirMatch) {
-          const field = corregirMatch[1].trim();
-          const value = corregirMatch[2].trim();
-          const fieldMap = {
-            peso: "dealPeso", estatura: "dealEstatura", email: "c_email",
-            telefono: "c_tel1", rut: "c_rut", nombres: "c_nombres",
-            apellidos: "c_apellidos", aseguradora: "c_aseguradora",
-            modalidad: "c_modalidad", interes: "dealInteres"
-          };
-          const stateField = fieldMap[field.toLowerCase()] || field;
-          if (stateField in (state.contactDraft || {})) {
-            state.contactDraft[stateField] = value;
-          } else if (stateField in (state.dealDraft || {})) {
-            state.dealDraft[stateField] = value;
-          }
-          // Recalculate measurements + BMI when peso/estatura change
-          const fieldLower = field.toLowerCase();
-          if (fieldLower === "peso" || fieldLower === "estatura") {
-            const rawNum = parseFloat(String(value).replace(",", "."));
-            if (!isNaN(rawNum)) {
-              if (fieldLower === "peso") {
-                state.measurements.weightKg = rawNum;
-                state.dealDraft.dealPeso = rawNum;
-              } else {
-                const hM = rawNum > 3 ? Math.round((rawNum / 100) * 100) / 100 : rawNum;
-                state.measurements.heightM = hM;
-                state.measurements.heightCm = Math.round(hM * 100);
-                state.dealDraft.dealEstatura = hM;
-              }
-              const w = state.measurements.weightKg;
-              const h = state.measurements.heightM;
-              if (w && h) {
-                state.measurements.bmi = calculateBMI(w, h);
-                state.measurements.bmiCategory = getBMICategory(state.measurements.bmi);
-              }
-            }
-          }
-          state.leadScore = calculateLeadScore(state);
-          console.log(`AGENT_CORRECTION field=${stateField} value=${value} conversationId=${conversationId}`);
-        }
-        const pipelineMatch = msgText.match(/PIPELINE:\s*(.+)/i);
-        if (pipelineMatch) {
-          const pVal = pipelineMatch[1].trim().toLowerCase();
-          const pipelineMap = { bariatrica: 1290779, balon: 4823817, plastica: 4959507, general: 5049979 };
-          const pId = pipelineMap[pVal.normalize("NFD").replace(/[\u0300-\u036f]/g, "")] || null;
-          if (pId) {
-            state.dealDraft.dealPipelineId = pId;
-            state.leadScore = calculateLeadScore(state);
-            console.log(`AGENT_PIPELINE_CORRECTION pipeline=${pVal} id=${pId} conversationId=${conversationId}`);
+        const directives = parseStructuredAgentDirectives(userText || "");
+        for (const directive of directives) {
+          if (directive.type === "corregir") {
+            console.log(
+              `EUGENIA_AGENT_DIRECTIVE type=corregir field=${directive.field} value=${directive.value} conversationId=${conversationId}`
+            );
+          } else if (directive.type === "pipeline") {
+            console.log(
+              `EUGENIA_AGENT_DIRECTIVE type=pipeline value=${directive.value} conversationId=${conversationId}`
+            );
+          } else if (directive.type === "nota") {
+            console.log(
+              `EUGENIA_AGENT_DIRECTIVE type=nota value=${directive.value} conversationId=${conversationId}`
+            );
           }
         }
       } catch (corrErr) {
