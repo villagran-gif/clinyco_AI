@@ -1,15 +1,6 @@
 import { createHash } from "node:crypto";
 import { inferBestNextAction } from "./prediction.js";
 
-const COPY_PASTE_MAP = {
-  identity_min: "Hola! Para poder ayudarte mejor, ¿me compartes tu teléfono o correo electrónico?",
-  dealInteres: "Cuéntame, ¿qué procedimiento o evaluación te interesa? Así te puedo orientar mejor 😊",
-  c_aseguradora: "¿Cuál es tu previsión de salud? Por ejemplo Fonasa, Banmédica, Cruz Blanca, Consalud o particular",
-  c_modalidad: "¿Me indicas tu tramo de Fonasa? Puede ser A, B, C o D",
-  dealPeso: "Para orientarte mejor necesito saber tu peso en kilos, ¿me lo puedes indicar?",
-  dealEstatura: "¿Y tu estatura? Puedes escribirla en metros, por ejemplo 1.70"
-};
-
 function leadScoreBadge(category) {
   if (category === "caliente") return "🔴";
   if (category === "tibio") return "🟡";
@@ -45,7 +36,6 @@ export function buildEugeniaInternalNote({ state, resolverDecision, previousScor
 
   const suggestedQuestion = resolverDecision?.question || "Sin pregunta sugerida";
   const missingFields = Array.isArray(resolverDecision?.missingFields) ? resolverDecision.missingFields : [];
-  const copyPaste = COPY_PASTE_MAP[missingFields[0] || ""] || "";
   const actionLabel = inferBestNextAction(resolverDecision);
 
   const body = [
@@ -53,8 +43,9 @@ export function buildEugeniaInternalNote({ state, resolverDecision, previousScor
     patientLine,
     `Lead Score: ${leadScoreLine}${delta}`,
     "",
-    `Pregunta sugerida: ${suggestedQuestion}`,
-    copyPaste ? `Versión para copiar y pegar:\n${copyPaste}` : "",
+    "Pregunta sugerida(copy, paste):",
+    "",
+    suggestedQuestion,
     "",
     `Acción sugerida: ${actionLabel}`,
     missingFields.length ? `Campos faltantes: ${missingFields.join(", ")}` : ""
