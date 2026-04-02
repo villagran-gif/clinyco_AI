@@ -19,7 +19,9 @@ import {
   upsertCustomer,
   linkConversationToCustomer,
   addCustomerChannel,
-  getCustomerSummaries
+  getCustomerSummaries,
+  trackLeadScoreChange,
+  getLeadScoreHistory
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -34,6 +36,13 @@ import {
   normalizeRut
 } from "./extraction/identity-normalizers.js";
 import { calculateLeadScore } from "./scoring/lead-score.js";
+import {
+  inferBestNextAction,
+  onHumanAgentMessage as onEugeniaHumanAgentMessage,
+  onMutedPatientMessage as onEugeniaMutedPatientMessage,
+  onTakeover as onEugeniaTakeover,
+  onTicketAuditsObserved as onEugeniaTicketAuditsObserved
+} from "./eugenia/index.js";
 import {
   searchSlotsViaApi,
   searchSlotsNoAuth,
@@ -2252,10 +2261,12 @@ async function syncLeadScoreToSupport(state, conversationId) {
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
+    const previousScore = state.leadScore?.score ?? 0;
     state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
     await syncLeadScoreToSupport(state, conversationId);
+    await trackLeadScoreChange(conversationId, state.leadScore, previousScore, channel || "message", state.system?.botMessagesSent || 0);
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
   }
@@ -2832,8 +2843,9 @@ function leadScoreBadge(category) {
 function formatLeadScoreSummary(leadScore) {
   const score = leadScore?.score ?? 0;
   const category = String(leadScore?.category || "frío").toUpperCase();
-  const badge = leadScoreBadge(leadScore?.category);
-  return `${badge} ${category} (${score})`;
+  const badge = leadScore?.emoji || leadScoreBadge(leadScore?.category);
+  const pipelinePrefix = leadScore?.pipeline ? `${leadScore.pipeline} ` : "";
+  return `${pipelinePrefix}${badge} ${category} (${score})`;
 }
 
 function formatLeadScoreDetail(leadScore) {
@@ -3328,7 +3340,10 @@ function buildStateSummary(state) {
   ];
 
   if (state.leadScore?.score > 0) {
-    parts.push(`[LEAD_SCORE] ${state.leadScore.category} (${state.leadScore.score}) — ${(state.leadScore.reasons || []).join(", ")}`);
+    const ls = state.leadScore;
+    const lsEmoji = ls.emoji || "";
+    const lsPipeline = ls.pipeline ? `${ls.pipeline}= ` : "";
+    parts.push(`${lsPipeline}[LEAD_SCORE] ${lsEmoji} ${ls.category.toUpperCase()} (${ls.score}) = ${(ls.reasons || []).join(", ")}`);
   }
 
   if (state.identity.sellSummary) {
@@ -4550,6 +4565,15 @@ app.get("/debug/health", requireDebugKey, async (req, res) => {
 
 
 
+app.get("/api/lead-score-history/:conversationId", requireDebugKey, async (req, res) => {
+  try {
+    const history = await getLeadScoreHistory(req.params.conversationId, parseInt(req.query.limit) || 50);
+    return res.json({ ok: true, count: history.length, history });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 app.get("/support-search-test", async (req, res) => {
   try {
     if (!ENABLE_SUPPORT_SEARCH) {
@@ -4674,6 +4698,25 @@ app.post("/ticket-assigned", async (req, res) => {
     await persistConversationSnapshot(conversationId, state, null);
     await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
+    // ── EugenIA Hook 1: PREDICT at takeover + first note ──
+    try {
+      const resolverForEugenia = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, "");
+      const resolverForNote = {
+        ...resolverForEugenia,
+        actionLabel: inferBestNextAction(resolverForEugenia)
+      };
+      await onEugeniaTakeover({
+        conversationId,
+        ticketId: ticketId || state.identity?.zendeskTicketId || null,
+        state,
+        resolverDecision: resolverForNote,
+        zendeskSupportPost,
+        logger: console
+      });
+    } catch (eugeniaErr) {
+      console.error("EUGENIA_PREDICT_ERROR:", eugeniaErr.message);
+    }
+
     return res.json({
       ok: true,
       event: event || "human_takeover",
@@ -4684,6 +4727,51 @@ app.post("/ticket-assigned", async (req, res) => {
     });
   } catch (error) {
     console.error("ERROR /ticket-assigned:", error.message);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/ticket-updated", async (req, res) => {
+  try {
+    console.log("===== /ticket-updated webhook =====");
+    console.log("Body:", safeJson(req.body));
+
+    const {
+      conversationId: conversation_id,
+      ticketId
+    } = extractZendeskTicketAssignment(req.body || {});
+
+    if (!ticketId) {
+      return res.status(400).json({ ok: false, error: "Missing ticket_id" });
+    }
+
+    let conversationId = conversation_id;
+    if (!conversationId) {
+      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
+    }
+
+    if (!conversationId) {
+      return res.status(400).json({ ok: false, error: "Missing conversation_id", ticket_id: ticketId });
+    }
+
+    await hydrateConversationCache(conversationId);
+    const audits = await fetchZendeskTicketAudits(ticketId);
+    const inserted = await onEugeniaTicketAuditsObserved({
+      conversationId,
+      ticketId,
+      audits,
+      logger: console
+    });
+
+    return res.json({
+      ok: true,
+      conversation_id: conversationId,
+      ticket_id: ticketId,
+      processed_audits: audits.length,
+      inserted_events: inserted
+    });
+  } catch (error) {
+    console.error("ERROR /ticket-updated:", error.message);
     return res.status(500).json({ ok: false, error: error.message });
   }
 });
@@ -4733,6 +4821,26 @@ app.post("/messages", async (req, res) => {
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
 
+      // ── EugenIA observes human agent comments but never mutates Antonia state ──
+      try {
+        const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, userText || "");
+        const resolverForObservation = {
+          ...resolverNext,
+          actionLabel: inferBestNextAction(resolverNext)
+        };
+        await onEugeniaHumanAgentMessage({
+          conversationId,
+          ticketId: state.identity?.zendeskTicketId || null,
+          text: userText || "",
+          sourcePublic: true,
+          state,
+          resolverDecision: resolverForObservation,
+          logger: console
+        });
+      } catch (corrErr) {
+        console.error("AGENT_CORRECTION_ERROR:", corrErr.message);
+      }
+
       await saveConversationEvent({
         conversationId,
         info,
@@ -4750,6 +4858,7 @@ app.post("/messages", async (req, res) => {
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
       await maybeSaveConversationSummary(conversationId, state, channelLabel);
+
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -4803,6 +4912,26 @@ app.post("/messages", async (req, res) => {
         resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
       });
       await persistConversationSnapshot(conversationId, state, channelLabel);
+
+      // ── EugenIA Hook 3: PREDICT on patient msg when ai_disabled + note every 2 msgs ──
+      try {
+        const resolverForP = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, userText || "");
+        const resolverForMutedPatient = {
+          ...resolverForP,
+          actionLabel: inferBestNextAction(resolverForP)
+        };
+        await onEugeniaMutedPatientMessage({
+          conversationId,
+          ticketId: state.identity?.zendeskTicketId || null,
+          state,
+          resolverDecision: resolverForMutedPatient,
+          zendeskSupportPost,
+          logger: console
+        });
+      } catch (eugeniaErr) {
+        console.error("EUGENIA_PREDICT_PATIENT_ERROR:", eugeniaErr.message);
+      }
+
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
