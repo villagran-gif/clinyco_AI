@@ -7,6 +7,7 @@
     "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium",
     "start": "node server.js",
     "monitor:ai": "bash scripts/run-ai-observability.sh",
+    "support:master": "node scripts/build-support-master-table.js",
     "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js",
     "preview:knowledge": "node scripts/preview-knowledge-row.js",
     "seed:customers": "node scripts/seed-customers-from-leads.js",
