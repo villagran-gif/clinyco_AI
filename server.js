@@ -4840,65 +4840,6 @@ app.post("/messages", async (req, res) => {
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
 
-      // ── Agent corrections: CORREGIR: / PIPELINE: / NOTA: ──
-      try {
-        const msgText = userText || "";
-        const corregirMatch = msgText.match(/CORREGIR:\s*(\w+)\s*=\s*(.+)/i);
-        if (corregirMatch) {
-          const field = corregirMatch[1].trim();
-          const value = corregirMatch[2].trim();
-          const fieldMap = {
-            peso: "dealPeso", estatura: "dealEstatura", email: "c_email",
-            telefono: "c_tel1", rut: "c_rut", nombres: "c_nombres",
-            apellidos: "c_apellidos", aseguradora: "c_aseguradora",
-            modalidad: "c_modalidad", interes: "dealInteres"
-          };
-          const stateField = fieldMap[field.toLowerCase()] || field;
-          if (stateField in (state.contactDraft || {})) {
-            state.contactDraft[stateField] = value;
-          } else if (stateField in (state.dealDraft || {})) {
-            state.dealDraft[stateField] = value;
-          }
-          // Recalculate measurements + BMI when peso/estatura change
-          const fieldLower = field.toLowerCase();
-          if (fieldLower === "peso" || fieldLower === "estatura") {
-            const rawNum = parseFloat(String(value).replace(",", "."));
-            if (!isNaN(rawNum)) {
-              if (fieldLower === "peso") {
-                state.measurements.weightKg = rawNum;
-                state.dealDraft.dealPeso = rawNum;
-              } else {
-                const hM = rawNum > 3 ? Math.round((rawNum / 100) * 100) / 100 : rawNum;
-                state.measurements.heightM = hM;
-                state.measurements.heightCm = Math.round(hM * 100);
-                state.dealDraft.dealEstatura = hM;
-              }
-              const w = state.measurements.weightKg;
-              const h = state.measurements.heightM;
-              if (w && h) {
-                state.measurements.bmi = calculateBMI(w, h);
-                state.measurements.bmiCategory = getBMICategory(state.measurements.bmi);
-              }
-            }
-          }
-          state.leadScore = calculateLeadScore(state);
-          console.log(`AGENT_CORRECTION field=${stateField} value=${value} conversationId=${conversationId}`);
-        }
-        const pipelineMatch = msgText.match(/PIPELINE:\s*(.+)/i);
-        if (pipelineMatch) {
-          const pVal = pipelineMatch[1].trim().toLowerCase();
-          const pipelineMap = { bariatrica: 1290779, balon: 4823817, plastica: 4959507, general: 5049979 };
-          const pId = pipelineMap[pVal.normalize("NFD").replace(/[\u0300-\u036f]/g, "")] || null;
-          if (pId) {
-            state.dealDraft.dealPipelineId = pId;
-            state.leadScore = calculateLeadScore(state);
-            console.log(`AGENT_PIPELINE_CORRECTION pipeline=${pVal} id=${pId} conversationId=${conversationId}`);
-          }
-        }
-      } catch (corrErr) {
-        console.error("AGENT_CORRECTION_ERROR:", corrErr.message);
-      }
-
       await saveConversationEvent({
         conversationId,
         info,
