@@ -24,7 +24,8 @@ import {
   insertPrediction,
   updateObservation,
   updateComparison,
-  getLatestPendingPredictions
+  getLatestPendingPredictions,
+  getLeadScoreHistory
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -4675,6 +4676,19 @@ app.get("/debug/health", requireDebugKey, async (req, res) => {
 });
 
 
+
+app.get("/api/lead-score-history/:conversationId", async (req, res) => {
+  try {
+    if (!dbEnabled()) return res.status(503).json({ ok: false, error: "DB disabled" });
+    const { conversationId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+    const history = await getLeadScoreHistory(conversationId, limit);
+    return res.json({ ok: true, conversationId, count: history.length, history });
+  } catch (error) {
+    console.error("ERROR /api/lead-score-history:", error.message);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
 
 app.get("/support-search-test", async (req, res) => {
   try {
