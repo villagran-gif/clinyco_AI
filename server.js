@@ -2211,6 +2211,86 @@ function inferBestNextAction(bestNext) {
   return "Continuar recopilando datos";
 }
 
+const CORRECTION_PREFIX_RE = /^(CORREGIR|PIPELINE|NOTA):/im;
+
+const PIPELINE_NAME_TO_ID = {
+  balon: 4823817, balón: 4823817, balones: 4823817,
+  bariatrica: 1290779, bariátrica: 1290779,
+  plastica: 4959507, plástica: 4959507,
+  general: 5049979
+};
+
+const CORRECTION_FIELD_MAP = {
+  peso: "dealDraft.dealPeso",
+  estatura: "dealDraft.dealEstatura",
+  email: "contactDraft.c_email",
+  telefono: "contactDraft.c_tel1",
+  teléfono: "contactDraft.c_tel1",
+  rut: "contactDraft.c_rut",
+  aseguradora: "contactDraft.c_aseguradora",
+  prevision: "contactDraft.c_aseguradora",
+  previsión: "contactDraft.c_aseguradora",
+  modalidad: "contactDraft.c_modalidad",
+  interes: "dealDraft.dealInteres",
+  interés: "dealDraft.dealInteres",
+  nombre: "contactDraft.c_nombres",
+  apellido: "contactDraft.c_apellidos"
+};
+
+function parseAgentCorrections(text) {
+  const corrections = [];
+  const lines = String(text || "").split("\n");
+  for (const line of lines) {
+    const corrMatch = line.match(/^CORREGIR:\s*(\w+)\s*=\s*(.+)/i);
+    if (corrMatch) {
+      corrections.push({ type: "field", field: corrMatch[1].toLowerCase().trim(), value: corrMatch[2].trim() });
+      continue;
+    }
+    const pipeMatch = line.match(/^PIPELINE:\s*(.+)/i);
+    if (pipeMatch) {
+      corrections.push({ type: "pipeline", value: pipeMatch[1].trim().toLowerCase() });
+      continue;
+    }
+    const noteMatch = line.match(/^NOTA:\s*(.+)/i);
+    if (noteMatch) {
+      corrections.push({ type: "note", value: noteMatch[1].trim() });
+    }
+  }
+  return corrections;
+}
+
+function applyCorrections(state, corrections) {
+  for (const c of corrections) {
+    if (c.type === "pipeline") {
+      const pipelineId = PIPELINE_NAME_TO_ID[c.value];
+      if (pipelineId) {
+        state.dealDraft.dealPipelineId = pipelineId;
+        console.log(`CORRECTION pipeline=${c.value} id=${pipelineId}`);
+      }
+    } else if (c.type === "note") {
+      if (!state.system.agentNotes) state.system.agentNotes = [];
+      state.system.agentNotes.push({ text: c.value, at: new Date().toISOString() });
+      console.log(`CORRECTION note="${c.value}"`);
+    } else if (c.type === "field") {
+      const path = CORRECTION_FIELD_MAP[c.field];
+      if (!path) { console.log(`CORRECTION unknown field=${c.field}`); continue; }
+      const [section, key] = path.split(".");
+      if (state[section]) {
+        state[section][key] = c.value;
+        console.log(`CORRECTION ${section}.${key}=${c.value}`);
+      }
+      if ((c.field === "peso" || c.field === "estatura") && state.measurements) {
+        if (c.field === "peso") state.measurements.weightKg = parseFloat(c.value) || null;
+        if (c.field === "estatura") state.measurements.heightM = parseFloat(c.value) || null;
+        if (state.measurements.weightKg && state.measurements.heightM) {
+          state.measurements.bmi = calculateBMI(state.measurements.weightKg, state.measurements.heightM);
+          state.measurements.bmiCategory = getBMICategory(state.measurements.bmi);
+        }
+      }
+    }
+  }
+}
+
 async function publishEugeniaNote(ticketId, state, bestNext, previousScore = null) {
   if (!ticketId) return;
   try {
@@ -4924,6 +5004,19 @@ app.post("/messages", async (req, res) => {
           missingFields: state?.identity?.lastMissingFields || []
         }
       });
+
+      // ── EugenIA: parse agent corrections (CORREGIR:/PIPELINE:/NOTA:) ──
+      try {
+        if (userText && CORRECTION_PREFIX_RE.test(userText)) {
+          const corrections = parseAgentCorrections(userText);
+          if (corrections.length > 0) {
+            applyCorrections(state, corrections);
+            console.log(`EUGENIA_CORRECTION conversationId=${conversationId} corrections=${corrections.length}`);
+          }
+        }
+      } catch (corrErr) {
+        console.error("EUGENIA_CORRECTION_ERROR:", corrErr.message);
+      }
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
       await maybeSaveConversationSummary(conversationId, state, channelLabel);
