@@ -20,7 +20,7 @@ async function maybePublishInternalNote({
   state,
   resolverDecision,
   previousScore,
-  zendeskSupportPost,
+  zendeskSupportPut,
   logger = console
 }) {
   if (!ticketId) return false;
@@ -36,7 +36,7 @@ async function maybePublishInternalNote({
     logger.log(`EUGENIA_NOTE_SKIPPED ticketId=${ticketId} reason=duplicate`);
     return false;
   }
-  await publishPrivateTicketNote({ zendeskSupportPost, ticketId, body });
+  await publishPrivateTicketNote({ zendeskSupportPut, ticketId, body });
   await markEugeniaTicketNotePublished(reservation.id);
   logger.log(`EUGENIA_NOTE ticketId=${ticketId} noteId=${reservation.id}`);
   return true;
@@ -82,7 +82,7 @@ export async function onTakeover({
   ticketId,
   state,
   resolverDecision,
-  zendeskSupportPost,
+  zendeskSupportPut,
   logger = console
 }) {
   await upsertDualPrediction({
@@ -98,7 +98,7 @@ export async function onTakeover({
     state,
     resolverDecision,
     previousScore: null,
-    zendeskSupportPost,
+    zendeskSupportPut,
     logger
   });
   logger.log(`EUGENIA_PREDICT conversationId=${conversationId} turn=1`);
@@ -158,7 +158,7 @@ export async function onMutedPatientMessage({
   ticketId,
   state,
   resolverDecision,
-  zendeskSupportPost,
+  zendeskSupportPut,
   logger = console
 }) {
   const pendingList = await getLatestPendingPredictions(conversationId);
@@ -180,7 +180,7 @@ export async function onMutedPatientMessage({
       state,
       resolverDecision,
       previousScore,
-      zendeskSupportPost,
+      zendeskSupportPut,
       logger
     });
   }
