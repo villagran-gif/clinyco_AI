@@ -1,13 +1,19 @@
 import {
+  completeEugeniaHelpSession,
+  getOpenEugeniaHelpSession,
   getLatestPendingPredictions,
   insertEugeniaDirective,
   insertEugeniaTicketEvent,
   insertPrediction,
+  markEugeniaHelpSessionPrompted,
   markEugeniaTicketNotePublished,
+  openEugeniaHelpSession,
   reserveEugeniaTicketNote,
   updateComparison,
   updateObservation
 } from "../db.js";
+import { appendEugeniaFeedbackRow, getEugeniaFeedbackSheetTab, getEugeniaFeedbackSheetUrl } from "./feedback-sheet.js";
+import { buildEugeniaHelpAckNote, buildEugeniaHelpPromptNote, isEugeniaHelpCommand } from "./help-feedback.js";
 import { parseStructuredAgentDirectives } from "./directives.js";
 import { buildEugeniaInternalNote } from "./note-builder.js";
 import { compareSuggestedActionToHumanText } from "./prediction.js";
@@ -192,6 +198,8 @@ export async function onTicketAuditsObserved({
   conversationId,
   ticketId,
   audits,
+  state,
+  zendeskSupportPut,
   logger = console
 }) {
   const events = extractCommentEventsFromAudits(audits);
@@ -230,6 +238,113 @@ export async function onTicketAuditsObserved({
         ` conversationId=${conversationId} auditId=${event.auditId}`
       );
     }
+
+    if (event.sourcePublic !== false || !event.authorId) continue;
+
+    const eventBody = String(event.body || "").trim();
+    if (!eventBody) continue;
+
+    if (isEugeniaHelpCommand(eventBody)) {
+      await insertEugeniaDirective({
+        conversationId,
+        ticketId,
+        sourceKind: "ticket_help_trigger",
+        sourcePublic: event.sourcePublic,
+        directiveType: "ayuda_eugenia",
+        parsedField: null,
+        parsedValue: eventBody,
+        rawText: eventBody
+      });
+
+      const session = await openEugeniaHelpSession({
+        conversationId,
+        ticketId,
+        agentAuthorId: event.authorId,
+        triggerAuditId: event.auditId,
+        triggerText: eventBody
+      });
+
+      const helpPrompt = buildEugeniaHelpPromptNote({
+        sheetUrl: getEugeniaFeedbackSheetUrl(),
+        sheetTab: getEugeniaFeedbackSheetTab()
+      });
+      await publishPrivateTicketNote({
+        zendeskSupportPut,
+        ticketId,
+        body: helpPrompt
+      });
+      if (session?.id) {
+        await markEugeniaHelpSessionPrompted(session.id);
+      }
+      logger.log(`EUGENIA_HELP_TRIGGER conversationId=${conversationId} ticketId=${ticketId} authorId=${event.authorId}`);
+      continue;
+    }
+
+    const openSession = await getOpenEugeniaHelpSession({
+      ticketId,
+      agentAuthorId: event.authorId
+    });
+    if (!openSession) continue;
+
+    let sheetTab = getEugeniaFeedbackSheetTab();
+    let sheetUrl = getEugeniaFeedbackSheetUrl();
+    let sheetRowNumber = null;
+    let syncedAt = null;
+    let syncError = null;
+
+    try {
+      const appended = await appendEugeniaFeedbackRow({
+        ticketId,
+        conversationId,
+        authorId: event.authorId,
+        feedbackText: eventBody,
+        state,
+        sourcePublic: event.sourcePublic
+      });
+      sheetTab = appended.sheetTab || sheetTab;
+      sheetUrl = appended.sheetUrl || sheetUrl;
+      sheetRowNumber = appended.rowNumber ?? null;
+      syncedAt = new Date().toISOString();
+    } catch (error) {
+      syncError = error.message;
+      logger.error(`EUGENIA_HELP_SYNC_ERROR ticketId=${ticketId} authorId=${event.authorId}: ${error.message}`);
+    }
+
+    await completeEugeniaHelpSession(openSession.id, {
+      feedbackAuditId: event.auditId,
+      feedbackText: eventBody,
+      sheetTab,
+      sheetUrl,
+      sheetRowNumber,
+      syncedAt,
+      syncError
+    });
+
+    await insertEugeniaDirective({
+      conversationId,
+      ticketId,
+      sourceKind: "ticket_help_feedback",
+      sourcePublic: event.sourcePublic,
+      directiveType: "ayuda_eugenia_feedback",
+      parsedField: null,
+      parsedValue: eventBody,
+      rawText: eventBody
+    });
+
+    await publishPrivateTicketNote({
+      zendeskSupportPut,
+      ticketId,
+      body: buildEugeniaHelpAckNote({
+        sheetUrl,
+        sheetTab,
+        synced: !syncError
+      })
+    });
+
+    logger.log(
+      `EUGENIA_HELP_CAPTURE conversationId=${conversationId} ticketId=${ticketId} authorId=${event.authorId}` +
+      ` synced=${syncError ? "false" : "true"}${sheetRowNumber ? ` row=${sheetRowNumber}` : ""}`
+    );
   }
 
   logger.log(`EUGENIA_TICKET_AUDITS conversationId=${conversationId} ticketId=${ticketId} inserted=${insertedCount}`);

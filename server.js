@@ -4755,11 +4755,14 @@ app.post("/ticket-updated", async (req, res) => {
     }
 
     await hydrateConversationCache(conversationId);
+    const state = getConversationState(conversationId);
     const audits = await fetchZendeskTicketAudits(ticketId);
     const inserted = await onEugeniaTicketAuditsObserved({
       conversationId,
       ticketId,
       audits,
+      state,
+      zendeskSupportPut,
       logger: console
     });
 
