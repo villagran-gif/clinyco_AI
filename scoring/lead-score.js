@@ -77,8 +77,8 @@ export function calculateLeadScore(state) {
     score += 5; reasons.push("nombre completo(+5)");
   }
 
-  // 15. Paciente recurrente (+10)
-  if (state.customerMemory?.isReturning) { score += 10; reasons.push("recurrente(+10)"); }
+  // 15. Paciente recurrente (+5)
+  if (state.customerMemory?.isReturning) { score += 5; reasons.push("recurrente(+5)"); }
 
   const capped = Math.min(score, 100);
   const category = capped >= 70 ? "caliente" : capped >= 40 ? "tibio" : "fr\u00EDo";
