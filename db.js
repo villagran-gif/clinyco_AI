@@ -405,6 +405,32 @@ export async function initDb() {
 
       create index if not exists eugenia_ticket_events_conversation_idx
       on eugenia_ticket_events (conversation_id, created_at desc);
+
+      create table if not exists eugenia_help_sessions (
+        id bigserial primary key,
+        conversation_id text not null,
+        ticket_id text not null,
+        agent_author_id text not null,
+        trigger_audit_id text not null,
+        trigger_text text not null,
+        prompt_published_at timestamptz,
+        feedback_audit_id text,
+        feedback_text text,
+        sheet_tab text,
+        sheet_url text,
+        sheet_row_number integer,
+        sheet_synced_at timestamptz,
+        sync_error text,
+        closed_at timestamptz,
+        created_at timestamptz not null default now()
+      );
+
+      create unique index if not exists eugenia_help_sessions_open_ticket_agent_idx
+      on eugenia_help_sessions (ticket_id, agent_author_id)
+      where closed_at is null;
+
+      create index if not exists eugenia_help_sessions_conversation_idx
+      on eugenia_help_sessions (conversation_id, created_at desc);
     `);
 
     console.log("Database ready");
@@ -1255,6 +1281,85 @@ export async function insertEugeniaTicketEvent({
      on conflict (ticket_id, audit_id, event_type) do nothing
      returning *`,
     [conversationId, ticketId, auditId, eventType, authorId || null, sourcePublic, body || null]
+  );
+  return rows[0] || null;
+}
+
+export async function openEugeniaHelpSession({
+  conversationId,
+  ticketId,
+  agentAuthorId,
+  triggerAuditId,
+  triggerText
+}) {
+  const { rows } = await getPool().query(
+    `insert into eugenia_help_sessions
+       (conversation_id, ticket_id, agent_author_id, trigger_audit_id, trigger_text)
+     values ($1, $2, $3, $4, $5)
+     on conflict (ticket_id, agent_author_id) where closed_at is null
+     do nothing
+     returning *`,
+    [conversationId, ticketId, agentAuthorId, triggerAuditId, triggerText]
+  );
+  return rows[0] || null;
+}
+
+export async function getOpenEugeniaHelpSession({ ticketId, agentAuthorId }) {
+  const { rows } = await getPool().query(
+    `select *
+     from eugenia_help_sessions
+     where ticket_id = $1
+       and agent_author_id = $2
+       and closed_at is null
+     order by created_at desc
+     limit 1`,
+    [ticketId, agentAuthorId]
+  );
+  return rows[0] || null;
+}
+
+export async function markEugeniaHelpSessionPrompted(sessionId) {
+  const { rows } = await getPool().query(
+    `update eugenia_help_sessions
+     set prompt_published_at = now()
+     where id = $1
+     returning *`,
+    [sessionId]
+  );
+  return rows[0] || null;
+}
+
+export async function completeEugeniaHelpSession(sessionId, {
+  feedbackAuditId,
+  feedbackText,
+  sheetTab,
+  sheetUrl,
+  sheetRowNumber,
+  syncedAt,
+  syncError
+}) {
+  const { rows } = await getPool().query(
+    `update eugenia_help_sessions
+     set feedback_audit_id = $2,
+         feedback_text = $3,
+         sheet_tab = $4,
+         sheet_url = $5,
+         sheet_row_number = $6,
+         sheet_synced_at = $7,
+         sync_error = $8,
+         closed_at = now()
+     where id = $1
+     returning *`,
+    [
+      sessionId,
+      feedbackAuditId || null,
+      feedbackText || null,
+      sheetTab || null,
+      sheetUrl || null,
+      sheetRowNumber ?? null,
+      syncedAt || null,
+      syncError || null
+    ]
   );
   return rows[0] || null;
 }

@@ -242,3 +242,29 @@ on eugenia_ticket_events (ticket_id, audit_id, event_type);
 
 create index if not exists eugenia_ticket_events_conversation_idx
 on eugenia_ticket_events (conversation_id, created_at desc);
+
+create table if not exists eugenia_help_sessions (
+  id bigserial primary key,
+  conversation_id text not null,
+  ticket_id text not null,
+  agent_author_id text not null,
+  trigger_audit_id text not null,
+  trigger_text text not null,
+  prompt_published_at timestamptz,
+  feedback_audit_id text,
+  feedback_text text,
+  sheet_tab text,
+  sheet_url text,
+  sheet_row_number integer,
+  sheet_synced_at timestamptz,
+  sync_error text,
+  closed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists eugenia_help_sessions_open_ticket_agent_idx
+on eugenia_help_sessions (ticket_id, agent_author_id)
+where closed_at is null;
+
+create index if not exists eugenia_help_sessions_conversation_idx
+on eugenia_help_sessions (conversation_id, created_at desc);
