@@ -182,9 +182,63 @@ create table if not exists eugenia_predictions (
   created_at timestamptz not null default now()
 );
 
+create unique index if not exists eugenia_predictions_unique_turn_type_idx
+on eugenia_predictions (conversation_id, turn_number, prediction_type);
+
 create index if not exists eugenia_predictions_conversation_turn_idx
 on eugenia_predictions (conversation_id, turn_number);
 
 create index if not exists eugenia_predictions_gold_idx
 on eugenia_predictions (is_gold_sample)
 where is_gold_sample = true;
+
+create table if not exists eugenia_ticket_notes (
+  id bigserial primary key,
+  conversation_id text not null,
+  ticket_id text not null,
+  turn_number integer,
+  note_fingerprint text not null,
+  note_body text not null,
+  published_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists eugenia_ticket_notes_ticket_fingerprint_idx
+on eugenia_ticket_notes (ticket_id, note_fingerprint);
+
+create index if not exists eugenia_ticket_notes_conversation_idx
+on eugenia_ticket_notes (conversation_id, created_at desc);
+
+create table if not exists eugenia_directives (
+  id bigserial primary key,
+  conversation_id text not null,
+  ticket_id text,
+  source_kind text not null default 'ticket_comment',
+  source_public boolean,
+  directive_type text not null,
+  parsed_field text,
+  parsed_value text,
+  raw_text text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists eugenia_directives_conversation_idx
+on eugenia_directives (conversation_id, created_at desc);
+
+create table if not exists eugenia_ticket_events (
+  id bigserial primary key,
+  conversation_id text not null,
+  ticket_id text not null,
+  audit_id text not null,
+  event_type text not null,
+  author_id text,
+  source_public boolean,
+  body text,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists eugenia_ticket_events_ticket_audit_event_idx
+on eugenia_ticket_events (ticket_id, audit_id, event_type);
+
+create index if not exists eugenia_ticket_events_conversation_idx
+on eugenia_ticket_events (conversation_id, created_at desc);
