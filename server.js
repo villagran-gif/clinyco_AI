@@ -19,7 +19,13 @@ import {
   upsertCustomer,
   linkConversationToCustomer,
   addCustomerChannel,
-  getCustomerSummaries
+  getCustomerSummaries,
+  trackLeadScoreChange,
+  getLeadScoreHistory,
+  insertPrediction,
+  updateObservation,
+  updateComparison,
+  getLatestPendingPredictions
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -2252,10 +2258,12 @@ async function syncLeadScoreToSupport(state, conversationId) {
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
+    const previousScore = state.leadScore?.score ?? 0;
     state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
     await syncLeadScoreToSupport(state, conversationId);
+    await trackLeadScoreChange(conversationId, state.leadScore, previousScore, channel || "message", state.system?.botMessagesSent || 0);
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
   }
@@ -2832,8 +2840,9 @@ function leadScoreBadge(category) {
 function formatLeadScoreSummary(leadScore) {
   const score = leadScore?.score ?? 0;
   const category = String(leadScore?.category || "frío").toUpperCase();
-  const badge = leadScoreBadge(leadScore?.category);
-  return `${badge} ${category} (${score})`;
+  const badge = leadScore?.emoji || leadScoreBadge(leadScore?.category);
+  const pipelinePrefix = leadScore?.pipeline ? `${leadScore.pipeline} ` : "";
+  return `${pipelinePrefix}${badge} ${category} (${score})`;
 }
 
 function formatLeadScoreDetail(leadScore) {
@@ -2841,6 +2850,71 @@ function formatLeadScoreDetail(leadScore) {
   const reasons = Array.isArray(leadScore?.reasons) ? leadScore.reasons.filter(Boolean) : [];
   if (!reasons.length) return summary;
   return `${summary} = ${reasons.join(", ")}`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// EugenIA — inferBestNextAction + publishEugeniaNote
+// ══════════════════════════════════════════════════════════════
+
+function inferBestNextAction(resolverDecision) {
+  const stage = resolverDecision?.resolved?.stage || "";
+  const nextAction = resolverDecision?.nextAction || "";
+  if (stage === "ready_for_handoff" || stage === "handoff_without_call") return "Derivar a coordinación humana";
+  if (stage === "schedule_request") return "Buscar horas en Medinet";
+  if (stage === "awaiting_measurements") return "Solicitar peso y estatura";
+  if (nextAction === "derive_or_send_web") return "Derivar a agente o enviar link agenda web";
+  if (nextAction === "schedule") return "Ofrecer agendar evaluación";
+  if (nextAction === "collect_ficha") return "Recopilar ficha clínica";
+  if (resolverDecision?.shouldDerive) return "Derivar a agente humano";
+  return "Continuar recopilando datos";
+}
+
+const COPY_PASTE_MAP = {
+  identity_min: "Hola! Para poder ayudarte mejor, ¿me compartes tu teléfono o correo electrónico?",
+  dealInteres: "Cuéntame, ¿qué procedimiento o evaluación te interesa? Así te puedo orientar mejor \uD83D\uDE0A",
+  c_aseguradora: "¿Cuál es tu previsión de salud? Por ejemplo Fonasa, Banmédica, Cruz Blanca, Consalud o particular",
+  c_modalidad: "¿Me indicas tu tramo de Fonasa? Puede ser A, B, C o D",
+  dealPeso: "Para orientarte mejor necesito saber tu peso en kilos, ¿me lo puedes indicar?",
+  dealEstatura: "¿Y tu estatura? Puedes escribirla en metros, por ejemplo 1.70"
+};
+
+async function publishEugeniaNote(ticketId, state, resolverDecision, previousScore) {
+  if (!ticketId) return;
+  try {
+    const ls = state.leadScore || {};
+    const lsLine = formatLeadScoreDetail(ls);
+    const deltaStr = previousScore != null ? ` (delta ${(ls.score || 0) - previousScore >= 0 ? "+" : ""}${(ls.score || 0) - previousScore})` : "";
+
+    const contactName = [state.contactDraft?.c_nombres, state.contactDraft?.c_apellidos].filter(Boolean).join(" ");
+    const patientLine = contactName
+      ? `Paciente: ${contactName}${state.contactDraft?.c_tel1 ? " | " + state.contactDraft.c_tel1 : ""}${state.contactDraft?.c_email ? " | " + state.contactDraft.c_email : ""}`
+      : "Paciente: nuevo (sin datos aún)";
+
+    const suggestedQ = resolverDecision?.question || "Sin pregunta sugerida";
+    const missingFields = resolverDecision?.missingFields || [];
+    const firstMissing = missingFields[0] || "";
+    const copyPaste = COPY_PASTE_MAP[firstMissing] || "";
+    const actionLabel = inferBestNextAction(resolverDecision);
+
+    const lines = [
+      "--- EugenIA (nota interna) ---",
+      patientLine,
+      `Lead Score: ${lsLine}${deltaStr}`,
+      "",
+      `Pregunta sugerida: ${suggestedQ}`,
+      copyPaste ? `Versión para copiar y pegar:\n${copyPaste}` : "",
+      "",
+      `Acción sugerida: ${actionLabel}`,
+      missingFields.length ? `Campos faltantes: ${missingFields.join(", ")}` : ""
+    ].filter(Boolean).join("\n");
+
+    await zendeskSupportPost(`/api/v2/tickets/${ticketId}/comments.json`, {
+      ticket: { comment: { body: lines, public: false } }
+    });
+    console.log(`EUGENIA_NOTE ticketId=${ticketId} score=${ls.score || 0}`);
+  } catch (error) {
+    console.error("EUGENIA_NOTE_ERROR:", error.message);
+  }
 }
 
 function extractZendeskTicketAssignment(payload = {}) {
@@ -3328,7 +3402,10 @@ function buildStateSummary(state) {
   ];
 
   if (state.leadScore?.score > 0) {
-    parts.push(`[LEAD_SCORE] ${state.leadScore.category} (${state.leadScore.score}) — ${(state.leadScore.reasons || []).join(", ")}`);
+    const ls = state.leadScore;
+    const lsEmoji = ls.emoji || "";
+    const lsPipeline = ls.pipeline ? `${ls.pipeline}= ` : "";
+    parts.push(`${lsPipeline}[LEAD_SCORE] ${lsEmoji} ${ls.category.toUpperCase()} (${ls.score}) = ${(ls.reasons || []).join(", ")}`);
   }
 
   if (state.identity.sellSummary) {
@@ -4550,6 +4627,15 @@ app.get("/debug/health", requireDebugKey, async (req, res) => {
 
 
 
+app.get("/api/lead-score-history/:conversationId", requireDebugKey, async (req, res) => {
+  try {
+    const history = await getLeadScoreHistory(req.params.conversationId, parseInt(req.query.limit) || 50);
+    return res.json({ ok: true, count: history.length, history });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 app.get("/support-search-test", async (req, res) => {
   try {
     if (!ENABLE_SUPPORT_SEARCH) {
@@ -4674,6 +4760,27 @@ app.post("/ticket-assigned", async (req, res) => {
     await persistConversationSnapshot(conversationId, state, null);
     await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
 
+    // ── EugenIA Hook 1: PREDICT at takeover + first note ──
+    try {
+      const resolverForEugenia = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, "");
+      const actionLabel = inferBestNextAction(resolverForEugenia);
+      const commonPred = {
+        conversationId,
+        turnNumber: 1,
+        leadScoreAtPrediction: state.leadScore?.score || 0,
+        pipeline: state.leadScore?.pipeline || null
+      };
+      await insertPrediction({ ...commonPred, predictionType: "question", aiSuggestedAction: resolverForEugenia.question || "Sin pregunta" });
+      await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel });
+      const ticketIdForNote = ticketId || state.identity?.zendeskTicketId;
+      if (ticketIdForNote) {
+        await publishEugeniaNote(ticketIdForNote, state, resolverForEugenia, null);
+      }
+      console.log(`EUGENIA_PREDICT conversationId=${conversationId} turn=1`);
+    } catch (eugeniaErr) {
+      console.error("EUGENIA_PREDICT_ERROR:", eugeniaErr.message);
+    }
+
     return res.json({
       ok: true,
       event: event || "human_takeover",
@@ -4733,6 +4840,43 @@ app.post("/messages", async (req, res) => {
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
 
+      // ── Agent corrections: CORREGIR: / PIPELINE: / NOTA: ──
+      try {
+        const msgText = userText || "";
+        const corregirMatch = msgText.match(/CORREGIR:\s*(\w+)\s*=\s*(.+)/i);
+        if (corregirMatch) {
+          const field = corregirMatch[1].trim();
+          const value = corregirMatch[2].trim();
+          const fieldMap = {
+            peso: "dealPeso", estatura: "dealEstatura", email: "c_email",
+            telefono: "c_tel1", rut: "c_rut", nombres: "c_nombres",
+            apellidos: "c_apellidos", aseguradora: "c_aseguradora",
+            modalidad: "c_modalidad", interes: "dealInteres"
+          };
+          const stateField = fieldMap[field.toLowerCase()] || field;
+          if (stateField in (state.contactDraft || {})) {
+            state.contactDraft[stateField] = value;
+          } else if (stateField in (state.dealDraft || {})) {
+            state.dealDraft[stateField] = value;
+          }
+          state.leadScore = calculateLeadScore(state);
+          console.log(`AGENT_CORRECTION field=${stateField} value=${value} conversationId=${conversationId}`);
+        }
+        const pipelineMatch = msgText.match(/PIPELINE:\s*(.+)/i);
+        if (pipelineMatch) {
+          const pVal = pipelineMatch[1].trim().toLowerCase();
+          const pipelineMap = { bariatrica: 1290779, balon: 4823817, plastica: 4959507, general: 5049979 };
+          const pId = pipelineMap[pVal.normalize("NFD").replace(/[\u0300-\u036f]/g, "")] || null;
+          if (pId) {
+            state.dealDraft.dealPipelineId = pId;
+            state.leadScore = calculateLeadScore(state);
+            console.log(`AGENT_PIPELINE_CORRECTION pipeline=${pVal} id=${pId} conversationId=${conversationId}`);
+          }
+        }
+      } catch (corrErr) {
+        console.error("AGENT_CORRECTION_ERROR:", corrErr.message);
+      }
+
       await saveConversationEvent({
         conversationId,
         info,
@@ -4750,6 +4894,32 @@ app.post("/messages", async (req, res) => {
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
       await maybeSaveConversationSummary(conversationId, state, channelLabel);
+
+      // ── EugenIA Hook 2: OBSERVE + COMPARE on business msg ──
+      try {
+        const pendingList = await getLatestPendingPredictions(conversationId);
+        for (const pending of pendingList) {
+          await updateObservation(pending.id, { humanActualAction: userText || "" });
+          const aiWords = new Set(String(pending.ai_suggested_action || "").toLowerCase().split(/\s+/).filter(w => w.length > 3));
+          const humanWords = String(userText || "").toLowerCase().split(/\s+/).filter(w => w.length > 3);
+          const sharedWords = humanWords.filter(w => aiWords.has(w));
+          const matchScore = Math.min(sharedWords.length / Math.max(aiWords.size, humanWords.length, 1), 1);
+          const matchType = matchScore >= 0.6 ? "same_intent" : matchScore >= 0.3 ? "partial_match" : "different_topic";
+          await updateComparison(pending.id, { matchType, matchScore: Math.round(matchScore * 100) / 100 });
+        }
+        // Next dual prediction
+        const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, userText || "");
+        const actionLabel = inferBestNextAction(resolverNext);
+        const maxTurn = pendingList.reduce((m, p) => Math.max(m, p.turn_number || 0), 0);
+        const nextTurn = maxTurn + 1;
+        const commonPred = { conversationId, turnNumber: nextTurn, leadScoreAtPrediction: state.leadScore?.score || 0, pipeline: state.leadScore?.pipeline || null };
+        await insertPrediction({ ...commonPred, predictionType: "question", aiSuggestedAction: resolverNext.question || "Sin pregunta" });
+        await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel });
+        console.log(`EUGENIA_OBSERVE conversationId=${conversationId} observed=${pendingList.length} nextTurn=${nextTurn}`);
+      } catch (eugeniaErr) {
+        console.error("EUGENIA_OBSERVE_ERROR:", eugeniaErr.message);
+      }
+
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -4803,6 +4973,27 @@ app.post("/messages", async (req, res) => {
         resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
       });
       await persistConversationSnapshot(conversationId, state, channelLabel);
+
+      // ── EugenIA Hook 3: PREDICT on patient msg when ai_disabled + note every 2 msgs ──
+      try {
+        const resolverForP = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, userText || "");
+        const actionLabel = inferBestNextAction(resolverForP);
+        const prevPending = await getLatestPendingPredictions(conversationId);
+        const maxT = prevPending.reduce((m, p) => Math.max(m, p.turn_number || 0), 0);
+        const turnNum = maxT + 1;
+        const prevScore = state.leadScore?.score || 0;
+        const commonPred = { conversationId, turnNumber: turnNum, leadScoreAtPrediction: prevScore, pipeline: state.leadScore?.pipeline || null };
+        await insertPrediction({ ...commonPred, predictionType: "question", aiSuggestedAction: resolverForP.question || "Sin pregunta" });
+        await insertPrediction({ ...commonPred, predictionType: "action", aiSuggestedAction: actionLabel });
+        const ticketId = state.identity?.zendeskTicketId;
+        if (ticketId && turnNum % 2 === 0) {
+          await publishEugeniaNote(ticketId, state, resolverForP, prevScore);
+        }
+        console.log(`EUGENIA_PREDICT_ON_PATIENT_MSG conversationId=${conversationId} turn=${turnNum}`);
+      } catch (eugeniaErr) {
+        console.error("EUGENIA_PREDICT_PATIENT_ERROR:", eugeniaErr.message);
+      }
+
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
