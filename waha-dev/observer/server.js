@@ -49,8 +49,8 @@ app.post("/waha-webhook", async (req, res) => {
     return res.json({ ok: true, event: "session.status" });
   }
 
-  // Only process message events
-  if (event !== "message") {
+  // Only process message events (message = received, message.any = sent + received)
+  if (event !== "message" && event !== "message.any") {
     console.log(`[webhook] Ignoring event: ${event}`);
     return res.json({ ok: true, event, ignored: true });
   }
