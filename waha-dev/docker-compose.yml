@@ -1,0 +1,40 @@
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: clinyco-waha
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - WHATSAPP_API_KEY=${WAHA_API_KEY}
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
+      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook
+      - WHATSAPP_HOOK_EVENTS=message,session.status
+    volumes:
+      - waha_sessions:/app/.sessions
+    networks:
+      - clinyco-dev
+    restart: unless-stopped
+
+  observer:
+    build: ./observer
+    container_name: clinyco-agent-observer
+    ports:
+      - "127.0.0.1:3001:3001"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - clinyco-dev
+    depends_on:
+      - waha
+    restart: unless-stopped
+
+volumes:
+  waha_sessions:
+
+networks:
+  clinyco-dev:
+    driver: bridge
