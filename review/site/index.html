@@ -82,6 +82,35 @@
       font-size: .75rem; font-weight: 700; text-transform: uppercase;
       letter-spacing: 1px; color: #94a3b8; margin: 1.5rem 0 .5rem;
     }
+    /* Help popup */
+    .help-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 50%; background: #e2e8f0;
+      color: #475569; font-size: .7rem; font-weight: 700; cursor: pointer;
+      border: none; margin-left: .4rem; vertical-align: middle;
+      transition: background .2s;
+    }
+    .help-btn:hover { background: #2563eb; color: #fff; }
+    .help-overlay {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,.5); z-index: 999; justify-content: center; align-items: center;
+    }
+    .help-overlay.open { display: flex; }
+    .help-card {
+      background: #fff; border-radius: 16px; padding: 2rem; max-width: 500px;
+      width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    }
+    .help-card h3 { margin-top: 0; color: #1e293b; }
+    .help-card p { color: #475569; line-height: 1.6; font-size: .9rem; }
+    .help-card .example {
+      background: #f1f5f9; border-radius: 8px; padding: .8rem;
+      margin: .8rem 0; font-size: .85rem; color: #334155;
+    }
+    .help-card .close-help {
+      display: block; margin-top: 1rem; padding: .5rem 1.5rem;
+      background: var(--clinyco-blue); color: #fff; border: none;
+      border-radius: 8px; cursor: pointer; font-weight: 600;
+    }
     @media (max-width: 768px) {
       .chart-row { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
@@ -132,21 +161,21 @@
       <div class="kpi-grid" id="eug-kpis"></div>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Precision semanal (match score)</h3>
+          <h3>Precision semanal (match score) <button class="help-btn" onclick="showHelp('eug-precision')" title="Ayuda">?</button></h3>
           <canvas id="chart-eug-trends"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Distribucion de match types</h3>
+          <h3>Distribucion de match types <button class="help-btn" onclick="showHelp('eug-donut')" title="Ayuda">?</button></h3>
           <canvas id="chart-eug-donut"></canvas>
         </div>
       </div>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Acciones sugeridas por outcome</h3>
+          <h3>Acciones sugeridas por outcome <button class="help-btn" onclick="showHelp('eug-actions')" title="Ayuda">?</button></h3>
           <canvas id="chart-eug-actions"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Gold Samples</h3>
+          <h3>Gold Samples <button class="help-btn" onclick="showHelp('eug-gold')" title="Ayuda">?</button></h3>
           <div style="max-height:350px;overflow:auto">
             <table id="table-gold" role="grid">
               <thead><tr>
@@ -167,7 +196,7 @@
     <div id="wa-content" style="display:none">
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Senales de venta por dia <span class="source-tag source-waha">WAHA</span></h3>
+          <h3>Senales de venta por dia <span class="source-tag source-waha">WAHA</span> <button class="help-btn" onclick="showHelp('wa-signals')" title="Ayuda">?</button></h3>
           <canvas id="chart-wa-signals"></canvas>
         </div>
         <div class="chart-box">
@@ -194,11 +223,11 @@
       <p class="section-label">Sentiment de pacientes (lo que escriben al bot/agente)</p>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Senales de compra pacientes por dia <span class="source-tag source-zendesk">Zendesk</span></h3>
+          <h3>Senales de compra pacientes por dia <span class="source-tag source-zendesk">Zendesk</span> <button class="help-btn" onclick="showHelp('zd-signals')" title="Ayuda">?</button></h3>
           <canvas id="chart-zd-signals"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Conversaciones — Sentiment paciente</h3>
+          <h3>Conversaciones — Sentiment paciente <button class="help-btn" onclick="showHelp('zd-sentiment')" title="Ayuda">?</button></h3>
           <div style="max-height:400px;overflow:auto">
             <table id="table-zd-conversations" role="grid">
               <thead><tr>
@@ -220,11 +249,11 @@
     <div id="dl-content" style="display:none">
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Deals por agente — Tasa de exito</h3>
+          <h3>Deals por agente — Tasa de exito <button class="help-btn" onclick="showHelp('deals-agents')" title="Ayuda">?</button></h3>
           <canvas id="chart-deals-agents"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Distribucion de fases (global)</h3>
+          <h3>Distribucion de fases (global) <button class="help-btn" onclick="showHelp('deals-phases')" title="Ayuda">?</button></h3>
           <canvas id="chart-deals-phases"></canvas>
         </div>
       </div>
@@ -243,7 +272,7 @@
       </div>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Comisiones por agente (CLP)</h3>
+          <h3>Comisiones por agente (CLP) <button class="help-btn" onclick="showHelp('commissions')" title="Ayuda">?</button></h3>
           <canvas id="chart-commissions"></canvas>
         </div>
         <div class="chart-box">
@@ -267,7 +296,7 @@
     <div id="ag-loading" class="loading">Cargando agentes...</div>
     <div id="ag-content" style="display:none">
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Equipo Clinyco — Resumen</h3>
+        <h3>Equipo Clinyco — Resumen <button class="help-btn" onclick="showHelp('agents-summary')" title="Ayuda">?</button></h3>
         <div style="max-height:400px;overflow:auto">
           <table id="table-agents" role="grid">
             <thead><tr>
@@ -281,7 +310,7 @@
         </div>
       </div>
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Deals por mes por agente</h3>
+        <h3>Deals por mes por agente <button class="help-btn" onclick="showHelp('agents-monthly')" title="Ayuda">?</button></h3>
         <canvas id="chart-agents-monthly"></canvas>
       </div>
       <div class="chart-box" style="margin-bottom:2rem">
@@ -679,8 +708,98 @@ async function loadAgents() {
   } catch (err) { document.getElementById("ag-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
+// ═══════════ HELP POPUPS ═══════════
+const HELP = {
+  'eug-precision': {
+    title: 'Precision semanal',
+    text: 'Muestra semana a semana que tan bien predice EugenIA lo que el agente humano va a hacer. El "Match Score" va de 0 a 1: mas cerca de 1, mejor predice.',
+    example: 'Si el Match Score es 0.6, significa que en el 60% de los casos EugenIA sugirio algo parecido a lo que el agente hizo.'
+  },
+  'eug-donut': {
+    title: 'Distribucion de match types',
+    text: 'Cada vez que un agente responde, EugenIA compara su sugerencia con lo que el agente hizo. Hay 3 resultados posibles:',
+    example: '<b>Same Intent (verde):</b> EugenIA y el agente pensaron igual.<br><b>Partial Match (amarillo):</b> Parecido pero no exacto.<br><b>Different Topic (rojo):</b> El agente hizo algo completamente diferente.'
+  },
+  'eug-actions': {
+    title: 'Acciones sugeridas por outcome',
+    text: 'Ranking de las acciones que EugenIA sugiere, ordenadas por que tan bien les fue a los deals despues. Un outcome alto significa que el deal avanzo bien.',
+    example: 'Si "Derivar a coordinacion" tiene outcome 80, significa que cuando EugenIA sugirio eso, los deals terminaron bien (cerrados/operados).'
+  },
+  'eug-gold': {
+    title: 'Gold Samples',
+    text: 'Son los casos mas valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay algo interesante que estudiar.',
+    example: '<b>high_match_good_outcome:</b> EugenIA acerto y el deal fue exitoso (refuerzo positivo).<br><b>low_match_good_outcome:</b> El agente hizo algo diferente y funciono mejor (aprender del humano).'
+  },
+  'wa-signals': {
+    title: 'Senales de venta (WAHA)',
+    text: 'Los mensajes de WhatsApp directo se analizan buscando palabras clave que indican la intencion del paciente.',
+    example: '<b>Buying:</b> "cuanto cuesta", "me interesa", "quiero agendar"<br><b>Objection:</b> "es muy caro", "lo voy a pensar"<br><b>Commitment:</b> "listo", "dale", "perfecto"'
+  },
+  'zd-signals': {
+    title: 'Senales de pacientes (Zendesk)',
+    text: 'Analisis de lo que los pacientes escriben al bot Antonia o al agente via Zendesk. Detecta intenciones de compra, objeciones y compromisos.',
+    example: 'Si un paciente escribe "cuanto sale la cirugia?", se detecta como Buying Signal. Si dice "es muy caro", es Objection Signal.'
+  },
+  'zd-sentiment': {
+    title: 'Sentiment de pacientes',
+    text: 'Mide si los mensajes del paciente son positivos, negativos o neutros. Se analiza el texto y los emojis que usan.',
+    example: '<b>Verde (> 0.2):</b> Paciente contento, usa palabras positivas o emojis felices.<br><b>Rojo (< -0.2):</b> Paciente molesto o preocupado.<br><b>Amarillo:</b> Neutro.'
+  },
+  'deals-agents': {
+    title: 'Deals por agente',
+    text: 'Muestra cuantos deals (tratos) maneja cada agente y cuantos llegaron a buen termino. Los exitosos son: CERRADO OPERADO, CERRADO AGENDADO y CERRADO INSTALADO.',
+    example: 'Si Gabriela tiene 1919 deals y 600 exitosos, su tasa de exito es 31.3%. Significa que de cada 3 pacientes que atiende, 1 llega a operarse o agendarse.'
+  },
+  'deals-phases': {
+    title: 'Distribucion de fases',
+    text: 'Muestra en que etapa estan todos los deals. Lo ideal es que la mayoria esten en fases verdes (cerrados exitosamente).',
+    example: '<b>Verde = Exito:</b> CERRADO OPERADO, AGENDADO, INSTALADO.<br><b>Rojo = Perdido:</b> SIN RESPUESTA.<br><b>Gris = En proceso:</b> EXAMENES, CANDIDATO, etc.'
+  },
+  'commissions': {
+    title: 'Comisiones por agente',
+    text: 'Cada deal exitoso genera comisiones en pesos chilenos (CLP) para los agentes que participaron en las 3 fases del proceso. Si el deal se cerro en 75 dias o menos desde que entro, se paga un bono extra.',
+    example: 'Si Gabriela capto un paciente (Fase 1) y Carolin lo siguio (Fase 2) y cerro (Fase 3), Gabriela gana la comision BAR1 y Carolin gana BAR2+BAR3. Si se opero en menos de 75 dias, ambas ganan ademas BAR4, BAR5, BAR6.'
+  },
+  'agents-monthly': {
+    title: 'Deals por mes por agente',
+    text: 'Grafico que muestra cuantos deals nuevos entro cada agente cada mes. Permite ver tendencias: si un agente esta captando mas o menos pacientes que antes.',
+    example: 'Si en enero Gabriela entro 100 deals y en marzo entro 50, puede indicar que necesita mas leads o que se redistribuyeron las cargas.'
+  },
+  'agents-summary': {
+    title: 'Resumen del equipo',
+    text: 'Tabla con todos los agentes registrados. Muestra sus deals, tasa de exito, comisiones totales en CLP, y actividad en WhatsApp directo (WAHA).',
+    example: 'La columna "Tasa" es el porcentaje de deals que llegan a CERRADO. La columna "Comision CLP" es el total ganado por participar como colaborador en deals exitosos.'
+  },
+};
+
+function showHelp(key) {
+  const h = HELP[key];
+  if (!h) return;
+  document.getElementById('help-title').textContent = h.title;
+  document.getElementById('help-text').textContent = '';
+  document.getElementById('help-text').innerHTML = h.text;
+  document.getElementById('help-example').innerHTML = h.example;
+  document.getElementById('help-overlay').classList.add('open');
+}
+function closeHelp() {
+  document.getElementById('help-overlay').classList.remove('open');
+}
+function hb(key) {
+  return `<button class="help-btn" onclick="showHelp('${key}')" title="Ayuda">?</button>`;
+}
+
 // ── Init ──
 loadDashboard();
 </script>
+
+<!-- Help popup overlay -->
+<div id="help-overlay" class="help-overlay" onclick="if(event.target===this)closeHelp()">
+  <div class="help-card">
+    <h3 id="help-title"></h3>
+    <p id="help-text"></p>
+    <div class="example" id="help-example"></div>
+    <button class="close-help" onclick="closeHelp()">Entendido</button>
+  </div>
+</div>
 </body>
 </html>
