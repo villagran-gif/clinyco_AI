@@ -22,6 +22,8 @@ import {
   zendeskSentimentDetail,
   registeredAgents,
   dealsPerMonthPerAgent,
+  dealsPerYearPerAgent,
+  agentPhaseParticipation,
   dealsSummary,
   dealsPerAgent,
   dealsForAgent,
@@ -243,6 +245,20 @@ router.get(
   "/agents/monthly",
   wrap(async (_req, res) => {
     res.json(await dealsPerMonthPerAgent());
+  })
+);
+
+router.get(
+  "/agents/yearly",
+  wrap(async (_req, res) => {
+    res.json(await dealsPerYearPerAgent());
+  })
+);
+
+router.get(
+  "/agents/phases",
+  wrap(async (_req, res) => {
+    res.json(await agentPhaseParticipation());
   })
 );
 

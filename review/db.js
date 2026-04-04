@@ -480,20 +480,78 @@ export async function registeredAgents() {
   return rows;
 }
 
-/** Deals per month per agent (owner) */
+/** Deals per month per agent (owner) — ONLY active agents from registry */
 export async function dealsPerMonthPerAgent() {
   const { rows } = await getPool().query(`
-    SELECT date_trunc('month', added_at)::date AS month,
-           owner_name,
+    SELECT date_trunc('month', d.added_at)::date AS month,
+           d.owner_name,
            count(*)::int AS total_deals,
-           count(*) FILTER (WHERE pipeline_phase IN (
+           count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS exitosos,
-           count(*) FILTER (WHERE pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta
-    FROM deals
-    WHERE added_at IS NOT NULL AND owner_name IS NOT NULL
+           count(*) FILTER (WHERE d.pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta
+    FROM deals d
+    JOIN agent_registry ar ON ar.canonical_name = d.owner_name
+    WHERE d.added_at IS NOT NULL AND ar.is_active = true
     GROUP BY 1, 2
     ORDER BY 1 DESC, total_deals DESC
+  `);
+  return rows;
+}
+
+/** Annual deals per active agent — for ranking chart */
+export async function dealsPerYearPerAgent() {
+  const { rows } = await getPool().query(`
+    SELECT EXTRACT(YEAR FROM d.added_at)::int AS year,
+           d.owner_name,
+           count(*)::int AS total_deals,
+           count(*) FILTER (WHERE d.pipeline_phase IN (
+             'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+           ))::int AS exitosos
+    FROM deals d
+    JOIN agent_registry ar ON ar.canonical_name = d.owner_name
+    WHERE d.added_at IS NOT NULL AND ar.is_active = true
+    GROUP BY 1, 2
+    ORDER BY 1, total_deals DESC
+  `);
+  return rows;
+}
+
+/**
+ * Agent participation by phase (colaborador1/2/3).
+ * Shows who captured (fase 1), who followed up (fase 2), who closed (fase 3).
+ * Only counts deals where the agent name matches a registered agent's first name.
+ */
+export async function agentPhaseParticipation() {
+  const { rows } = await getPool().query(`
+    WITH active_names AS (
+      SELECT canonical_name, split_part(canonical_name, ' ', 1) AS first_name
+      FROM agent_registry WHERE is_active = true
+    )
+    SELECT an.canonical_name AS agent,
+           COALESCE(f1.cnt, 0)::int AS fase1_captacion,
+           COALESCE(f1.exitosos, 0)::int AS fase1_exitosos,
+           COALESCE(f2.cnt, 0)::int AS fase2_seguimiento,
+           COALESCE(f2.exitosos, 0)::int AS fase2_exitosos,
+           COALESCE(f3.cnt, 0)::int AS fase3_cierre,
+           COALESCE(f3.exitosos, 0)::int AS fase3_exitosos
+    FROM active_names an
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS cnt,
+             count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals WHERE colaborador1 = an.first_name
+    ) f1 ON true
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS cnt,
+             count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals WHERE colaborador2 = an.first_name
+    ) f2 ON true
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS cnt,
+             count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals WHERE colaborador3 = an.first_name
+    ) f3 ON true
+    ORDER BY fase1_captacion DESC
   `);
   return rows;
 }

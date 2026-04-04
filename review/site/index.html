@@ -309,34 +309,54 @@
   <div id="tab-agents" class="tab-content">
     <div id="ag-loading" class="loading">Cargando agentes...</div>
     <div id="ag-content" style="display:none">
+      <!-- 1. Summary table -->
       <div class="chart-box" style="margin-bottom:2rem">
         <h3>Equipo Clinyco — Resumen <button class="help-btn" onclick="showHelp('agents-summary')" title="Ayuda">?</button></h3>
         <div style="max-height:400px;overflow:auto">
           <table id="table-agents" role="grid">
             <thead><tr>
-              <th>Agente</th><th>Rol</th><th>WhatsApp</th>
+              <th>Agente</th><th>Rol</th>
               <th>Deals</th><th>Exitosos</th><th>Tasa</th>
               <th>Comision CLP</th>
-              <th>WAHA Conv.</th><th>WAHA Msgs</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
+
+      <!-- 2. Annual ranking (click year to drill down) -->
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Deals por mes por agente <button class="help-btn" onclick="showHelp('agents-monthly')" title="Ayuda">?</button></h3>
-        <canvas id="chart-agents-monthly"></canvas>
+        <h3>Ranking anual de deals por agente <button class="help-btn" onclick="showHelp('agents-monthly')" title="Ayuda">?</button></h3>
+        <div style="margin-bottom:.8rem">
+          <span id="year-buttons" style="display:flex;gap:.5rem;flex-wrap:wrap"></span>
+        </div>
+        <canvas id="chart-agents-annual"></canvas>
+      </div>
+
+      <!-- 3. Phase participation -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Participacion por fase <button class="help-btn" onclick="showHelp('agent-phases')" title="Ayuda">?</button></h3>
+        <canvas id="chart-agents-phases"></canvas>
       </div>
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Detalle mensual</h3>
-        <div style="max-height:500px;overflow:auto">
-          <table id="table-agents-monthly" role="grid">
+        <h3>Detalle por fase</h3>
+        <div style="max-height:400px;overflow:auto">
+          <table id="table-phases" role="grid">
             <thead><tr>
-              <th>Mes</th><th>Agente</th><th>Total Deals</th><th>Exitosos</th><th>Sin Resp.</th>
+              <th>Agente</th>
+              <th>Fase 1 (Captacion)</th><th>F1 Exitosos</th>
+              <th>Fase 2 (Seguimiento)</th><th>F2 Exitosos</th>
+              <th>Fase 3 (Cierre)</th><th>F3 Exitosos</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
+      </div>
+
+      <!-- 4. Monthly drill-down (hidden until year clicked) -->
+      <div id="monthly-drilldown" class="chart-box" style="margin-bottom:2rem;display:none">
+        <h3 id="monthly-drilldown-title">Detalle mensual</h3>
+        <canvas id="chart-agents-monthly"></canvas>
       </div>
     </div>
   </div>
@@ -668,76 +688,156 @@ async function loadDeals() {
 // ═══════════ AGENTS ═══════════
 async function loadAgents() {
   try {
-    const [agents, monthly] = await Promise.all([
-      api("/agents"), api("/agents/monthly"),
+    const [agents, yearly, phases, monthly] = await Promise.all([
+      api("/agents"), api("/agents/yearly"), api("/agents/phases"), api("/agents/monthly"),
     ]);
 
     const roleBadge = r => r === 'owner' ? '<span class="badge badge-purple">Owner</span>' : '<span class="badge badge-green">Agente</span>';
     const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+    const COLORS = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2"];
 
-    // Summary table
+    // 1. Summary table
     document.querySelector("#table-agents tbody").innerHTML = agents.map(a => {
       const tasaClass = a.tasa_exito >= 30 ? 'badge-green' : a.tasa_exito >= 15 ? 'badge-amber' : 'badge-red';
       return `<tr>
         <td><strong>${a.canonical_name}</strong><br><small style="color:#94a3b8">${a.email || ''}</small></td>
         <td>${roleBadge(a.role)}</td>
-        <td><small>${a.waha_phone || '—'}</small></td>
         <td>${a.total_deals}</td>
         <td>${a.deals_exitosos}</td>
         <td><span class="badge ${tasaClass}">${a.tasa_exito}%</span></td>
         <td>${fmtCLP(a.comision_total_clp)}</td>
-        <td>${a.waha_conversations}</td><td>${a.waha_messages}</td>
       </tr>`;
     }).join("");
 
-    // Monthly chart
-    if (monthly.length) {
-      // Get unique months and agents
-      const months = [...new Set(monthly.map(m => m.month))].sort();
-      const agentNames = [...new Set(monthly.map(m => m.owner_name))];
-      const colors = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2","#ec4899","#84cc16","#f97316","#6366f1"];
+    // 2. Annual ranking — year buttons + bar chart
+    const years = [...new Set(yearly.map(r => r.year))].sort();
+    const btnContainer = document.getElementById('year-buttons');
+    // Store data globally for drill-down
+    window._yearlyData = yearly;
+    window._monthlyData = monthly;
+    window._annualChart = null;
+    window._monthlyChart = null;
 
-      // Build datasets per agent
-      const datasets = agentNames.slice(0, 10).map((name, i) => {
-        const data = months.map(mo => {
-          const row = monthly.find(m => m.month === mo && m.owner_name === name);
-          return row ? row.total_deals : 0;
-        });
-        return { label: name, data, backgroundColor: colors[i % colors.length], borderColor: colors[i % colors.length], tension: .3 };
-      });
+    btnContainer.innerHTML = years.map(y =>
+      `<button style="padding:.4rem .8rem;border:2px solid #2563eb;border-radius:6px;background:${y === years[years.length-1] ? '#2563eb' : '#fff'};color:${y === years[years.length-1] ? '#fff' : '#2563eb'};font-weight:700;cursor:pointer;font-size:.85rem" onclick="renderAnnualChart(${y})">${y}</button>`
+    ).join('');
 
-      const monthLabels = months.map(m => {
-        const d = new Date(m);
-        return d.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
-      });
+    // Render latest year by default
+    if (years.length) renderAnnualChart(years[years.length - 1]);
 
-      new Chart(document.getElementById("chart-agents-monthly"), {
+    // 3. Phase participation chart + table
+    if (phases.length) {
+      const activePhases = phases.filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0);
+      new Chart(document.getElementById("chart-agents-phases"), {
         type: "bar",
-        data: { labels: monthLabels, datasets },
-        options: {
-          responsive: true,
-          scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
-          plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } }
-        }
+        data: {
+          labels: activePhases.map(p => p.agent),
+          datasets: [
+            { label: "Fase 1: Captacion", data: activePhases.map(p => p.fase1_captacion), backgroundColor: "#2563eb" },
+            { label: "Fase 2: Seguimiento", data: activePhases.map(p => p.fase2_seguimiento), backgroundColor: "#d97706" },
+            { label: "Fase 3: Cierre", data: activePhases.map(p => p.fase3_cierre), backgroundColor: "#16a34a" },
+          ]
+        },
+        options: { responsive: true, plugins: { legend: { position: "bottom" } } }
       });
 
-      // Monthly detail table
-      document.querySelector("#table-agents-monthly tbody").innerHTML = monthly.map(m => {
-        const d = new Date(m.month);
-        const mesLabel = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
-        return `<tr>
-          <td>${mesLabel}</td>
-          <td><strong>${m.owner_name}</strong></td>
-          <td>${m.total_deals}</td>
-          <td><span class="badge badge-green">${m.exitosos}</span></td>
-          <td><span class="badge badge-red">${m.sin_respuesta}</span></td>
-        </tr>`;
-      }).join("");
+      document.querySelector("#table-phases tbody").innerHTML = activePhases.map(p => `<tr>
+        <td><strong>${p.agent}</strong></td>
+        <td>${p.fase1_captacion}</td><td><span class="badge badge-green">${p.fase1_exitosos}</span></td>
+        <td>${p.fase2_seguimiento}</td><td><span class="badge badge-green">${p.fase2_exitosos}</span></td>
+        <td>${p.fase3_cierre}</td><td><span class="badge badge-green">${p.fase3_exitosos}</span></td>
+      </tr>`).join("");
     }
     document.getElementById("ag-loading").style.display = "none";
     document.getElementById("ag-content").style.display = "block";
     window._agentsLoaded = true;
   } catch (err) { document.getElementById("ag-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ ANNUAL CHART + DRILL-DOWN ═══════════
+function renderAnnualChart(year) {
+  const COLORS = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2"];
+  const data = window._yearlyData.filter(r => r.year === year);
+  // Sort by total_deals descending (ranking)
+  data.sort((a, b) => b.total_deals - a.total_deals);
+
+  // Update button styles
+  document.querySelectorAll('#year-buttons button').forEach(btn => {
+    const isActive = btn.textContent == year;
+    btn.style.background = isActive ? '#2563eb' : '#fff';
+    btn.style.color = isActive ? '#fff' : '#2563eb';
+  });
+
+  // Destroy previous chart
+  if (window._annualChart) window._annualChart.destroy();
+
+  window._annualChart = new Chart(document.getElementById("chart-agents-annual"), {
+    type: "bar",
+    data: {
+      labels: data.map(d => d.owner_name),
+      datasets: [
+        { label: "Total Deals", data: data.map(d => d.total_deals), backgroundColor: data.map((_, i) => COLORS[i % COLORS.length]) },
+        { label: "Exitosos", data: data.map(d => d.exitosos), backgroundColor: "#16a34a88" },
+      ]
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      onClick: (_evt, _el) => { renderMonthlyDrilldown(year); },
+      plugins: {
+        legend: { position: "bottom" },
+        title: { display: true, text: `Ranking ${year} — Click para ver detalle mensual`, font: { size: 13 } }
+      },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+
+  // Auto-show monthly drill-down
+  renderMonthlyDrilldown(year);
+}
+
+function renderMonthlyDrilldown(year) {
+  const COLORS = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2"];
+  const monthly = window._monthlyData.filter(r => {
+    const d = new Date(r.month);
+    return d.getFullYear() === year;
+  });
+  if (!monthly.length) {
+    document.getElementById('monthly-drilldown').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('monthly-drilldown').style.display = 'block';
+  document.getElementById('monthly-drilldown-title').textContent = `Detalle mensual ${year}`;
+
+  const months = [...new Set(monthly.map(m => m.month))].sort();
+  const agentNames = [...new Set(monthly.map(m => m.owner_name))];
+  // Sort agents by total deals in this year
+  const agentTotals = {};
+  monthly.forEach(m => { agentTotals[m.owner_name] = (agentTotals[m.owner_name] || 0) + m.total_deals; });
+  agentNames.sort((a, b) => (agentTotals[b] || 0) - (agentTotals[a] || 0));
+
+  const datasets = agentNames.map((name, i) => ({
+    label: name,
+    data: months.map(mo => {
+      const row = monthly.find(m => m.month === mo && m.owner_name === name);
+      return row ? row.total_deals : 0;
+    }),
+    backgroundColor: COLORS[i % COLORS.length],
+  }));
+
+  const labels = months.map(m => new Date(m).toLocaleDateString('es-CL', { month: 'short' }));
+
+  if (window._monthlyChart) window._monthlyChart.destroy();
+  window._monthlyChart = new Chart(document.getElementById("chart-agents-monthly"), {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+      plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } }
+    }
+  });
 }
 
 // ═══════════ HELP POPUPS ═══════════
@@ -839,6 +939,12 @@ const HELP = {
     text: 'Cuantos deals nuevos entro cada agente cada mes. Permite ver tendencias de captacion y carga de trabajo.',
     example: 'Si Gabriela paso de 100 deals/mes a 50, puede indicar menos leads asignados o redistribucion de cargas.',
     ref: 'Agrupacion por fecha "Agregado el" de <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>.'
+  },
+  'agent-phases': {
+    title: 'Participacion por fase',
+    text: 'Cada deal tiene 3 fases donde puede participar un agente diferente. Fase 1 = Captacion (quien trajo al paciente). Fase 2 = Seguimiento (quien lo acompano). Fase 3 = Cierre (quien cerro la venta).',
+    example: '<b>Fase 1 es la mas importante</b> porque sin captacion no hay pacientes. Si un agente tiene alta Fase 1 pero baja Fase 3, es buena captando pero necesita ayuda para cerrar.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> — Colaborador 1/2/3 en Zendesk Sell.'
   },
   'agents-summary': {
     title: 'Resumen del equipo',
