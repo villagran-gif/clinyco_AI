@@ -21,7 +21,8 @@ import {
   addCustomerChannel,
   getCustomerSummaries,
   trackLeadScoreChange,
-  getLeadScoreHistory
+  getLeadScoreHistory,
+  getEmojiSentimentBatch
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -44,6 +45,7 @@ import {
   onTicketAuditsObserved as onEugeniaTicketAuditsObserved
 } from "./eugenia/index.js";
 import reviewRouter from "./review/router.js";
+import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
 import {
   searchSlotsViaApi,
   searchSlotsNoAuth,
@@ -2274,9 +2276,17 @@ async function persistConversationSnapshot(conversationId, state, channel = null
   }
 }
 
-async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null }) {
+async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null, authorDisplayName = null }) {
   if (!dbEnabled()) return true;
   try {
+    // Run sentiment analysis on message content
+    let analysis = {};
+    try {
+      analysis = await analyzeSentiment(content, getEmojiSentimentBatch);
+    } catch (err) {
+      console.error("SENTIMENT_ANALYSIS_ERROR:", err.message);
+    }
+
     return await insertConversationMessage({
       conversationId,
       role,
@@ -2284,7 +2294,15 @@ async function persistConversationMessage({ conversationId, role, messageId = nu
       channel,
       sourceType,
       content,
-      rawJson
+      rawJson,
+      emojiList: analysis.emojiList || null,
+      emojiCount: analysis.emojiCount || 0,
+      emojiSentimentAvg: analysis.emojiSentimentAvg,
+      textSentimentScore: analysis.textSentimentScore,
+      wordCount: analysis.wordCount || 0,
+      hasQuestion: analysis.hasQuestion || false,
+      detectedSignals: analysis.detectedSignals?.length ? analysis.detectedSignals : null,
+      authorDisplayName
     });
   } catch (error) {
     console.error("DB MESSAGE ERROR:", error.message);
@@ -2658,7 +2676,8 @@ async function claimInboundUserMessage({ conversationId, messageId, channel, sou
       channel,
       sourceType,
       content,
-      rawJson
+      rawJson,
+      authorDisplayName: rawJson?.author?.displayName || null
     });
     return true;
   }
@@ -2758,7 +2777,8 @@ async function sendManagedReply({
     channel: channelLabel,
     sourceType: "api:conversations",
     content: finalReply,
-    rawJson: { kind, resolverDecision }
+    rawJson: { kind, resolverDecision },
+    authorDisplayName: "Antonia"
   });
   await saveConversationEvent({
     conversationId,

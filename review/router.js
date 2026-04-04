@@ -17,6 +17,11 @@ import {
   whatsappSignals,
   whatsappAgents,
   whatsappMetrics,
+  zendeskSentiment,
+  zendeskSignals,
+  zendeskAgents,
+  zendeskSentimentDetail,
+  consolidatedAgents,
   dashboardSummary,
 } from "./db.js";
 
@@ -153,6 +158,53 @@ router.get(
     const id = parseInt(req.params.conversationId);
     if (!id) return res.status(400).json({ error: "invalid conversationId" });
     res.json(await whatsappMetrics(id));
+  })
+);
+
+// ═══════════════════════════════════════════════════════════════════
+//  ZENDESK (WhatsApp via Zendesk — agents by usuario)
+// ═══════════════════════════════════════════════════════════════════
+
+router.get(
+  "/zendesk/sentiment",
+  wrap(async (req, res) => {
+    const days = Math.min(parseInt(req.query.days) || 30, 365);
+    res.json(await zendeskSentiment(days));
+  })
+);
+
+router.get(
+  "/zendesk/sentiment/:conversationId",
+  wrap(async (req, res) => {
+    const id = req.params.conversationId;
+    if (!id) return res.status(400).json({ error: "invalid conversationId" });
+    res.json(await zendeskSentimentDetail(id));
+  })
+);
+
+router.get(
+  "/zendesk/signals",
+  wrap(async (req, res) => {
+    const days = Math.min(parseInt(req.query.days) || 30, 365);
+    res.json(await zendeskSignals(days));
+  })
+);
+
+router.get(
+  "/zendesk/agents",
+  wrap(async (_req, res) => {
+    res.json(await zendeskAgents());
+  })
+);
+
+// ═══════════════════════════════════════════════════════════════════
+//  CONSOLIDATED (both sources)
+// ═══════════════════════════════════════════════════════════════════
+
+router.get(
+  "/agents",
+  wrap(async (_req, res) => {
+    res.json(await consolidatedAgents());
   })
 );
 

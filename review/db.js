@@ -228,7 +228,145 @@ export async function whatsappMetrics(conversationId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  DASHBOARD — Consolidated summary
+//  ZENDESK — WhatsApp messages via Zendesk (conversation_messages)
+//  Agents identified by author_display_name (usuario)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Zendesk conversation sentiment — per conversation with agent author */
+export async function zendeskSentiment(days = 30) {
+  const { rows } = await getPool().query(
+    `SELECT c.conversation_id,
+            c.channel,
+            cust.nombres AS customer_nombres, cust.apellidos AS customer_apellidos,
+            count(m.id)::int AS message_count,
+            count(DISTINCT m.author_display_name) FILTER (WHERE m.role = 'assistant') AS agent_count,
+            (array_agg(DISTINCT m.author_display_name) FILTER (WHERE m.role = 'assistant' AND m.author_display_name IS NOT NULL))[1] AS agent_name,
+            round(avg(m.text_sentiment_score)::numeric, 3) AS avg_text_sentiment,
+            round(avg(m.emoji_sentiment_avg)::numeric, 3)  AS avg_emoji_sentiment,
+            count(*) FILTER (WHERE 'buying_signal'     = ANY(m.detected_signals))::int AS buying,
+            count(*) FILTER (WHERE 'objection_signal'  = ANY(m.detected_signals))::int AS objections,
+            count(*) FILTER (WHERE 'commitment_signal' = ANY(m.detected_signals))::int AS commitments,
+            count(*) FILTER (WHERE 'referral_signal'   = ANY(m.detected_signals))::int AS referrals,
+            count(*) FILTER (WHERE 'urgency_signal'    = ANY(m.detected_signals))::int AS urgency
+     FROM conversations c
+     LEFT JOIN customers cust ON cust.id = c.customer_id
+     JOIN conversation_messages m ON m.conversation_id = c.conversation_id
+     WHERE m.created_at >= now() - ($1 || ' days')::interval
+     GROUP BY c.conversation_id, c.channel, cust.nombres, cust.apellidos
+     ORDER BY max(m.created_at) DESC`,
+    [days]
+  );
+  return rows;
+}
+
+/** Zendesk signal trends by day */
+export async function zendeskSignals(days = 30) {
+  const { rows } = await getPool().query(
+    `SELECT date_trunc('day', m.created_at)::date AS day,
+            count(*) FILTER (WHERE 'buying_signal'     = ANY(m.detected_signals))::int AS buying,
+            count(*) FILTER (WHERE 'objection_signal'  = ANY(m.detected_signals))::int AS objections,
+            count(*) FILTER (WHERE 'commitment_signal' = ANY(m.detected_signals))::int AS commitments,
+            count(*) FILTER (WHERE 'referral_signal'   = ANY(m.detected_signals))::int AS referrals,
+            count(*) FILTER (WHERE 'urgency_signal'    = ANY(m.detected_signals))::int AS urgency
+     FROM conversation_messages m
+     WHERE m.created_at >= now() - ($1 || ' days')::interval
+       AND m.detected_signals IS NOT NULL
+     GROUP BY 1 ORDER BY 1`,
+    [days]
+  );
+  return rows;
+}
+
+/** Zendesk agent performance — by author_display_name (usuario) */
+export async function zendeskAgents() {
+  const { rows } = await getPool().query(`
+    SELECT m.author_display_name AS agent_name,
+           'zendesk' AS source,
+           count(DISTINCT m.conversation_id)::int AS conversations,
+           count(*)::int AS total_messages,
+           round(avg(m.text_sentiment_score)::numeric, 3) AS avg_text_sentiment,
+           round(avg(m.emoji_sentiment_avg)::numeric, 3) AS avg_emoji_sentiment,
+           count(*) FILTER (WHERE 'buying_signal'    = ANY(m.detected_signals))::int AS buying_signals,
+           count(*) FILTER (WHERE 'objection_signal' = ANY(m.detected_signals))::int AS objection_signals
+    FROM conversation_messages m
+    WHERE m.author_display_name IS NOT NULL
+      AND m.author_display_name != 'Antonia'
+      AND m.role = 'user'
+    GROUP BY m.author_display_name
+    ORDER BY conversations DESC
+  `);
+  return rows;
+}
+
+/** Sentiment detail for a single Zendesk conversation */
+export async function zendeskSentimentDetail(conversationId) {
+  const { rows } = await getPool().query(
+    `SELECT id, role, author_display_name, content,
+            emoji_list, emoji_count,
+            round(emoji_sentiment_avg::numeric, 3) AS emoji_sentiment_avg,
+            round(text_sentiment_score::numeric, 3) AS text_sentiment_score,
+            detected_signals, has_question, word_count, created_at
+     FROM conversation_messages
+     WHERE conversation_id = $1
+     ORDER BY created_at ASC`,
+    [conversationId]
+  );
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CONSOLIDATED — Agents from both sources
+// ═══════════════════════════════════════════════════════════════════
+
+/** All agents consolidated: WAHA (by phone) + Zendesk (by usuario) */
+export async function consolidatedAgents() {
+  const { rows } = await getPool().query(`
+    -- WAHA agents (by phone)
+    SELECT s.agent_name,
+           s.agent_phone AS identifier,
+           'waha' AS source,
+           count(DISTINCT c.id)::int AS conversations,
+           sum(c.message_count)::int AS total_messages,
+           round(avg(sub.avg_text)::numeric, 3) AS avg_text_sentiment,
+           round(avg(sub.avg_emoji)::numeric, 3) AS avg_emoji_sentiment,
+           round(avg(sub.buying)::numeric, 1) AS avg_buying,
+           round(avg(sub.objections)::numeric, 1) AS avg_objections
+    FROM agent_waha_sessions s
+    JOIN agent_direct_conversations c ON c.session_name = s.session_name
+    JOIN LATERAL (
+      SELECT avg(m.text_sentiment_score) AS avg_text,
+             avg(m.emoji_sentiment_avg)  AS avg_emoji,
+             count(*) FILTER (WHERE 'buying_signal'    = ANY(m.detected_signals)) AS buying,
+             count(*) FILTER (WHERE 'objection_signal' = ANY(m.detected_signals)) AS objections
+      FROM agent_direct_messages m WHERE m.conversation_id = c.id
+    ) sub ON true
+    GROUP BY s.agent_name, s.agent_phone
+
+    UNION ALL
+
+    -- Zendesk agents (by usuario)
+    SELECT m.author_display_name AS agent_name,
+           m.author_display_name AS identifier,
+           'zendesk' AS source,
+           count(DISTINCT m.conversation_id)::int AS conversations,
+           count(*)::int AS total_messages,
+           round(avg(m.text_sentiment_score)::numeric, 3) AS avg_text_sentiment,
+           round(avg(m.emoji_sentiment_avg)::numeric, 3) AS avg_emoji_sentiment,
+           (count(*) FILTER (WHERE 'buying_signal' = ANY(m.detected_signals)))::numeric AS avg_buying,
+           (count(*) FILTER (WHERE 'objection_signal' = ANY(m.detected_signals)))::numeric AS avg_objections
+    FROM conversation_messages m
+    WHERE m.author_display_name IS NOT NULL
+      AND m.author_display_name != 'Antonia'
+      AND m.role = 'user'
+    GROUP BY m.author_display_name
+
+    ORDER BY conversations DESC
+  `);
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DASHBOARD — Consolidated summary (both sources)
 // ═══════════════════════════════════════════════════════════════════
 
 export async function dashboardSummary() {
@@ -253,7 +391,7 @@ export async function dashboardSummary() {
       (SELECT count(*)::int FROM eugenia_help_sessions
        WHERE feedback_text IS NOT NULL)                             AS ep_feedback_sessions,
 
-      -- WhatsApp Observer
+      -- WhatsApp WAHA (direct agent)
       (SELECT count(*)::int FROM agent_direct_conversations)        AS wa_conversations,
       (SELECT count(*)::int FROM agent_direct_messages)             AS wa_messages,
       (SELECT count(*)::int FROM agent_waha_sessions
@@ -274,7 +412,31 @@ export async function dashboardSummary() {
        WHERE 'referral_signal' = ANY(detected_signals))             AS wa_referral_signals,
       (SELECT count(*)::int FROM agent_direct_messages
        WHERE 'urgency_signal' = ANY(detected_signals))              AS wa_urgency_signals,
-      (SELECT count(*)::int FROM agent_behavior_metrics)            AS wa_total_metrics
+      (SELECT count(*)::int FROM agent_behavior_metrics)            AS wa_total_metrics,
+
+      -- WhatsApp Zendesk (bot + agent via Zendesk)
+      (SELECT count(DISTINCT conversation_id)::int
+       FROM conversation_messages)                                  AS zd_conversations,
+      (SELECT count(*)::int FROM conversation_messages)             AS zd_messages,
+      (SELECT count(DISTINCT author_display_name)::int
+       FROM conversation_messages
+       WHERE role = 'user' AND author_display_name IS NOT NULL)     AS zd_unique_users,
+      (SELECT round(avg(text_sentiment_score)::numeric, 3)
+       FROM conversation_messages
+       WHERE text_sentiment_score IS NOT NULL)                      AS zd_avg_text_sentiment,
+      (SELECT round(avg(emoji_sentiment_avg)::numeric, 3)
+       FROM conversation_messages
+       WHERE emoji_sentiment_avg IS NOT NULL)                       AS zd_avg_emoji_sentiment,
+      (SELECT count(*)::int FROM conversation_messages
+       WHERE 'buying_signal' = ANY(detected_signals))               AS zd_buying_signals,
+      (SELECT count(*)::int FROM conversation_messages
+       WHERE 'objection_signal' = ANY(detected_signals))            AS zd_objection_signals,
+      (SELECT count(*)::int FROM conversation_messages
+       WHERE 'commitment_signal' = ANY(detected_signals))           AS zd_commitment_signals,
+      (SELECT count(*)::int FROM conversation_messages
+       WHERE 'referral_signal' = ANY(detected_signals))             AS zd_referral_signals,
+      (SELECT count(*)::int FROM conversation_messages
+       WHERE 'urgency_signal' = ANY(detected_signals))              AS zd_urgency_signals
   `);
 
   const r = rows[0];
@@ -292,7 +454,8 @@ export async function dashboardSummary() {
       directives_received: r.ep_directives,
       feedback_sessions: r.ep_feedback_sessions,
     },
-    whatsapp: {
+    whatsapp_waha: {
+      source: "WAHA (directo)",
       total_conversations: r.wa_conversations,
       total_messages: r.wa_messages,
       active_agents: r.wa_active_agents,
@@ -306,6 +469,21 @@ export async function dashboardSummary() {
         urgency: r.wa_urgency_signals,
       },
       total_metrics: r.wa_total_metrics,
+    },
+    whatsapp_zendesk: {
+      source: "Zendesk",
+      total_conversations: r.zd_conversations,
+      total_messages: r.zd_messages,
+      unique_users: r.zd_unique_users,
+      avg_text_sentiment: r.zd_avg_text_sentiment,
+      avg_emoji_sentiment: r.zd_avg_emoji_sentiment,
+      signals: {
+        buying: r.zd_buying_signals,
+        objection: r.zd_objection_signals,
+        commitment: r.zd_commitment_signals,
+        referral: r.zd_referral_signals,
+        urgency: r.zd_urgency_signals,
+      },
     },
   };
 }

@@ -13,6 +13,7 @@
       --clinyco-red: #dc2626;
       --clinyco-amber: #d97706;
       --clinyco-purple: #9333ea;
+      --clinyco-cyan: #0891b2;
     }
     body { background: #f8fafc; }
     .header-bar {
@@ -25,31 +26,37 @@
     .tabs {
       display: flex; gap: .5rem; margin-bottom: 1.5rem;
       border-bottom: 2px solid #e2e8f0; padding-bottom: .5rem;
+      flex-wrap: wrap;
     }
     .tabs button {
-      background: none; border: none; padding: .6rem 1.2rem;
+      background: none; border: none; padding: .6rem 1rem;
       font-weight: 600; cursor: pointer; border-radius: 6px 6px 0 0;
-      color: #64748b; font-size: .95rem;
+      color: #64748b; font-size: .85rem;
     }
     .tabs button.active { background: var(--clinyco-blue); color: #fff; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     .kpi-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 1rem; margin-bottom: 2rem;
     }
     .kpi-card {
-      background: #fff; border-radius: 12px; padding: 1.2rem;
+      background: #fff; border-radius: 12px; padding: 1rem;
       box-shadow: 0 1px 3px rgba(0,0,0,.08); text-align: center;
     }
     .kpi-card .value {
-      font-size: 2rem; font-weight: 700; color: #1e293b;
-      line-height: 1.2;
+      font-size: 1.8rem; font-weight: 700; color: #1e293b; line-height: 1.2;
     }
     .kpi-card .label {
-      font-size: .8rem; color: #64748b; margin-top: .3rem;
+      font-size: .75rem; color: #64748b; margin-top: .3rem;
       text-transform: uppercase; letter-spacing: .5px;
     }
+    .source-tag {
+      display: inline-block; padding: .1rem .4rem; border-radius: 4px;
+      font-size: .65rem; font-weight: 700; text-transform: uppercase;
+    }
+    .source-waha { background: #dbeafe; color: #1e40af; }
+    .source-zendesk { background: #fef3c7; color: #92400e; }
     .chart-row {
       display: grid; grid-template-columns: 1fr 1fr;
       gap: 1.5rem; margin-bottom: 2rem;
@@ -58,12 +65,12 @@
       background: #fff; border-radius: 12px; padding: 1.2rem;
       box-shadow: 0 1px 3px rgba(0,0,0,.08);
     }
-    .chart-box h3 { font-size: .95rem; color: #475569; margin-bottom: .8rem; }
-    table { font-size: .85rem; }
+    .chart-box h3 { font-size: .9rem; color: #475569; margin-bottom: .8rem; }
+    table { font-size: .8rem; }
     th { background: #f1f5f9; }
     .badge {
       display: inline-block; padding: .15rem .5rem; border-radius: 999px;
-      font-size: .75rem; font-weight: 600;
+      font-size: .7rem; font-weight: 600;
     }
     .badge-green { background: #dcfce7; color: #166534; }
     .badge-amber { background: #fef3c7; color: #92400e; }
@@ -71,6 +78,10 @@
     .badge-purple { background: #f3e8ff; color: #6b21a8; }
     .loading { text-align: center; padding: 3rem; color: #94a3b8; }
     .error-msg { color: var(--clinyco-red); padding: 1rem; text-align: center; }
+    .section-label {
+      font-size: .75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1px; color: #94a3b8; margin: 1.5rem 0 .5rem;
+    }
     @media (max-width: 768px) {
       .chart-row { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
@@ -82,15 +93,17 @@
 <div class="header-bar">
   <div>
     <h1>Clinyco Review Dashboard</h1>
-    <small>EugenIA Learning + WhatsApp Sentiment Analysis</small>
+    <small>EugenIA + WhatsApp WAHA + WhatsApp Zendesk — Consolidado</small>
   </div>
 </div>
 
 <main class="container">
   <div class="tabs">
     <button class="active" onclick="showTab('dashboard')">Dashboard</button>
-    <button onclick="showTab('eugenia')">EugenIA Learning</button>
-    <button onclick="showTab('whatsapp')">WhatsApp Sentiment</button>
+    <button onclick="showTab('eugenia')">EugenIA</button>
+    <button onclick="showTab('waha')">WhatsApp WAHA</button>
+    <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
+    <button onclick="showTab('agents')">Agentes</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -99,8 +112,12 @@
     <div id="dash-content" style="display:none">
       <h2>EugenIA</h2>
       <div class="kpi-grid" id="kpi-eugenia"></div>
-      <h2>WhatsApp Observer</h2>
-      <div class="kpi-grid" id="kpi-whatsapp"></div>
+
+      <h2>WhatsApp WAHA <span class="source-tag source-waha">Directo</span></h2>
+      <div class="kpi-grid" id="kpi-waha"></div>
+
+      <h2>WhatsApp Zendesk <span class="source-tag source-zendesk">Bot + Agente</span></h2>
+      <div class="kpi-grid" id="kpi-zendesk"></div>
     </div>
   </div>
 
@@ -137,55 +154,90 @@
           </div>
         </div>
       </div>
-      <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Ultimas directivas de agentes</h3>
-        <div style="max-height:300px;overflow:auto">
-          <table id="table-directives" role="grid">
-            <thead><tr>
-              <th>Tipo</th><th>Campo</th><th>Valor</th><th>Texto original</th><th>Fecha</th>
-            </tr></thead>
-            <tbody></tbody>
-          </table>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: WAHA ══════ -->
+  <div id="tab-waha" class="tab-content">
+    <div id="wa-loading" class="loading">Cargando datos WAHA...</div>
+    <div id="wa-content" style="display:none">
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Senales de venta por dia <span class="source-tag source-waha">WAHA</span></h3>
+          <canvas id="chart-wa-signals"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Conversaciones — Sentiment & Senales</h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-wa-conversations" role="grid">
+              <thead><tr>
+                <th>Cliente</th><th>Agente</th><th>Msgs</th>
+                <th>Sent. texto</th><th>Sent. emoji</th>
+                <th>Buy</th><th>Obj</th><th>Commit</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ══════ TAB: WHATSAPP ══════ -->
-  <div id="tab-whatsapp" class="tab-content">
-    <div id="wa-loading" class="loading">Cargando datos de WhatsApp...</div>
-    <div id="wa-content" style="display:none">
+  <!-- ══════ TAB: ZENDESK ══════ -->
+  <div id="tab-zendesk" class="tab-content">
+    <div id="zd-loading" class="loading">Cargando datos Zendesk...</div>
+    <div id="zd-content" style="display:none">
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Senales de venta por dia</h3>
-          <canvas id="chart-wa-signals"></canvas>
+          <h3>Senales de venta por dia <span class="source-tag source-zendesk">Zendesk</span></h3>
+          <canvas id="chart-zd-signals"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Performance por agente</h3>
-          <canvas id="chart-wa-agents"></canvas>
+          <h3>Conversaciones — Sentiment & Senales</h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-zd-conversations" role="grid">
+              <thead><tr>
+                <th>Cliente</th><th>Usuario</th><th>Msgs</th>
+                <th>Sent. texto</th><th>Sent. emoji</th>
+                <th>Buy</th><th>Obj</th><th>Commit</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: AGENTS ══════ -->
+  <div id="tab-agents" class="tab-content">
+    <div id="ag-loading" class="loading">Cargando agentes...</div>
+    <div id="ag-content" style="display:none">
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Conversaciones — Sentiment & Senales</h3>
-        <div style="max-height:400px;overflow:auto">
-          <table id="table-conversations" role="grid">
+        <h3>Agentes consolidados (WAHA + Zendesk)</h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-agents" role="grid">
             <thead><tr>
-              <th>Cliente</th><th>Agente</th><th>Msgs</th>
-              <th>Sentiment texto</th><th>Sentiment emoji</th>
-              <th>Buying</th><th>Objections</th><th>Commitments</th>
+              <th>Agente</th><th>Fuente</th><th>Identificador</th>
+              <th>Conversaciones</th><th>Mensajes</th>
+              <th>Sent. texto</th><th>Sent. emoji</th>
+              <th>Buying</th><th>Objections</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
+      </div>
+      <div class="chart-box">
+        <h3>Comparativa por agente</h3>
+        <canvas id="chart-agents-bar"></canvas>
       </div>
     </div>
   </div>
 </main>
 
 <script>
-// ── Config ──
 const API_BASE = window.location.hostname === "localhost"
-  ? "http://localhost:3000/api/review"
+  ? "http://localhost:10000/api/review"
   : "/api";
 
 async function api(path) {
@@ -200,85 +252,84 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-
-  if (name === "dashboard" && !window._dashLoaded) loadDashboard();
-  if (name === "eugenia"   && !window._eugLoaded)  loadEugenia();
-  if (name === "whatsapp"  && !window._waLoaded)   loadWhatsapp();
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, agents: loadAgents };
+  if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
-// ── Helpers ──
 function kpiCard(value, label) {
   return `<div class="kpi-card"><div class="value">${value ?? '—'}</div><div class="label">${label}</div></div>`;
 }
-
 function matchBadge(type) {
   const map = { same_intent: "badge-green", partial_match: "badge-amber", different_topic: "badge-red" };
   return `<span class="badge ${map[type] || ''}">${type || '—'}</span>`;
 }
-
-function pct(n, total) {
-  if (!total) return "0%";
-  return (n / total * 100).toFixed(1) + "%";
+function sentimentBadge(val) {
+  if (val === null || val === undefined) return '<span class="badge">—</span>';
+  const n = parseFloat(val);
+  if (n > 0.2)  return `<span class="badge badge-green">${n.toFixed(3)}</span>`;
+  if (n < -0.2) return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
+  return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
+}
+function pct(n, total) { return total ? (n / total * 100).toFixed(1) + "%" : "0%"; }
+function shortText(txt, max = 35) { return !txt ? "—" : txt.length > max ? txt.slice(0, max) + "..." : txt; }
+function sourceTag(src) {
+  return src === 'waha'
+    ? '<span class="source-tag source-waha">WAHA</span>'
+    : '<span class="source-tag source-zendesk">Zendesk</span>';
 }
 
-function shortText(txt, max = 40) {
-  if (!txt) return "—";
-  return txt.length > max ? txt.slice(0, max) + "..." : txt;
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  DASHBOARD TAB
-// ═══════════════════════════════════════════════════════════════════
-
+// ═══════════ DASHBOARD ═══════════
 async function loadDashboard() {
   try {
     const d = await api("/dashboard");
-    const e = d.eugenia, w = d.whatsapp;
+    const e = d.eugenia, w = d.whatsapp_waha, z = d.whatsapp_zendesk;
 
     document.getElementById("kpi-eugenia").innerHTML = [
       kpiCard(e.total_predictions, "Predicciones"),
-      kpiCard(e.accuracy.same_intent, "Aciertos (same intent)"),
-      kpiCard(e.avg_match_score, "Match Score promedio"),
-      kpiCard(e.avg_outcome_score, "Outcome promedio"),
+      kpiCard(e.accuracy.same_intent, "Aciertos"),
+      kpiCard(e.avg_match_score, "Match Score"),
+      kpiCard(e.avg_outcome_score, "Outcome"),
       kpiCard(e.gold_samples, "Gold Samples"),
-      kpiCard(e.directives_received, "Directivas recibidas"),
+      kpiCard(e.directives_received, "Directivas"),
     ].join("");
 
-    document.getElementById("kpi-whatsapp").innerHTML = [
+    document.getElementById("kpi-waha").innerHTML = [
       kpiCard(w.total_conversations, "Conversaciones"),
       kpiCard(w.total_messages, "Mensajes"),
-      kpiCard(w.active_agents, "Agentes activos"),
-      kpiCard(w.avg_text_sentiment, "Sentiment texto"),
-      kpiCard(w.avg_emoji_sentiment, "Sentiment emoji"),
-      kpiCard(w.signals.buying, "Buying signals"),
+      kpiCard(w.active_agents, "Agentes"),
+      kpiCard(w.avg_text_sentiment, "Sent. texto"),
+      kpiCard(w.avg_emoji_sentiment, "Sent. emoji"),
+      kpiCard(w.signals.buying, "Buying"),
       kpiCard(w.signals.objection, "Objections"),
       kpiCard(w.signals.commitment, "Commitments"),
     ].join("");
 
+    document.getElementById("kpi-zendesk").innerHTML = [
+      kpiCard(z.total_conversations, "Conversaciones"),
+      kpiCard(z.total_messages, "Mensajes"),
+      kpiCard(z.unique_users, "Usuarios"),
+      kpiCard(z.avg_text_sentiment, "Sent. texto"),
+      kpiCard(z.avg_emoji_sentiment, "Sent. emoji"),
+      kpiCard(z.signals.buying, "Buying"),
+      kpiCard(z.signals.objection, "Objections"),
+      kpiCard(z.signals.commitment, "Commitments"),
+    ].join("");
+
     document.getElementById("dash-loading").style.display = "none";
     document.getElementById("dash-content").style.display = "block";
-    window._dashLoaded = true;
+    window._dashboardLoaded = true;
   } catch (err) {
-    document.getElementById("dash-loading").innerHTML =
-      `<div class="error-msg">Error: ${err.message}</div>`;
+    document.getElementById("dash-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  EUGENIA TAB
-// ═══════════════════════════════════════════════════════════════════
-
+// ═══════════ EUGENIA ═══════════
 async function loadEugenia() {
   try {
-    const [accuracy, trends, gold, actions, directives] = await Promise.all([
-      api("/eugenia/accuracy"),
-      api("/eugenia/trends?weeks=12"),
-      api("/eugenia/gold-samples?limit=30"),
-      api("/eugenia/actions"),
-      api("/eugenia/directives?limit=30"),
+    const [accuracy, trends, gold, actions] = await Promise.all([
+      api("/eugenia/accuracy"), api("/eugenia/trends?weeks=12"),
+      api("/eugenia/gold-samples?limit=30"), api("/eugenia/actions"),
     ]);
-
-    // KPIs
     document.getElementById("eug-kpis").innerHTML = [
       kpiCard(accuracy.total, "Total comparadas"),
       kpiCard(pct(accuracy.same_intent, accuracy.total), "Aciertos"),
@@ -288,182 +339,150 @@ async function loadEugenia() {
       kpiCard(accuracy.avg_outcome_score, "Outcome promedio"),
     ].join("");
 
-    // Trends line chart
     new Chart(document.getElementById("chart-eug-trends"), {
       type: "line",
       data: {
         labels: trends.map(t => t.week),
         datasets: [
-          { label: "Match Score", data: trends.map(t => t.avg_match),
-            borderColor: "#2563eb", tension: .3, fill: false },
-          { label: "Outcome", data: trends.map(t => t.avg_outcome),
-            borderColor: "#16a34a", tension: .3, fill: false, yAxisID: "y1" },
+          { label: "Match Score", data: trends.map(t => t.avg_match), borderColor: "#2563eb", tension: .3, fill: false },
+          { label: "Outcome", data: trends.map(t => t.avg_outcome), borderColor: "#16a34a", tension: .3, fill: false, yAxisID: "y1" },
         ]
       },
       options: {
         responsive: true, plugins: { legend: { position: "bottom" } },
         scales: {
-          y:  { beginAtZero: true, max: 1, title: { display: true, text: "Match Score" } },
-          y1: { position: "right", beginAtZero: true, max: 100, title: { display: true, text: "Outcome" },
-                grid: { drawOnChartArea: false } }
+          y: { beginAtZero: true, max: 1, title: { display: true, text: "Match" } },
+          y1: { position: "right", beginAtZero: true, max: 100, title: { display: true, text: "Outcome" }, grid: { drawOnChartArea: false } }
         }
       }
     });
 
-    // Donut chart
     new Chart(document.getElementById("chart-eug-donut"), {
       type: "doughnut",
       data: {
-        labels: ["Same Intent", "Partial Match", "Different Topic"],
-        datasets: [{
-          data: [accuracy.same_intent, accuracy.partial_match, accuracy.different_topic],
-          backgroundColor: ["#16a34a", "#d97706", "#dc2626"],
-        }]
+        labels: ["Same Intent", "Partial", "Different"],
+        datasets: [{ data: [accuracy.same_intent, accuracy.partial_match, accuracy.different_topic], backgroundColor: ["#16a34a", "#d97706", "#dc2626"] }]
       },
       options: { responsive: true, plugins: { legend: { position: "bottom" } } }
     });
 
-    // Actions bar chart
     const topActions = actions.slice(0, 10);
     new Chart(document.getElementById("chart-eug-actions"), {
       type: "bar",
-      data: {
-        labels: topActions.map(a => shortText(a.ai_suggested_action, 25)),
-        datasets: [{
-          label: "Outcome promedio",
-          data: topActions.map(a => a.avg_outcome),
-          backgroundColor: "#2563eb",
-        }]
-      },
-      options: {
-        indexAxis: "y", responsive: true,
-        scales: { x: { beginAtZero: true, max: 100 } },
-        plugins: { legend: { display: false } }
-      }
+      data: { labels: topActions.map(a => shortText(a.ai_suggested_action, 25)), datasets: [{ label: "Outcome", data: topActions.map(a => a.avg_outcome), backgroundColor: "#2563eb" }] },
+      options: { indexAxis: "y", responsive: true, scales: { x: { beginAtZero: true, max: 100 } }, plugins: { legend: { display: false } } }
     });
 
-    // Gold samples table
-    const goldBody = document.querySelector("#table-gold tbody");
-    goldBody.innerHTML = gold.map(g => `<tr>
-      <td>${g.turn_number}</td>
-      <td>${shortText(g.ai_suggested_action)}</td>
-      <td>${shortText(g.human_actual_action)}</td>
-      <td>${matchBadge(g.match_type)}</td>
-      <td><strong>${g.outcome_score ?? '—'}</strong></td>
+    document.querySelector("#table-gold tbody").innerHTML = gold.map(g => `<tr>
+      <td>${g.turn_number}</td><td>${shortText(g.ai_suggested_action)}</td><td>${shortText(g.human_actual_action)}</td>
+      <td>${matchBadge(g.match_type)}</td><td><strong>${g.outcome_score ?? '—'}</strong></td>
       <td><span class="badge badge-purple">${g.gold_reason || '—'}</span></td>
-    </tr>`).join("");
-
-    // Directives table
-    const dirBody = document.querySelector("#table-directives tbody");
-    dirBody.innerHTML = directives.map(d => `<tr>
-      <td><span class="badge badge-amber">${d.directive_type}</span></td>
-      <td>${d.parsed_field || '—'}</td>
-      <td>${d.parsed_value || '—'}</td>
-      <td>${shortText(d.raw_text, 50)}</td>
-      <td>${new Date(d.created_at).toLocaleDateString("es-CL")}</td>
     </tr>`).join("");
 
     document.getElementById("eug-loading").style.display = "none";
     document.getElementById("eug-content").style.display = "block";
-    window._eugLoaded = true;
-  } catch (err) {
-    document.getElementById("eug-loading").innerHTML =
-      `<div class="error-msg">Error: ${err.message}</div>`;
-  }
+    window._eugeniaLoaded = true;
+  } catch (err) { document.getElementById("eug-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  WHATSAPP TAB
-// ═══════════════════════════════════════════════════════════════════
-
-async function loadWhatsapp() {
+// ═══════════ WAHA ═══════════
+async function loadWaha() {
   try {
-    const [sentiment, signals, agents] = await Promise.all([
-      api("/whatsapp/sentiment?days=30"),
-      api("/whatsapp/signals?days=30"),
-      api("/whatsapp/agents"),
+    const [sentiment, signals] = await Promise.all([
+      api("/whatsapp/sentiment?days=30"), api("/whatsapp/signals?days=30"),
     ]);
-
-    // Signals stacked bar chart
-    new Chart(document.getElementById("chart-wa-signals"), {
-      type: "bar",
-      data: {
-        labels: signals.map(s => s.day),
-        datasets: [
-          { label: "Buying",     data: signals.map(s => s.buying),      backgroundColor: "#16a34a" },
-          { label: "Objection",  data: signals.map(s => s.objections),  backgroundColor: "#dc2626" },
-          { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
-          { label: "Referral",   data: signals.map(s => s.referrals),   backgroundColor: "#9333ea" },
-          { label: "Urgency",    data: signals.map(s => s.urgency),     backgroundColor: "#d97706" },
-        ]
-      },
-      options: {
-        responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
-        plugins: { legend: { position: "bottom" } }
-      }
-    });
-
-    // Agents radar chart
-    if (agents.length) {
-      const labels = ["Sentiment Texto", "Sentiment Emoji", "Buying Signals", "Objections", "Conversaciones"];
-      const maxConv = Math.max(...agents.map(a => a.conversations), 1);
-      new Chart(document.getElementById("chart-wa-agents"), {
-        type: "radar",
+    if (signals.length) {
+      new Chart(document.getElementById("chart-wa-signals"), {
+        type: "bar",
         data: {
-          labels,
-          datasets: agents.map((a, i) => {
-            const colors = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#9333ea"];
-            return {
-              label: a.agent_name,
-              data: [
-                Math.max(0, (parseFloat(a.avg_text_sentiment) + 1) / 2),
-                Math.max(0, (parseFloat(a.avg_emoji_sentiment) + 1) / 2),
-                parseFloat(a.avg_buying_signals) / 10,
-                parseFloat(a.avg_objection_signals) / 10,
-                a.conversations / maxConv,
-              ],
-              borderColor: colors[i % colors.length],
-              backgroundColor: colors[i % colors.length] + "22",
-            };
-          })
+          labels: signals.map(s => s.day),
+          datasets: [
+            { label: "Buying", data: signals.map(s => s.buying), backgroundColor: "#16a34a" },
+            { label: "Objection", data: signals.map(s => s.objections), backgroundColor: "#dc2626" },
+            { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
+            { label: "Referral", data: signals.map(s => s.referrals), backgroundColor: "#9333ea" },
+            { label: "Urgency", data: signals.map(s => s.urgency), backgroundColor: "#d97706" },
+          ]
         },
-        options: {
-          responsive: true,
-          scales: { r: { beginAtZero: true, max: 1 } },
-          plugins: { legend: { position: "bottom" } }
-        }
+        options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: "bottom" } } }
       });
     }
-
-    // Conversations table
-    const convBody = document.querySelector("#table-conversations tbody");
-    convBody.innerHTML = sentiment.map(s => `<tr>
-      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}<br>
-          <small style="color:#94a3b8">${s.client_phone}</small></td>
-      <td>${s.agent_name}</td>
-      <td>${s.message_count}</td>
-      <td>${sentimentBadge(s.avg_text_sentiment)}</td>
-      <td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
-      <td>${s.buying || 0}</td>
-      <td>${s.objections || 0}</td>
-      <td>${s.commitments || 0}</td>
+    document.querySelector("#table-wa-conversations tbody").innerHTML = sentiment.map(s => `<tr>
+      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}<br><small style="color:#94a3b8">${s.client_phone}</small></td>
+      <td>${s.agent_name}</td><td>${s.message_count}</td>
+      <td>${sentimentBadge(s.avg_text_sentiment)}</td><td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
+      <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
     </tr>`).join("");
-
     document.getElementById("wa-loading").style.display = "none";
     document.getElementById("wa-content").style.display = "block";
-    window._waLoaded = true;
-  } catch (err) {
-    document.getElementById("wa-loading").innerHTML =
-      `<div class="error-msg">Error: ${err.message}</div>`;
-  }
+    window._wahaLoaded = true;
+  } catch (err) { document.getElementById("wa-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
-function sentimentBadge(val) {
-  if (val === null || val === undefined) return '<span class="badge">—</span>';
-  const n = parseFloat(val);
-  if (n > 0.2)  return `<span class="badge badge-green">${n.toFixed(3)}</span>`;
-  if (n < -0.2) return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
-  return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
+// ═══════════ ZENDESK ═══════════
+async function loadZendesk() {
+  try {
+    const [sentiment, signals] = await Promise.all([
+      api("/zendesk/sentiment?days=30"), api("/zendesk/signals?days=30"),
+    ]);
+    if (signals.length) {
+      new Chart(document.getElementById("chart-zd-signals"), {
+        type: "bar",
+        data: {
+          labels: signals.map(s => s.day),
+          datasets: [
+            { label: "Buying", data: signals.map(s => s.buying), backgroundColor: "#16a34a" },
+            { label: "Objection", data: signals.map(s => s.objections), backgroundColor: "#dc2626" },
+            { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
+            { label: "Referral", data: signals.map(s => s.referrals), backgroundColor: "#9333ea" },
+            { label: "Urgency", data: signals.map(s => s.urgency), backgroundColor: "#d97706" },
+          ]
+        },
+        options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: "bottom" } } }
+      });
+    }
+    document.querySelector("#table-zd-conversations tbody").innerHTML = sentiment.map(s => `<tr>
+      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}</td>
+      <td>${s.agent_name || '—'}</td><td>${s.message_count}</td>
+      <td>${sentimentBadge(s.avg_text_sentiment)}</td><td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
+      <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
+    </tr>`).join("");
+    document.getElementById("zd-loading").style.display = "none";
+    document.getElementById("zd-content").style.display = "block";
+    window._zendeskLoaded = true;
+  } catch (err) { document.getElementById("zd-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ AGENTS ═══════════
+async function loadAgents() {
+  try {
+    const agents = await api("/agents");
+    document.querySelector("#table-agents tbody").innerHTML = agents.map(a => `<tr>
+      <td><strong>${a.agent_name}</strong></td>
+      <td>${sourceTag(a.source)}</td>
+      <td><small>${a.identifier || '—'}</small></td>
+      <td>${a.conversations}</td><td>${a.total_messages}</td>
+      <td>${sentimentBadge(a.avg_text_sentiment)}</td><td>${sentimentBadge(a.avg_emoji_sentiment)}</td>
+      <td>${a.avg_buying || 0}</td><td>${a.avg_objections || 0}</td>
+    </tr>`).join("");
+
+    if (agents.length) {
+      new Chart(document.getElementById("chart-agents-bar"), {
+        type: "bar",
+        data: {
+          labels: agents.map(a => `${a.agent_name} (${a.source})`),
+          datasets: [
+            { label: "Conversaciones", data: agents.map(a => a.conversations), backgroundColor: "#2563eb" },
+            { label: "Mensajes", data: agents.map(a => a.total_messages), backgroundColor: "#16a34a" },
+          ]
+        },
+        options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+      });
+    }
+    document.getElementById("ag-loading").style.display = "none";
+    document.getElementById("ag-content").style.display = "block";
+    window._agentsLoaded = true;
+  } catch (err) { document.getElementById("ag-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
 // ── Init ──

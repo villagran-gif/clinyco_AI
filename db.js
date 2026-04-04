@@ -536,7 +536,15 @@ export async function insertConversationMessage({
   channel = null,
   sourceType = null,
   content = "",
-  rawJson = null
+  rawJson = null,
+  emojiList = null,
+  emojiCount = 0,
+  emojiSentimentAvg = null,
+  textSentimentScore = null,
+  wordCount = 0,
+  hasQuestion = false,
+  detectedSignals = null,
+  authorDisplayName = null
 }) {
   if (messageId) {
     const existing = await getPool().query(
@@ -565,9 +573,17 @@ export async function insertConversationMessage({
       channel,
       source_type,
       content,
-      raw_json
+      raw_json,
+      emoji_list,
+      emoji_count,
+      emoji_sentiment_avg,
+      text_sentiment_score,
+      word_count,
+      has_question,
+      detected_signals,
+      author_display_name
     )
-    values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15)
     returning id
     `,
     [
@@ -577,7 +593,15 @@ export async function insertConversationMessage({
       channel,
       sourceType,
       content,
-      JSON.stringify(rawJson || {})
+      JSON.stringify(rawJson || {}),
+      emojiList,
+      emojiCount,
+      emojiSentimentAvg,
+      textSentimentScore,
+      wordCount,
+      hasQuestion,
+      detectedSignals,
+      authorDisplayName
     ]
   );
 
@@ -1429,6 +1453,20 @@ export async function getPredictionStats(conversationId) {
     [conversationId]
   );
   return rows[0] || null;
+}
+
+// ── Emoji Sentiment Lookup (shared with observer) ──
+
+export async function getEmojiSentimentBatch(emojis) {
+  if (!emojis.length) return new Map();
+  const { rows } = await getPool().query(
+    `SELECT emoji, sentiment_score, negative, neutral, positive
+     FROM emoji_sentiment_lookup WHERE emoji = ANY($1)`,
+    [emojis]
+  );
+  const map = new Map();
+  for (const row of rows) map.set(row.emoji, row);
+  return map;
 }
 
 export { buildCustomerProfile };
