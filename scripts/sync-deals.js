@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "dotenv/config";
 /**
  * sync-deals.js — Sync deals from Zendesk Sell API to local DB.
  *
