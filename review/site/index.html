@@ -241,7 +241,26 @@
   <div id="tab-zendesk" class="tab-content">
     <div id="zd-loading" class="loading">Cargando datos Zendesk...</div>
     <div id="zd-content" style="display:none">
-      <p class="section-label">Sentiment de pacientes (lo que escriben al bot/agente)</p>
+      <!-- Agent effectiveness table -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Efectividad por agente en WhatsApp Zendesk <button class="help-btn" onclick="showHelp('zd-sentiment')" title="Ayuda">?</button></h3>
+        <div style="overflow-x:auto">
+          <table id="table-zd-agents" role="grid">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">Conversaciones</th>
+              <th class="sortable" data-col="2" data-type="num">Mensajes</th>
+              <th class="sortable" data-col="3" data-type="num">Sent. paciente</th>
+              <th class="sortable" data-col="4" data-type="num">Emoji paciente</th>
+              <th class="sortable" data-col="5" data-type="num">Buying</th>
+              <th class="sortable" data-col="6" data-type="num">Objections</th>
+              <th class="sortable" data-col="7" data-type="num">Commitments</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="section-label">Detalle por conversacion</p>
       <div class="chart-row">
         <div class="chart-box">
           <h3>Senales de compra pacientes por dia <span class="source-tag source-zendesk">Zendesk</span> <button class="help-btn" onclick="showHelp('zd-signals')" title="Ayuda">?</button></h3>
@@ -658,9 +677,24 @@ async function loadWaha() {
 // ═══════════ ZENDESK ═══════════
 async function loadZendesk() {
   try {
-    const [sentiment, signals] = await Promise.all([
-      api("/zendesk/sentiment?days=30"), api("/zendesk/signals?days=30"),
+    const [sentiment, signals, agentEff] = await Promise.all([
+      api("/zendesk/sentiment?days=30"), api("/zendesk/signals?days=30"), api("/zendesk/agent-effectiveness"),
     ]);
+
+    // Agent effectiveness table
+    if (agentEff.length) {
+      document.querySelector("#table-zd-agents tbody").innerHTML = agentEff.map(a => `<tr>
+        <td><strong>${a.agent_name}</strong></td>
+        <td>${a.conversations}</td>
+        <td>${a.total_messages}</td>
+        <td>${sentimentBadge(a.avg_patient_sentiment)}</td>
+        <td>${sentimentBadge(a.avg_patient_emoji)}</td>
+        <td>${a.buying}</td>
+        <td>${a.objections}</td>
+        <td>${a.commitments}</td>
+      </tr>`).join("");
+      makeSortable('table-zd-agents');
+    }
     if (signals.length) {
       new Chart(document.getElementById("chart-zd-signals"), {
         type: "bar",

@@ -20,6 +20,7 @@ import {
   zendeskSentiment,
   zendeskSignals,
   zendeskSentimentDetail,
+  zendeskAgentEffectiveness,
   registeredAgents,
   dealsPerMonthPerAgent,
   dealsPerYearPerAgent,
@@ -198,6 +199,13 @@ router.get(
   wrap(async (req, res) => {
     const days = Math.min(parseInt(req.query.days) || 30, 365);
     res.json(await zendeskSignals(days));
+  })
+);
+
+router.get(
+  "/zendesk/agent-effectiveness",
+  wrap(async (_req, res) => {
+    res.json(await zendeskAgentEffectiveness());
   })
 );
 

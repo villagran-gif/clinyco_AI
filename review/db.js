@@ -348,7 +348,7 @@ export async function whatsappMetrics(conversationId) {
 //  Sentiment analysis of what PATIENTS say to bot/agents
 // ═══════════════════════════════════════════════════════════════════
 
-/** Zendesk patient sentiment — per conversation */
+/** Zendesk patient sentiment — per conversation with identified agent */
 export async function zendeskSentiment(days = 30) {
   const { rows } = await getPool().query(
     `SELECT c.conversation_id,
@@ -362,7 +362,15 @@ export async function zendeskSentiment(days = 30) {
             count(*) FILTER (WHERE 'commitment_signal' = ANY(m.detected_signals))::int AS commitments,
             count(*) FILTER (WHERE 'referral_signal'   = ANY(m.detected_signals))::int AS referrals,
             count(*) FILTER (WHERE 'urgency_signal'    = ANY(m.detected_signals))::int AS urgency,
-            CASE WHEN c.human_taken_over THEN 'Agente humano' ELSE 'Antonia (bot)' END AS attended_by
+            CASE WHEN c.human_taken_over THEN
+              COALESCE(
+                (SELECT ce.user_name FROM conversation_events ce
+                 WHERE ce.conversation_id = c.conversation_id
+                   AND ce.user_name IN (SELECT canonical_name FROM agent_registry WHERE is_active = true)
+                 ORDER BY ce.created_at DESC LIMIT 1),
+                'Agente humano'
+              )
+            ELSE 'Antonia (bot)' END AS attended_by
      FROM conversations c
      LEFT JOIN customers cust ON cust.id = c.customer_id
      JOIN conversation_messages m ON m.conversation_id = c.conversation_id
@@ -371,6 +379,34 @@ export async function zendeskSentiment(days = 30) {
      ORDER BY max(m.created_at) DESC`,
     [days]
   );
+  return rows;
+}
+
+/** Zendesk conversations per agent — sentiment effectiveness */
+export async function zendeskAgentEffectiveness() {
+  const { rows } = await getPool().query(`
+    WITH agent_convs AS (
+      SELECT c.conversation_id,
+             ce.user_name AS agent_name
+      FROM conversations c
+      JOIN conversation_events ce ON ce.conversation_id = c.conversation_id
+      WHERE c.human_taken_over = true
+        AND ce.user_name IN (SELECT canonical_name FROM agent_registry WHERE is_active = true)
+      GROUP BY c.conversation_id, ce.user_name
+    )
+    SELECT ac.agent_name,
+           count(DISTINCT ac.conversation_id)::int AS conversations,
+           count(m.id)::int AS total_messages,
+           round(avg(m.text_sentiment_score) FILTER (WHERE m.role = 'user')::numeric, 3) AS avg_patient_sentiment,
+           round(avg(m.emoji_sentiment_avg) FILTER (WHERE m.role = 'user')::numeric, 3) AS avg_patient_emoji,
+           count(*) FILTER (WHERE 'buying_signal' = ANY(m.detected_signals))::int AS buying,
+           count(*) FILTER (WHERE 'objection_signal' = ANY(m.detected_signals))::int AS objections,
+           count(*) FILTER (WHERE 'commitment_signal' = ANY(m.detected_signals))::int AS commitments
+    FROM agent_convs ac
+    JOIN conversation_messages m ON m.conversation_id = ac.conversation_id
+    GROUP BY ac.agent_name
+    ORDER BY conversations DESC
+  `);
   return rows;
 }
 
