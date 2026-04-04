@@ -333,9 +333,12 @@
         <canvas id="chart-agents-annual"></canvas>
       </div>
 
-      <!-- 3. Phase participation -->
+      <!-- 3. Phase participation with year filter -->
       <div class="chart-box" style="margin-bottom:2rem">
         <h3>Participacion por fase <button class="help-btn" onclick="showHelp('agent-phases')" title="Ayuda">?</button></h3>
+        <div style="margin-bottom:.8rem">
+          <span id="phase-year-buttons" style="display:flex;gap:.5rem;flex-wrap:wrap"></span>
+        </div>
         <canvas id="chart-agents-phases"></canvas>
       </div>
       <div class="chart-box" style="margin-bottom:2rem">
@@ -344,16 +347,30 @@
           <table id="table-phases" role="grid">
             <thead><tr>
               <th>Agente</th>
-              <th>Fase 1 (Captacion)</th><th>F1 Exitosos</th>
-              <th>Fase 2 (Seguimiento)</th><th>F2 Exitosos</th>
-              <th>Fase 3 (Cierre)</th><th>F3 Exitosos</th>
+              <th>F1 Captacion</th><th>F1 Exit.</th>
+              <th>F2 Seguimiento</th><th>F2 Exit.</th>
+              <th>F3 Cierre</th><th>F3 Exit.</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
 
-      <!-- 4. Monthly drill-down (hidden until year clicked) -->
+      <!-- 4. Chain effectiveness -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Efectividad de cadenas (Colaborador1 → 2 → 3) <button class="help-btn" onclick="showHelp('chain-effectiveness')" title="Ayuda">?</button></h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-chains" role="grid">
+            <thead><tr>
+              <th>F1 Captacion</th><th>F2 Seguimiento</th><th>F3 Cierre</th>
+              <th>Deals</th><th>Exitosos</th><th>Efectividad</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 5. Monthly drill-down -->
       <div id="monthly-drilldown" class="chart-box" style="margin-bottom:2rem;display:none">
         <h3 id="monthly-drilldown-title">Detalle mensual</h3>
         <canvas id="chart-agents-monthly"></canvas>
@@ -725,33 +742,82 @@ async function loadAgents() {
     // Render latest year by default
     if (years.length) renderAnnualChart(years[years.length - 1]);
 
-    // 3. Phase participation chart + table
-    if (phases.length) {
-      const activePhases = phases.filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0);
-      new Chart(document.getElementById("chart-agents-phases"), {
-        type: "bar",
-        data: {
-          labels: activePhases.map(p => p.agent),
-          datasets: [
-            { label: "Fase 1: Captacion", data: activePhases.map(p => p.fase1_captacion), backgroundColor: "#2563eb" },
-            { label: "Fase 2: Seguimiento", data: activePhases.map(p => p.fase2_seguimiento), backgroundColor: "#d97706" },
-            { label: "Fase 3: Cierre", data: activePhases.map(p => p.fase3_cierre), backgroundColor: "#16a34a" },
-          ]
-        },
-        options: { responsive: true, plugins: { legend: { position: "bottom" } } }
-      });
+    // 3. Phase participation — year buttons + chart
+    window._phaseChart = null;
+    const phaseYearBtns = document.getElementById('phase-year-buttons');
+    phaseYearBtns.innerHTML = ['Todos', ...years].map(y =>
+      `<button style="padding:.4rem .8rem;border:2px solid #2563eb;border-radius:6px;background:${y === 'Todos' ? '#2563eb' : '#fff'};color:${y === 'Todos' ? '#fff' : '#2563eb'};font-weight:700;cursor:pointer;font-size:.85rem" onclick="loadPhasesForYear('${y}')">${y}</button>`
+    ).join('');
+    renderPhasesAndChains(phases, null);
 
-      document.querySelector("#table-phases tbody").innerHTML = activePhases.map(p => `<tr>
-        <td><strong>${p.agent}</strong></td>
-        <td>${p.fase1_captacion}</td><td><span class="badge badge-green">${p.fase1_exitosos}</span></td>
-        <td>${p.fase2_seguimiento}</td><td><span class="badge badge-green">${p.fase2_exitosos}</span></td>
-        <td>${p.fase3_cierre}</td><td><span class="badge badge-green">${p.fase3_exitosos}</span></td>
-      </tr>`).join("");
-    }
+    // Store for re-rendering with year filter
+    window._loadPhasesForYear = async function(y) {
+      const yearParam = y === 'Todos' ? '' : `?year=${y}`;
+      const [p, c] = await Promise.all([api(`/agents/phases${yearParam}`), api(`/agents/chains${yearParam}`)]);
+      // Update button styles
+      phaseYearBtns.querySelectorAll('button').forEach(btn => {
+        const isActive = btn.textContent == y;
+        btn.style.background = isActive ? '#2563eb' : '#fff';
+        btn.style.color = isActive ? '#fff' : '#2563eb';
+      });
+      renderPhasesAndChains(p, c);
+    };
+
+    // Load chains for "Todos" initially
+    const chainsAll = await api("/agents/chains");
+    renderChains(chainsAll);
     document.getElementById("ag-loading").style.display = "none";
     document.getElementById("ag-content").style.display = "block";
     window._agentsLoaded = true;
   } catch (err) { document.getElementById("ag-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ PHASES + CHAINS ═══════════
+function renderPhasesAndChains(phases, chains) {
+  const activePhases = phases.filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0);
+
+  if (window._phaseChart) window._phaseChart.destroy();
+  window._phaseChart = new Chart(document.getElementById("chart-agents-phases"), {
+    type: "bar",
+    data: {
+      labels: activePhases.map(p => p.agent),
+      datasets: [
+        { label: "Fase 1: Captacion", data: activePhases.map(p => p.fase1_captacion), backgroundColor: "#2563eb" },
+        { label: "Fase 2: Seguimiento", data: activePhases.map(p => p.fase2_seguimiento), backgroundColor: "#d97706" },
+        { label: "Fase 3: Cierre", data: activePhases.map(p => p.fase3_cierre), backgroundColor: "#16a34a" },
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+  });
+
+  document.querySelector("#table-phases tbody").innerHTML = activePhases.map(p => `<tr>
+    <td><strong>${p.agent}</strong></td>
+    <td>${p.fase1_captacion}</td><td><span class="badge badge-green">${p.fase1_exitosos}</span></td>
+    <td>${p.fase2_seguimiento}</td><td><span class="badge badge-green">${p.fase2_exitosos}</span></td>
+    <td>${p.fase3_cierre}</td><td><span class="badge badge-green">${p.fase3_exitosos}</span></td>
+  </tr>`).join("");
+
+  if (chains) renderChains(chains);
+}
+
+function renderChains(chains) {
+  document.querySelector("#table-chains tbody").innerHTML = chains.map(c => {
+    const efClass = c.efectividad >= 40 ? 'badge-green' : c.efectividad >= 20 ? 'badge-amber' : 'badge-red';
+    const c2 = c.colaborador2 || '—';
+    const c3 = c.colaborador3 || '—';
+    const isSame = c.colaborador1 === c2 && c2 === c3;
+    const chain = isSame ? `<b>${c.colaborador1}</b> (solo)` : `${c.colaborador1} → ${c2} → ${c3}`;
+    return `<tr>
+      <td>${c.colaborador1 || '—'}</td><td>${c2}</td><td>${c3}</td>
+      <td>${c.total_deals}</td>
+      <td><strong>${c.exitosos}</strong></td>
+      <td><span class="badge ${efClass}">${c.efectividad}%</span></td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadPhasesForYear(y) {
+  if (window._loadPhasesForYear) await window._loadPhasesForYear(y);
 }
 
 // ═══════════ ANNUAL CHART + DRILL-DOWN ═══════════
@@ -945,6 +1011,12 @@ const HELP = {
     text: 'Cada deal tiene 3 fases donde puede participar un agente diferente. Fase 1 = Captacion (quien trajo al paciente). Fase 2 = Seguimiento (quien lo acompano). Fase 3 = Cierre (quien cerro la venta).',
     example: '<b>Fase 1 es la mas importante</b> porque sin captacion no hay pacientes. Si un agente tiene alta Fase 1 pero baja Fase 3, es buena captando pero necesita ayuda para cerrar.',
     ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> — Colaborador 1/2/3 en Zendesk Sell.'
+  },
+  'chain-effectiveness': {
+    title: 'Efectividad de cadenas',
+    text: 'Analiza que combinaciones de agentes (Captacion → Seguimiento → Cierre) producen los mejores resultados. Ejemplo: cuando Gabriela capta, Carolin hace seguimiento y Carolin cierra, la efectividad es X%.',
+    example: 'Una cadena "Gabriela → Carolin → Carolin" con 80% efectividad significa que 8 de cada 10 pacientes que siguen esa ruta terminan operados o agendados.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | Analisis de embudo de conversion por equipo.'
   },
   'agents-summary': {
     title: 'Resumen del equipo',

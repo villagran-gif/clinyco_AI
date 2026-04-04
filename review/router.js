@@ -24,6 +24,7 @@ import {
   dealsPerMonthPerAgent,
   dealsPerYearPerAgent,
   agentPhaseParticipation,
+  chainEffectiveness,
   dealsSummary,
   dealsPerAgent,
   dealsForAgent,
@@ -257,8 +258,17 @@ router.get(
 
 router.get(
   "/agents/phases",
-  wrap(async (_req, res) => {
-    res.json(await agentPhaseParticipation());
+  wrap(async (req, res) => {
+    const year = req.query.year || null;
+    res.json(await agentPhaseParticipation(year));
+  })
+);
+
+router.get(
+  "/agents/chains",
+  wrap(async (req, res) => {
+    const year = req.query.year || null;
+    res.json(await chainEffectiveness(year));
   })
 );
 

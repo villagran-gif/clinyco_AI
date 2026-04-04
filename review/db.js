@@ -517,12 +517,9 @@ export async function dealsPerYearPerAgent() {
   return rows;
 }
 
-/**
- * Agent participation by phase (colaborador1/2/3).
- * Shows who captured (fase 1), who followed up (fase 2), who closed (fase 3).
- * Only counts deals where the agent name matches a registered agent's first name.
- */
-export async function agentPhaseParticipation() {
+/** Agent participation by phase with optional year filter */
+export async function agentPhaseParticipation(year = null) {
+  const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
   const { rows } = await getPool().query(`
     WITH active_names AS (
       SELECT canonical_name, split_part(canonical_name, ' ', 1) AS first_name
@@ -538,20 +535,43 @@ export async function agentPhaseParticipation() {
     FROM active_names an
     LEFT JOIN LATERAL (
       SELECT count(*) AS cnt,
-             count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
-      FROM deals WHERE colaborador1 = an.first_name
+             count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals d WHERE d.colaborador1 = an.first_name ${yearFilter}
     ) f1 ON true
     LEFT JOIN LATERAL (
       SELECT count(*) AS cnt,
-             count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
-      FROM deals WHERE colaborador2 = an.first_name
+             count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals d WHERE d.colaborador2 = an.first_name ${yearFilter}
     ) f2 ON true
     LEFT JOIN LATERAL (
       SELECT count(*) AS cnt,
-             count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
-      FROM deals WHERE colaborador3 = an.first_name
+             count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals d WHERE d.colaborador3 = an.first_name ${yearFilter}
     ) f3 ON true
     ORDER BY fase1_captacion DESC
+  `);
+  return rows;
+}
+
+/** Chain effectiveness: Colaborador1+2+3 combinations and their success rate */
+export async function chainEffectiveness(year = null) {
+  const yearFilter = year ? `AND EXTRACT(YEAR FROM added_at) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(`
+    SELECT colaborador1, colaborador2, colaborador3,
+           count(*)::int AS total_deals,
+           count(*) FILTER (WHERE pipeline_phase IN (
+             'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+           ))::int AS exitosos,
+           CASE WHEN count(*) > 0
+             THEN round(count(*) FILTER (WHERE pipeline_phase IN (
+               'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+             ))::numeric / count(*)::numeric * 100, 1)
+             ELSE 0 END AS efectividad
+    FROM deals
+    WHERE colaborador1 IS NOT NULL ${yearFilter}
+    GROUP BY colaborador1, colaborador2, colaborador3
+    HAVING count(*) >= 3
+    ORDER BY exitosos DESC, efectividad DESC
   `);
   return rows;
 }
