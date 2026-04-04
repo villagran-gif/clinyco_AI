@@ -19,9 +19,8 @@ import {
   whatsappMetrics,
   zendeskSentiment,
   zendeskSignals,
-  zendeskAgents,
   zendeskSentimentDetail,
-  consolidatedAgents,
+  registeredAgents,
   dashboardSummary,
 } from "./db.js";
 
@@ -190,21 +189,14 @@ router.get(
   })
 );
 
-router.get(
-  "/zendesk/agents",
-  wrap(async (_req, res) => {
-    res.json(await zendeskAgents());
-  })
-);
-
 // ═══════════════════════════════════════════════════════════════════
-//  CONSOLIDATED (both sources)
+//  AGENTS (from agent_registry)
 // ═══════════════════════════════════════════════════════════════════
 
 router.get(
   "/agents",
   wrap(async (_req, res) => {
-    res.json(await consolidatedAgents());
+    res.json(await registeredAgents());
   })
 );
 

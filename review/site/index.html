@@ -187,18 +187,19 @@
   <div id="tab-zendesk" class="tab-content">
     <div id="zd-loading" class="loading">Cargando datos Zendesk...</div>
     <div id="zd-content" style="display:none">
+      <p class="section-label">Sentiment de pacientes (lo que escriben al bot/agente)</p>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Senales de venta por dia <span class="source-tag source-zendesk">Zendesk</span></h3>
+          <h3>Senales de compra pacientes por dia <span class="source-tag source-zendesk">Zendesk</span></h3>
           <canvas id="chart-zd-signals"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Conversaciones — Sentiment & Senales</h3>
+          <h3>Conversaciones — Sentiment paciente</h3>
           <div style="max-height:400px;overflow:auto">
             <table id="table-zd-conversations" role="grid">
               <thead><tr>
-                <th>Cliente</th><th>Usuario</th><th>Msgs</th>
-                <th>Sent. texto</th><th>Sent. emoji</th>
+                <th>Paciente</th><th>Atendido por</th><th>Msgs</th>
+                <th>Sent. paciente</th><th>Emoji paciente</th>
                 <th>Buy</th><th>Obj</th><th>Commit</th>
               </tr></thead>
               <tbody></tbody>
@@ -214,12 +215,12 @@
     <div id="ag-loading" class="loading">Cargando agentes...</div>
     <div id="ag-content" style="display:none">
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Agentes consolidados (WAHA + Zendesk)</h3>
+        <h3>Equipo Clinyco (agent_registry)</h3>
         <div style="max-height:500px;overflow:auto">
           <table id="table-agents" role="grid">
             <thead><tr>
-              <th>Agente</th><th>Fuente</th><th>Identificador</th>
-              <th>Conversaciones</th><th>Mensajes</th>
+              <th>Agente</th><th>Rol</th><th>WhatsApp</th>
+              <th>WAHA Conv.</th><th>WAHA Msgs</th>
               <th>Sent. texto</th><th>Sent. emoji</th>
               <th>Buying</th><th>Objections</th>
             </tr></thead>
@@ -228,7 +229,7 @@
         </div>
       </div>
       <div class="chart-box">
-        <h3>Comparativa por agente</h3>
+        <h3>Actividad WAHA por agente</h3>
         <canvas id="chart-agents-bar"></canvas>
       </div>
     </div>
@@ -443,8 +444,8 @@ async function loadZendesk() {
     }
     document.querySelector("#table-zd-conversations tbody").innerHTML = sentiment.map(s => `<tr>
       <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}</td>
-      <td>${s.agent_name || '—'}</td><td>${s.message_count}</td>
-      <td>${sentimentBadge(s.avg_text_sentiment)}</td><td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
+      <td>${s.attended_by || '—'}</td><td>${s.message_count}</td>
+      <td>${sentimentBadge(s.avg_patient_sentiment)}</td><td>${sentimentBadge(s.avg_patient_emoji)}</td>
       <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
     </tr>`).join("");
     document.getElementById("zd-loading").style.display = "none";
@@ -457,23 +458,25 @@ async function loadZendesk() {
 async function loadAgents() {
   try {
     const agents = await api("/agents");
+    const roleBadge = r => r === 'owner' ? '<span class="badge badge-purple">Owner</span>' : '<span class="badge badge-green">Agente</span>';
     document.querySelector("#table-agents tbody").innerHTML = agents.map(a => `<tr>
-      <td><strong>${a.agent_name}</strong></td>
-      <td>${sourceTag(a.source)}</td>
-      <td><small>${a.identifier || '—'}</small></td>
-      <td>${a.conversations}</td><td>${a.total_messages}</td>
+      <td><strong>${a.canonical_name}</strong><br><small style="color:#94a3b8">${a.email || ''}</small></td>
+      <td>${roleBadge(a.role)}</td>
+      <td><small>${a.waha_phone || '—'}</small></td>
+      <td>${a.waha_conversations}</td><td>${a.waha_messages}</td>
       <td>${sentimentBadge(a.avg_text_sentiment)}</td><td>${sentimentBadge(a.avg_emoji_sentiment)}</td>
-      <td>${a.avg_buying || 0}</td><td>${a.avg_objections || 0}</td>
+      <td>${a.buying_signals || 0}</td><td>${a.objection_signals || 0}</td>
     </tr>`).join("");
 
-    if (agents.length) {
+    const activeAgents = agents.filter(a => a.waha_messages > 0);
+    if (activeAgents.length) {
       new Chart(document.getElementById("chart-agents-bar"), {
         type: "bar",
         data: {
-          labels: agents.map(a => `${a.agent_name} (${a.source})`),
+          labels: activeAgents.map(a => a.canonical_name),
           datasets: [
-            { label: "Conversaciones", data: agents.map(a => a.conversations), backgroundColor: "#2563eb" },
-            { label: "Mensajes", data: agents.map(a => a.total_messages), backgroundColor: "#16a34a" },
+            { label: "Conversaciones WAHA", data: activeAgents.map(a => a.waha_conversations), backgroundColor: "#2563eb" },
+            { label: "Mensajes WAHA", data: activeAgents.map(a => a.waha_messages), backgroundColor: "#16a34a" },
           ]
         },
         options: { responsive: true, plugins: { legend: { position: "bottom" } } }
