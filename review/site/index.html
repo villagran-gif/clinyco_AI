@@ -108,11 +108,23 @@
       background: #f1f5f9; border-radius: 8px; padding: .8rem;
       margin: .8rem 0; font-size: .85rem; color: #334155;
     }
-    .help-card .close-help {
-      display: block; margin-top: 1rem; padding: .5rem 1.5rem;
-      background: var(--clinyco-blue); color: #fff; border: none;
-      border-radius: 8px; cursor: pointer; font-weight: 600;
+    .help-card .help-buttons {
+      display: flex; gap: .5rem; margin-top: 1.2rem; flex-wrap: wrap;
     }
+    .help-card .help-buttons button, .help-card .help-buttons a {
+      padding: .5rem 1rem; border: none; border-radius: 8px;
+      cursor: pointer; font-weight: 600; font-size: .85rem;
+      text-decoration: none; text-align: center;
+    }
+    .help-card .btn-ok { background: var(--clinyco-blue); color: #fff; }
+    .help-card .btn-data { background: #16a34a; color: #fff; }
+    .help-card .btn-ref { background: #f1f5f9; color: #475569; }
+    .help-card .btn-ref:hover { background: #e2e8f0; }
+    .help-card .ref-section {
+      margin-top: .8rem; padding-top: .8rem; border-top: 1px solid #e2e8f0;
+      font-size: .75rem; color: #94a3b8;
+    }
+    .help-card .ref-section a { color: #2563eb; }
     @media (max-width: 768px) {
       .chart-row { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
@@ -362,6 +374,14 @@ function showKpiHelp(label) {
   document.getElementById('help-title').textContent = h.title;
   document.getElementById('help-text').innerHTML = h.text;
   document.getElementById('help-example').innerHTML = h.example;
+  document.getElementById('help-refs').innerHTML = h.ref ? '<b>Referencia:</b> ' + h.ref : '';
+  const dataBtn = document.getElementById('help-data-btn');
+  if (h.tab) {
+    dataBtn.style.display = 'inline-block';
+    dataBtn.onclick = function() { closeHelp(); showTab(h.tab); };
+  } else {
+    dataBtn.style.display = 'none';
+  }
   document.getElementById('help-overlay').classList.add('open');
 }
 function matchBadge(type) {
@@ -723,96 +743,108 @@ async function loadAgents() {
 // ═══════════ HELP POPUPS ═══════════
 // KPI explanations (shown when you tap any number card)
 const KPI_HELP = {
-  'Predicciones': { title: 'Predicciones de EugenIA', text: 'Cantidad de veces que EugenIA intento predecir que deberia hacer el agente humano antes de que respondiera.', example: '660 predicciones = EugenIA observo 660 turnos de conversacion y sugirio una accion para cada uno.' },
-  'Aciertos': { title: 'Aciertos (Same Intent)', text: 'Cuantas veces la sugerencia de EugenIA coincidio con lo que el agente realmente hizo.', example: 'Si hay 0 aciertos, significa que los agentes hicieron cosas diferentes a lo que EugenIA sugirio. Esto es normal al inicio — EugenIA esta aprendiendo.' },
-  'Match Score': { title: 'Match Score Promedio', text: 'De 0 a 1, que tan parecido fue lo que EugenIA sugirio vs lo que el agente hizo. 1 = identico, 0 = completamente diferente.', example: '0.000 significa que EugenIA y los agentes aun no estan sincronizados. A medida que EugenIA aprenda, este numero subira.' },
-  'Outcome': { title: 'Outcome Promedio', text: 'De 0 a 100, que tan bien terminaron los deals donde EugenIA hizo predicciones. 100 = deal cerrado exitosamente.', example: 'Falta ejecutar el sync de outcomes con Zendesk Sell para ver este dato.' },
-  'Gold Samples': { title: 'Gold Samples', text: 'Casos especialmente valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay patrones interesantes.', example: 'Un gold sample es cuando el agente hizo algo diferente a EugenIA y el deal termino bien — EugenIA aprende del humano.' },
-  'Directivas': { title: 'Directivas de Agentes', text: 'Correcciones explicitas que los agentes le dieron a EugenIA escribiendo CORREGIR, PIPELINE o NOTA en Zendesk.', example: 'Si un agente escribe "CORREGIR: pipeline = bariatrica", EugenIA aprende que ese paciente es de cirugia bariatrica.' },
-  'Conversaciones': { title: 'Conversaciones', text: 'Cantidad total de conversaciones registradas en este canal.', example: 'Cada conversacion es un hilo entre un agente/bot y un paciente.' },
-  'Mensajes': { title: 'Mensajes', text: 'Total de mensajes individuales enviados y recibidos.', example: '3 mensajes pueden ser: paciente saluda, agente responde, paciente pregunta.' },
-  'Agentes': { title: 'Agentes Activos', text: 'Cantidad de agentes con sesion activa en WhatsApp WAHA.', example: 'Cada agente tiene su propio WhatsApp conectado al sistema.' },
-  'Sent. texto': { title: 'Sentiment de Texto', text: 'Analisis del tono de los mensajes. Positivo (> 0) = palabras amables. Negativo (< 0) = palabras de queja o preocupacion.', example: '"gracias, excelente" = positivo. "es muy caro, me da miedo" = negativo.' },
-  'Sent. emoji': { title: 'Sentiment de Emojis', text: 'Analisis del sentimiento de los emojis usados, basado en un estudio academico con 751 emojis.', example: 'Emojis como ❤️😊🎉 son positivos. Emojis como 😢😡💔 son negativos.' },
-  'Buying': { title: 'Buying Signals', text: 'Mensajes donde el paciente muestra intencion de compra.', example: '"cuanto cuesta?", "me interesa", "como puedo agendar?" — todas son senales de compra.' },
-  'Objections': { title: 'Objection Signals', text: 'Mensajes donde el paciente muestra dudas o resistencia.', example: '"es muy caro", "lo voy a pensar", "no estoy segura" — son objeciones que el agente debe manejar.' },
-  'Commitments': { title: 'Commitment Signals', text: 'Mensajes donde el paciente confirma o se compromete.', example: '"dale, perfecto", "listo, confirmo", "nos vemos" — el paciente esta comprometido.' },
-  'Usuarios': { title: 'Usuarios Unicos', text: 'Cantidad de pacientes diferentes que han escrito mensajes.', example: 'Cada paciente con un numero de WhatsApp diferente cuenta como un usuario.' },
-  'Deals totales': { title: 'Deals Totales', text: 'Cantidad total de tratos (deals) en Zendesk Sell. Cada deal es un paciente potencial en el pipeline de ventas.', example: '4527 deals = 4527 pacientes que en algun momento mostraron interes en una cirugia.' },
-  'Exitosos': { title: 'Deals Exitosos', text: 'Deals que llegaron a CERRADO OPERADO, CERRADO AGENDADO o CERRADO INSTALADO. Son los que generan ingresos.', example: 'Si hay 1248 exitosos de 4527 totales, la tasa de exito es 27.6%.' },
-  'Tasa exito': { title: 'Tasa de Exito', text: 'Porcentaje de deals que llegan a un cierre exitoso respecto al total.', example: '27% significa que de cada 4 pacientes que entran, 1 termina operandose o agendandose.' },
-  'Operados': { title: 'Cerrados Operados', text: 'Pacientes que ya fueron operados exitosamente. Es el mejor resultado posible.', example: 'CERRADO OPERADO = el paciente paso por todo el proceso y ya se opero.' },
-  'Agendados': { title: 'Cerrados Agendados', text: 'Pacientes que tienen fecha de cirugia confirmada pero aun no se operan.', example: 'CERRADO AGENDADO = pabellon reservado, fecha definida, falta operarse.' },
-  'Con bono 75d': { title: 'Deals con Bono 75 dias', text: 'Deals donde pasaron 75 dias o menos entre que el paciente entro al sistema y la fecha de cirugia. Los agentes ganan comision extra.', example: 'Si un paciente entro el 1 de enero y se opero el 15 de febrero (45 dias), los agentes ganan el bono porque fueron rapidos.' },
-  'Comisiones base': { title: 'Comisiones Base (CLP)', text: 'Total en pesos chilenos que se paga a los agentes por participar en las 3 fases de deals exitosos. Fase 1 = captar, Fase 2 = seguimiento, Fase 3 = cierre.', example: 'Si el deal tiene ComisionBAR1=$8.001, BAR2=$5.002, BAR3=$5.003, se paga al colaborador de cada fase.' },
-  'Total comparadas': { title: 'Total Comparadas', text: 'Cantidad de predicciones de EugenIA que ya fueron comparadas con lo que el agente humano realmente hizo.', example: '660 comparadas = en 660 turnos de conversacion, EugenIA sugirio algo y despues vimos que hizo el agente.' },
-  'Parciales': { title: 'Coincidencias Parciales', text: 'Porcentaje de veces que EugenIA sugirio algo parecido (pero no identico) a lo que hizo el agente.', example: 'Si EugenIA sugirio "preguntar por peso" y el agente pregunto "cuanto pesas y mides?", es parcial — la idea era similar.' },
-  'Diferentes': { title: 'Acciones Diferentes', text: 'Porcentaje de veces que el agente hizo algo completamente diferente a lo que EugenIA sugirio.', example: '100% diferentes al inicio es normal — EugenIA esta aprendiendo de los agentes. Con el tiempo este numero baja.' },
-  'Match promedio': { title: 'Match Promedio', text: 'Promedio de similitud entre lo que EugenIA sugirio y lo que el agente hizo. De 0 (nada parecido) a 1 (identico).', example: '0.000 al inicio es esperado. A medida que EugenIA aprende de los gold samples y directivas, sube.' },
-  'Outcome promedio': { title: 'Outcome Promedio', text: 'Promedio del resultado final de los deals donde EugenIA hizo predicciones. De 0 (deal perdido) a 100 (cerrado operado).', example: 'Necesita ejecutar sync-outcomes con Zendesk Sell para calcular este valor.' },
-  'Bonos 75d': { title: 'Bonos 75 dias (CLP)', text: 'Comision extra que ganan los mismos agentes cuando el proceso fue rapido (75 dias o menos). Valores de BAR4, BAR5 y BAR6.', example: 'Si un deal se cerro en 60 dias, los agentes ganan BAR1+BAR4 (fase1), BAR2+BAR5 (fase2), BAR3+BAR6 (fase3).' },
+  'Predicciones': { title: 'Predicciones de EugenIA', text: 'Cantidad de veces que EugenIA intento predecir que deberia hacer el agente humano. Es como un asistente que dice "yo haria esto" antes de que el agente responda.', example: '660 predicciones = EugenIA observo 660 turnos y sugirio una accion para cada uno.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2303.17580" target="_blank">Human-AI Collaboration (2023)</a>' },
+  'Aciertos': { title: 'Aciertos', text: 'Cuantas veces EugenIA sugirio lo mismo que hizo el agente. Como cuando dos personas piensan igual sin ponerse de acuerdo.', example: '0 al inicio es normal — EugenIA esta aprendiendo. Con el tiempo este numero sube.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Similarity Index</a>' },
+  'Match Score': { title: 'Match Score', text: 'Termometro de 0 a 1. Mide que tan parecido penso EugenIA vs el agente. 0=nada parecido, 1=identico.', example: '0.000 es esperado al inicio. Meta: 0.4+ en 3 meses.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank">Text Similarity Metrics</a>' },
+  'Outcome': { title: 'Outcome', text: 'Nota de 0 a 100 del resultado final de los deals. 100=paciente operado, 0=perdido.', example: 'Requiere ejecutar sync-outcomes con Zendesk Sell.', tab: 'eugenia', ref: 'Score basado en fases de pipeline Zendesk Sell.' },
+  'Gold Samples': { title: 'Gold Samples', text: 'Los mejores "casos de estudio" para que EugenIA aprenda. Se marcan automaticamente como un profesor que selecciona los mejores trabajos.', example: '<b>Caso 1:</b> EugenIA acerto y deal exitoso (reforzar).<br><b>Caso 2:</b> Agente hizo diferente y funciono (aprender del humano).', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Active Learning Survey (2020)</a>' },
+  'Directivas': { title: 'Directivas', text: 'Correcciones directas de agentes a EugenIA. Como cuando un jefe dice "esto hazlo asi".', example: 'Agente escribe "CORREGIR: pipeline = bariatrica" → EugenIA aprende.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2203.02155" target="_blank">RLHF - Training with human feedback</a>' },
+  'Conversaciones': { title: 'Conversaciones', text: 'Total de hilos de chat. Cada conversacion = un paciente que escribio.', example: '1757 conversaciones = 1757 pacientes que contactaron por WhatsApp.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
+  'Mensajes': { title: 'Mensajes', text: 'Total de mensajes individuales (ida y vuelta) de pacientes y bot/agente.', example: 'Paciente saluda + bot responde + paciente pregunta = 3 mensajes.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
+  'Agentes': { title: 'Agentes Activos', text: 'Agentes con WhatsApp conectado al sistema de monitoreo WAHA.', example: '1 agente activo = solo un telefono conectado. Deben ser 5.', tab: 'agents', ref: '<a href="https://waha.devlike.pro/" target="_blank">WAHA Documentation</a>' },
+  'Sent. texto': { title: 'Sentiment de Texto', text: 'Analisis del tono emocional de los mensajes buscando palabras positivas y negativas en espanol chileno. Va de -1 (muy negativo) a +1 (muy positivo).', example: '<b>0.567 = Positivo.</b> "gracias, excelente" → positivo. "es muy caro, me da miedo" → negativo.', tab: 'zendesk', ref: '<a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Novak et al. (2015) - PLOS ONE</a>' },
+  'Sent. emoji': { title: 'Sentiment de Emojis', text: 'Cada emoji tiene un puntaje cientifico basado en un estudio de 751 emojis en 83 idiomas. ❤️=+0.746, 😊=+0.634, 😢=-0.593.', example: '<b>0.430 = Positivo.</b> Los pacientes usan mas emojis felices que tristes.', tab: 'zendesk', ref: 'Novak, P.K. et al. (2015). <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Sentiment of Emojis. PLOS ONE</a>. Dataset: <a href="http://hdl.handle.net/11356/1048" target="_blank">CLARIN.SI</a>' },
+  'Buying': { title: 'Buying Signals', text: 'Mensajes donde el paciente muestra que QUIERE comprar o agendar. Son las senales mas valiosas.', example: '<b>Frases:</b> "cuanto cuesta", "me interesa", "quiero agendar", "formas de pago"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Sales Signal Detection in Digital Communication</a>' },
+  'Objections': { title: 'Objection Signals', text: 'Mensajes donde el paciente tiene DUDAS o MIEDO. Detectarlas a tiempo permite que el agente las resuelva.', example: '<b>Frases:</b> "es muy caro", "lo voy a pensar", "me da miedo", "no estoy segura"', tab: 'zendesk', ref: '<a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: The End of Solution Sales</a>' },
+  'Commitments': { title: 'Commitment Signals', text: 'Mensajes donde el paciente CONFIRMA o se compromete. La senal mas fuerte de que el deal se va a cerrar.', example: '<b>Frases:</b> "dale, perfecto", "listo", "confirmo", "de acuerdo", "nos vemos"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1509/jm.15.0420" target="_blank">Journal of Marketing: Customer Engagement</a>' },
+  'Usuarios': { title: 'Usuarios Unicos', text: 'Personas diferentes que enviaron mensajes. Cada WhatsApp = un usuario.', example: '0 puede indicar que falta procesar la identificacion de autores.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
+  'Deals totales': { title: 'Deals Totales', text: 'Cantidad de tratos en Zendesk Sell. Un deal = un paciente desde el primer contacto hasta cirugia o perdida.', example: '4527 deals = 4527 pacientes que mostraron interes en una cirugia.', tab: 'deals', ref: '<a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell CRM</a>' },
+  'Exitosos': { title: 'Deals Exitosos', text: 'Deals que llegaron a CERRADO OPERADO, AGENDADO o INSTALADO. Son los que generan ingresos reales.', example: '1248 exitosos de 4527 = 27.6%. De cada 4 pacientes, 1 se opera.', tab: 'deals', ref: 'Fases definidas por Clinyco en Zendesk Sell.' },
+  'Tasa exito': { title: 'Tasa de Exito', text: 'Porcentaje de deals que llegan a cierre exitoso. LA metrica principal del equipo comercial.', example: '27.6% = de cada 100 pacientes, 28 terminan operandose.', tab: 'deals', ref: '<a href="https://www.salesforce.com/resources/articles/sales-conversion-rate/" target="_blank">Salesforce: Conversion Rate Benchmarks</a>' },
+  'Operados': { title: 'Cerrados Operados', text: 'Pacientes que completaron TODO el proceso y ya se operaron. El mejor resultado posible.', example: 'Captacion → examenes → preoperatorio → cirugia = CERRADO OPERADO.', tab: 'deals', ref: 'Fase terminal exitosa del pipeline Clinyco.' },
+  'Agendados': { title: 'Cerrados Agendados', text: 'Pacientes con pabellon reservado y fecha de cirugia confirmada. A un paso del exito.', example: '72 agendados = 72 cirugias programadas pendientes.', tab: 'deals', ref: 'Fase pre-terminal del pipeline Clinyco.' },
+  'Con bono 75d': { title: 'Bono 75 Dias', text: 'Cuando el paciente se opera en 75 dias o menos desde que entro, los agentes ganan comision EXTRA. Incentivo por rapidez.', example: 'Entra 1/ene, se opera 15/feb (45 dias) → agentes ganan BAR1+BAR4, BAR2+BAR5, BAR3+BAR6.', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
+  'Comisiones base': { title: 'Comisiones Base (CLP)', text: 'Total en pesos chilenos pagado por participar en deals exitosos. 3 fases = 3 comisiones diferentes para 3 agentes (o el mismo).', example: '<b>Fase 1:</b> Colaborador1 gana BAR1 ($8.001)<br><b>Fase 2:</b> Colaborador2 gana BAR2 ($5.002)<br><b>Fase 3:</b> Colaborador3 gana BAR3 ($5.003)', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
+  'Total comparadas': { title: 'Total Comparadas', text: 'Predicciones de EugenIA ya comparadas con la accion real del agente. Es el tamano de la muestra de aprendizaje.', example: '660 = EugenIA tiene 660 ejemplos para aprender. Mas ejemplos = mejor.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2303.17580" target="_blank">Human-AI Collaboration</a>' },
+  'Parciales': { title: 'Parciales', text: 'Veces que EugenIA sugirio algo parecido pero no identico. Como sacar un "casi" en un examen.', example: 'EugenIA: "preguntar peso" → Agente: "cuanto pesas y mides?" = parcial.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Index</a>' },
+  'Diferentes': { title: 'Diferentes', text: 'Veces que el agente hizo algo completamente diferente. No es malo — el agente puede saber mas.', example: '100% al inicio es normal. Es un alumno nuevo. Con gold samples y directivas, baja.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2303.17580" target="_blank">Human-AI Collaboration</a>' },
+  'Match promedio': { title: 'Match Promedio', text: 'Nota promedio de similitud EugenIA vs agentes. De 0 a 1. Con el tiempo debe subir.', example: '0.000 → 0.4+ en 3 meses. 0.6+ = EugenIA y agentes piensan parecido.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank">Text Similarity</a>' },
+  'Outcome promedio': { title: 'Outcome Promedio', text: 'Nota del resultado final de los deals vinculados a predicciones. De 0 (perdido) a 100 (operado).', example: 'Requiere ejecutar sync-outcomes.js para cruzar con Zendesk Sell.', tab: 'eugenia', ref: 'Outcome scoring, metodologia interna Clinyco.' },
+  'Bonos 75d': { title: 'Bonos 75 Dias (CLP)', text: 'Comision extra por rapidez. Si el proceso completo tomo 75 dias o menos, los 3 colaboradores ganan BAR4+BAR5+BAR6.', example: 'Deal en 60 dias: Colaborador1 gana $8.001+$9.004=$17.005. Colaborador2: $5.002+$6.005=$11.007.', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
 };
 
 const HELP = {
   'eug-precision': {
     title: 'Precision semanal',
     text: 'Muestra semana a semana que tan bien predice EugenIA lo que el agente humano va a hacer. El "Match Score" va de 0 a 1: mas cerca de 1, mejor predice.',
-    example: 'Si el Match Score es 0.6, significa que en el 60% de los casos EugenIA sugirio algo parecido a lo que el agente hizo.'
+    example: 'Si el Match Score es 0.6, significa que en el 60% de los casos EugenIA sugirio algo parecido a lo que el agente hizo.',
+    ref: '<a href="https://arxiv.org/abs/2303.17580" target="_blank">Human-AI Collaboration (2023)</a> | <a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Similarity</a>'
   },
   'eug-donut': {
     title: 'Distribucion de match types',
     text: 'Cada vez que un agente responde, EugenIA compara su sugerencia con lo que el agente hizo. Hay 3 resultados posibles:',
-    example: '<b>Same Intent (verde):</b> EugenIA y el agente pensaron igual.<br><b>Partial Match (amarillo):</b> Parecido pero no exacto.<br><b>Different Topic (rojo):</b> El agente hizo algo completamente diferente.'
+    example: '<b>Same Intent (verde):</b> EugenIA y el agente pensaron igual.<br><b>Partial Match (amarillo):</b> Parecido pero no exacto.<br><b>Different Topic (rojo):</b> El agente hizo algo completamente diferente.',
+    ref: 'Clasificacion por umbral de similitud: ≥0.6=same, ≥0.3=partial, <0.3=different. <a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Index</a>'
   },
   'eug-actions': {
     title: 'Acciones sugeridas por outcome',
     text: 'Ranking de las acciones que EugenIA sugiere, ordenadas por que tan bien les fue a los deals despues. Un outcome alto significa que el deal avanzo bien.',
-    example: 'Si "Derivar a coordinacion" tiene outcome 80, significa que cuando EugenIA sugirio eso, los deals terminaron bien (cerrados/operados).'
+    example: 'Si "Derivar a coordinacion" tiene outcome 80, significa que cuando EugenIA sugirio eso, los deals terminaron bien.',
+    ref: 'Outcome scoring basado en fases de Zendesk Sell pipeline. Metodologia interna Clinyco.'
   },
   'eug-gold': {
     title: 'Gold Samples',
     text: 'Son los casos mas valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay algo interesante que estudiar.',
-    example: '<b>high_match_good_outcome:</b> EugenIA acerto y el deal fue exitoso (refuerzo positivo).<br><b>low_match_good_outcome:</b> El agente hizo algo diferente y funciono mejor (aprender del humano).'
+    example: '<b>high_match_good_outcome:</b> EugenIA acerto y el deal fue exitoso.<br><b>low_match_good_outcome:</b> El agente hizo diferente y funciono mejor.',
+    ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Active Learning Survey (2020)</a>'
   },
   'wa-signals': {
     title: 'Senales de venta (WAHA)',
     text: 'Los mensajes de WhatsApp directo se analizan buscando palabras clave que indican la intencion del paciente.',
-    example: '<b>Buying:</b> "cuanto cuesta", "me interesa", "quiero agendar"<br><b>Objection:</b> "es muy caro", "lo voy a pensar"<br><b>Commitment:</b> "listo", "dale", "perfecto"'
+    example: '<b>Buying:</b> "cuanto cuesta", "me interesa"<br><b>Objection:</b> "es muy caro", "lo voy a pensar"<br><b>Commitment:</b> "listo", "dale", "perfecto"',
+    ref: 'Deteccion basada en keywords calibrada para espanol chileno. <a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Sales Signal Detection</a>'
   },
   'zd-signals': {
     title: 'Senales de pacientes (Zendesk)',
     text: 'Analisis de lo que los pacientes escriben al bot Antonia o al agente via Zendesk. Detecta intenciones de compra, objeciones y compromisos.',
-    example: 'Si un paciente escribe "cuanto sale la cirugia?", se detecta como Buying Signal. Si dice "es muy caro", es Objection Signal.'
+    example: '"cuanto sale la cirugia?" = Buying. "es muy caro" = Objection. "dale, perfecto" = Commitment.',
+    ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Sales Signal Detection</a> | <a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: Solution Sales</a>'
   },
   'zd-sentiment': {
     title: 'Sentiment de pacientes',
-    text: 'Mide si los mensajes del paciente son positivos, negativos o neutros. Se analiza el texto y los emojis que usan.',
-    example: '<b>Verde (> 0.2):</b> Paciente contento, usa palabras positivas o emojis felices.<br><b>Rojo (< -0.2):</b> Paciente molesto o preocupado.<br><b>Amarillo:</b> Neutro.'
+    text: 'Mide si los mensajes del paciente son positivos, negativos o neutros. Se analiza el texto (palabras) y los emojis que usan.',
+    example: '<b>Verde (> 0.2):</b> Contento. <b>Rojo (< -0.2):</b> Molesto. <b>Amarillo:</b> Neutro.',
+    ref: 'Novak et al. (2015). <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Sentiment of Emojis, PLOS ONE</a> | Dataset: <a href="http://hdl.handle.net/11356/1048" target="_blank">CLARIN.SI</a>'
   },
   'deals-agents': {
     title: 'Deals por agente',
-    text: 'Muestra cuantos deals (tratos) maneja cada agente y cuantos llegaron a buen termino. Los exitosos son: CERRADO OPERADO, CERRADO AGENDADO y CERRADO INSTALADO.',
-    example: 'Si Gabriela tiene 1919 deals y 600 exitosos, su tasa de exito es 31.3%. Significa que de cada 3 pacientes que atiende, 1 llega a operarse o agendarse.'
+    text: 'Cuantos deals maneja cada agente y cuantos terminaron bien. Exitosos = CERRADO OPERADO + AGENDADO + INSTALADO.',
+    example: 'Gabriela: 1919 deals, 600 exitosos = 31.3%. De cada 3 pacientes, 1 se opera.',
+    ref: '<a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a> | <a href="https://www.salesforce.com/resources/articles/sales-conversion-rate/" target="_blank">Conversion Benchmarks</a>'
   },
   'deals-phases': {
     title: 'Distribucion de fases',
     text: 'Muestra en que etapa estan todos los deals. Lo ideal es que la mayoria esten en fases verdes (cerrados exitosamente).',
-    example: '<b>Verde = Exito:</b> CERRADO OPERADO, AGENDADO, INSTALADO.<br><b>Rojo = Perdido:</b> SIN RESPUESTA.<br><b>Gris = En proceso:</b> EXAMENES, CANDIDATO, etc.'
+    example: '<b>Verde = Exito:</b> CERRADO OPERADO, AGENDADO, INSTALADO.<br><b>Rojo = Perdido:</b> SIN RESPUESTA.<br><b>Gris = En proceso:</b> EXAMENES, CANDIDATO, etc.',
+    ref: 'Fases de pipeline definidas en <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>. Configuracion interna Clinyco.'
   },
   'commissions': {
     title: 'Comisiones por agente',
-    text: 'Cada deal exitoso genera comisiones en pesos chilenos (CLP) para los agentes que participaron en las 3 fases del proceso. Si el deal se cerro en 75 dias o menos desde que entro, se paga un bono extra.',
-    example: 'Si Gabriela capto un paciente (Fase 1) y Carolin lo siguio (Fase 2) y cerro (Fase 3), Gabriela gana la comision BAR1 y Carolin gana BAR2+BAR3. Si se opero en menos de 75 dias, ambas ganan ademas BAR4, BAR5, BAR6.'
+    text: 'Cada deal exitoso genera comisiones en CLP para los agentes de las 3 fases. Si se cerro en 75 dias o menos, se paga bono extra (BAR4+BAR5+BAR6).',
+    example: 'Gabriela capto (Fase 1, BAR1=$8.001), Carolin siguio y cerro (Fase 2+3, BAR2=$5.002 + BAR3=$5.003). Si fue en <75 dias, suman BAR4+BAR5+BAR6.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>. Valores de comision configurados en Zendesk Sell custom fields.'
   },
   'agents-monthly': {
     title: 'Deals por mes por agente',
-    text: 'Grafico que muestra cuantos deals nuevos entro cada agente cada mes. Permite ver tendencias: si un agente esta captando mas o menos pacientes que antes.',
-    example: 'Si en enero Gabriela entro 100 deals y en marzo entro 50, puede indicar que necesita mas leads o que se redistribuyeron las cargas.'
+    text: 'Cuantos deals nuevos entro cada agente cada mes. Permite ver tendencias de captacion y carga de trabajo.',
+    example: 'Si Gabriela paso de 100 deals/mes a 50, puede indicar menos leads asignados o redistribucion de cargas.',
+    ref: 'Agrupacion por fecha "Agregado el" de <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>.'
   },
   'agents-summary': {
     title: 'Resumen del equipo',
-    text: 'Tabla con todos los agentes registrados. Muestra sus deals, tasa de exito, comisiones totales en CLP, y actividad en WhatsApp directo (WAHA).',
-    example: 'La columna "Tasa" es el porcentaje de deals que llegan a CERRADO. La columna "Comision CLP" es el total ganado por participar como colaborador en deals exitosos.'
+    text: 'Tabla maestra con cada agente: deals totales, exitosos, tasa de exito, comisiones en CLP, y actividad en WhatsApp WAHA.',
+    example: '"Tasa" = % de deals cerrados exitosamente. "Comision CLP" = total ganado como colaborador en deals exitosos (base + bono 75 dias).',
+    ref: 'Datos consolidados de <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a> + <a href="https://waha.devlike.pro/" target="_blank">WAHA</a> + <a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>'
   },
 };
 
@@ -820,9 +852,10 @@ function showHelp(key) {
   const h = HELP[key];
   if (!h) return;
   document.getElementById('help-title').textContent = h.title;
-  document.getElementById('help-text').textContent = '';
   document.getElementById('help-text').innerHTML = h.text;
   document.getElementById('help-example').innerHTML = h.example;
+  document.getElementById('help-refs').innerHTML = h.ref ? '<b>Referencia:</b> ' + h.ref : '';
+  document.getElementById('help-data-btn').style.display = 'none';
   document.getElementById('help-overlay').classList.add('open');
 }
 function closeHelp() {
@@ -842,7 +875,11 @@ loadDashboard();
     <h3 id="help-title"></h3>
     <p id="help-text"></p>
     <div class="example" id="help-example"></div>
-    <button class="close-help" onclick="closeHelp()">Entendido</button>
+    <div class="ref-section" id="help-refs"></div>
+    <div class="help-buttons">
+      <button class="btn-ok" onclick="closeHelp()">Entendido</button>
+      <button class="btn-data" id="help-data-btn" onclick="closeHelp()" style="display:none">Ver Datos</button>
+    </div>
   </div>
 </div>
 </body>
