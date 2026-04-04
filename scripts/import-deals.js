@@ -16,7 +16,10 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString: DATABASE_URL });
+const pool = new pg.Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 function clean(val) {
   const s = String(val || "").trim();
