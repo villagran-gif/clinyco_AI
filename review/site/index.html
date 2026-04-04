@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clinyco Review Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    :root {
+      --clinyco-blue: #2563eb;
+      --clinyco-green: #16a34a;
+      --clinyco-red: #dc2626;
+      --clinyco-amber: #d97706;
+      --clinyco-purple: #9333ea;
+    }
+    body { background: #f8fafc; }
+    .header-bar {
+      background: linear-gradient(135deg, #1e293b, #334155);
+      color: #fff; padding: 1.2rem 2rem; margin-bottom: 1.5rem;
+      display: flex; align-items: center; gap: 1rem;
+    }
+    .header-bar h1 { margin: 0; font-size: 1.4rem; color: #fff; }
+    .header-bar small { opacity: .7; font-size: .85rem; }
+    .tabs {
+      display: flex; gap: .5rem; margin-bottom: 1.5rem;
+      border-bottom: 2px solid #e2e8f0; padding-bottom: .5rem;
+    }
+    .tabs button {
+      background: none; border: none; padding: .6rem 1.2rem;
+      font-weight: 600; cursor: pointer; border-radius: 6px 6px 0 0;
+      color: #64748b; font-size: .95rem;
+    }
+    .tabs button.active { background: var(--clinyco-blue); color: #fff; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem; margin-bottom: 2rem;
+    }
+    .kpi-card {
+      background: #fff; border-radius: 12px; padding: 1.2rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08); text-align: center;
+    }
+    .kpi-card .value {
+      font-size: 2rem; font-weight: 700; color: #1e293b;
+      line-height: 1.2;
+    }
+    .kpi-card .label {
+      font-size: .8rem; color: #64748b; margin-top: .3rem;
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    .chart-row {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 1.5rem; margin-bottom: 2rem;
+    }
+    .chart-box {
+      background: #fff; border-radius: 12px; padding: 1.2rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .chart-box h3 { font-size: .95rem; color: #475569; margin-bottom: .8rem; }
+    table { font-size: .85rem; }
+    th { background: #f1f5f9; }
+    .badge {
+      display: inline-block; padding: .15rem .5rem; border-radius: 999px;
+      font-size: .75rem; font-weight: 600;
+    }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-amber { background: #fef3c7; color: #92400e; }
+    .badge-red   { background: #fee2e2; color: #991b1b; }
+    .badge-purple { background: #f3e8ff; color: #6b21a8; }
+    .loading { text-align: center; padding: 3rem; color: #94a3b8; }
+    .error-msg { color: var(--clinyco-red); padding: 1rem; text-align: center; }
+    @media (max-width: 768px) {
+      .chart-row { grid-template-columns: 1fr; }
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header-bar">
+  <div>
+    <h1>Clinyco Review Dashboard</h1>
+    <small>EugenIA Learning + WhatsApp Sentiment Analysis</small>
+  </div>
+</div>
+
+<main class="container">
+  <div class="tabs">
+    <button class="active" onclick="showTab('dashboard')">Dashboard</button>
+    <button onclick="showTab('eugenia')">EugenIA Learning</button>
+    <button onclick="showTab('whatsapp')">WhatsApp Sentiment</button>
+  </div>
+
+  <!-- ══════ TAB: DASHBOARD ══════ -->
+  <div id="tab-dashboard" class="tab-content active">
+    <div id="dash-loading" class="loading">Cargando dashboard...</div>
+    <div id="dash-content" style="display:none">
+      <h2>EugenIA</h2>
+      <div class="kpi-grid" id="kpi-eugenia"></div>
+      <h2>WhatsApp Observer</h2>
+      <div class="kpi-grid" id="kpi-whatsapp"></div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: EUGENIA ══════ -->
+  <div id="tab-eugenia" class="tab-content">
+    <div id="eug-loading" class="loading">Cargando datos de EugenIA...</div>
+    <div id="eug-content" style="display:none">
+      <div class="kpi-grid" id="eug-kpis"></div>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Precision semanal (match score)</h3>
+          <canvas id="chart-eug-trends"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Distribucion de match types</h3>
+          <canvas id="chart-eug-donut"></canvas>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Acciones sugeridas por outcome</h3>
+          <canvas id="chart-eug-actions"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Gold Samples</h3>
+          <div style="max-height:350px;overflow:auto">
+            <table id="table-gold" role="grid">
+              <thead><tr>
+                <th>Turn</th><th>AI sugirio</th><th>Humano hizo</th>
+                <th>Match</th><th>Outcome</th><th>Gold Reason</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Ultimas directivas de agentes</h3>
+        <div style="max-height:300px;overflow:auto">
+          <table id="table-directives" role="grid">
+            <thead><tr>
+              <th>Tipo</th><th>Campo</th><th>Valor</th><th>Texto original</th><th>Fecha</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: WHATSAPP ══════ -->
+  <div id="tab-whatsapp" class="tab-content">
+    <div id="wa-loading" class="loading">Cargando datos de WhatsApp...</div>
+    <div id="wa-content" style="display:none">
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Senales de venta por dia</h3>
+          <canvas id="chart-wa-signals"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Performance por agente</h3>
+          <canvas id="chart-wa-agents"></canvas>
+        </div>
+      </div>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Conversaciones — Sentiment & Senales</h3>
+        <div style="max-height:400px;overflow:auto">
+          <table id="table-conversations" role="grid">
+            <thead><tr>
+              <th>Cliente</th><th>Agente</th><th>Msgs</th>
+              <th>Sentiment texto</th><th>Sentiment emoji</th>
+              <th>Buying</th><th>Objections</th><th>Commitments</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ── Config ──
+const API_BASE = window.location.hostname === "localhost"
+  ? "http://localhost:3000/api/review"
+  : "/api";
+
+async function api(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`API ${path}: ${res.status}`);
+  return res.json();
+}
+
+// ── Tabs ──
+function showTab(name) {
+  document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
+  document.getElementById(`tab-${name}`).classList.add("active");
+  document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
+
+  if (name === "dashboard" && !window._dashLoaded) loadDashboard();
+  if (name === "eugenia"   && !window._eugLoaded)  loadEugenia();
+  if (name === "whatsapp"  && !window._waLoaded)   loadWhatsapp();
+}
+
+// ── Helpers ──
+function kpiCard(value, label) {
+  return `<div class="kpi-card"><div class="value">${value ?? '—'}</div><div class="label">${label}</div></div>`;
+}
+
+function matchBadge(type) {
+  const map = { same_intent: "badge-green", partial_match: "badge-amber", different_topic: "badge-red" };
+  return `<span class="badge ${map[type] || ''}">${type || '—'}</span>`;
+}
+
+function pct(n, total) {
+  if (!total) return "0%";
+  return (n / total * 100).toFixed(1) + "%";
+}
+
+function shortText(txt, max = 40) {
+  if (!txt) return "—";
+  return txt.length > max ? txt.slice(0, max) + "..." : txt;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DASHBOARD TAB
+// ═══════════════════════════════════════════════════════════════════
+
+async function loadDashboard() {
+  try {
+    const d = await api("/dashboard");
+    const e = d.eugenia, w = d.whatsapp;
+
+    document.getElementById("kpi-eugenia").innerHTML = [
+      kpiCard(e.total_predictions, "Predicciones"),
+      kpiCard(e.accuracy.same_intent, "Aciertos (same intent)"),
+      kpiCard(e.avg_match_score, "Match Score promedio"),
+      kpiCard(e.avg_outcome_score, "Outcome promedio"),
+      kpiCard(e.gold_samples, "Gold Samples"),
+      kpiCard(e.directives_received, "Directivas recibidas"),
+    ].join("");
+
+    document.getElementById("kpi-whatsapp").innerHTML = [
+      kpiCard(w.total_conversations, "Conversaciones"),
+      kpiCard(w.total_messages, "Mensajes"),
+      kpiCard(w.active_agents, "Agentes activos"),
+      kpiCard(w.avg_text_sentiment, "Sentiment texto"),
+      kpiCard(w.avg_emoji_sentiment, "Sentiment emoji"),
+      kpiCard(w.signals.buying, "Buying signals"),
+      kpiCard(w.signals.objection, "Objections"),
+      kpiCard(w.signals.commitment, "Commitments"),
+    ].join("");
+
+    document.getElementById("dash-loading").style.display = "none";
+    document.getElementById("dash-content").style.display = "block";
+    window._dashLoaded = true;
+  } catch (err) {
+    document.getElementById("dash-loading").innerHTML =
+      `<div class="error-msg">Error: ${err.message}</div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  EUGENIA TAB
+// ═══════════════════════════════════════════════════════════════════
+
+async function loadEugenia() {
+  try {
+    const [accuracy, trends, gold, actions, directives] = await Promise.all([
+      api("/eugenia/accuracy"),
+      api("/eugenia/trends?weeks=12"),
+      api("/eugenia/gold-samples?limit=30"),
+      api("/eugenia/actions"),
+      api("/eugenia/directives?limit=30"),
+    ]);
+
+    // KPIs
+    document.getElementById("eug-kpis").innerHTML = [
+      kpiCard(accuracy.total, "Total comparadas"),
+      kpiCard(pct(accuracy.same_intent, accuracy.total), "Aciertos"),
+      kpiCard(pct(accuracy.partial_match, accuracy.total), "Parciales"),
+      kpiCard(pct(accuracy.different_topic, accuracy.total), "Diferentes"),
+      kpiCard(accuracy.avg_match_score, "Match promedio"),
+      kpiCard(accuracy.avg_outcome_score, "Outcome promedio"),
+    ].join("");
+
+    // Trends line chart
+    new Chart(document.getElementById("chart-eug-trends"), {
+      type: "line",
+      data: {
+        labels: trends.map(t => t.week),
+        datasets: [
+          { label: "Match Score", data: trends.map(t => t.avg_match),
+            borderColor: "#2563eb", tension: .3, fill: false },
+          { label: "Outcome", data: trends.map(t => t.avg_outcome),
+            borderColor: "#16a34a", tension: .3, fill: false, yAxisID: "y1" },
+        ]
+      },
+      options: {
+        responsive: true, plugins: { legend: { position: "bottom" } },
+        scales: {
+          y:  { beginAtZero: true, max: 1, title: { display: true, text: "Match Score" } },
+          y1: { position: "right", beginAtZero: true, max: 100, title: { display: true, text: "Outcome" },
+                grid: { drawOnChartArea: false } }
+        }
+      }
+    });
+
+    // Donut chart
+    new Chart(document.getElementById("chart-eug-donut"), {
+      type: "doughnut",
+      data: {
+        labels: ["Same Intent", "Partial Match", "Different Topic"],
+        datasets: [{
+          data: [accuracy.same_intent, accuracy.partial_match, accuracy.different_topic],
+          backgroundColor: ["#16a34a", "#d97706", "#dc2626"],
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+    });
+
+    // Actions bar chart
+    const topActions = actions.slice(0, 10);
+    new Chart(document.getElementById("chart-eug-actions"), {
+      type: "bar",
+      data: {
+        labels: topActions.map(a => shortText(a.ai_suggested_action, 25)),
+        datasets: [{
+          label: "Outcome promedio",
+          data: topActions.map(a => a.avg_outcome),
+          backgroundColor: "#2563eb",
+        }]
+      },
+      options: {
+        indexAxis: "y", responsive: true,
+        scales: { x: { beginAtZero: true, max: 100 } },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    // Gold samples table
+    const goldBody = document.querySelector("#table-gold tbody");
+    goldBody.innerHTML = gold.map(g => `<tr>
+      <td>${g.turn_number}</td>
+      <td>${shortText(g.ai_suggested_action)}</td>
+      <td>${shortText(g.human_actual_action)}</td>
+      <td>${matchBadge(g.match_type)}</td>
+      <td><strong>${g.outcome_score ?? '—'}</strong></td>
+      <td><span class="badge badge-purple">${g.gold_reason || '—'}</span></td>
+    </tr>`).join("");
+
+    // Directives table
+    const dirBody = document.querySelector("#table-directives tbody");
+    dirBody.innerHTML = directives.map(d => `<tr>
+      <td><span class="badge badge-amber">${d.directive_type}</span></td>
+      <td>${d.parsed_field || '—'}</td>
+      <td>${d.parsed_value || '—'}</td>
+      <td>${shortText(d.raw_text, 50)}</td>
+      <td>${new Date(d.created_at).toLocaleDateString("es-CL")}</td>
+    </tr>`).join("");
+
+    document.getElementById("eug-loading").style.display = "none";
+    document.getElementById("eug-content").style.display = "block";
+    window._eugLoaded = true;
+  } catch (err) {
+    document.getElementById("eug-loading").innerHTML =
+      `<div class="error-msg">Error: ${err.message}</div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  WHATSAPP TAB
+// ═══════════════════════════════════════════════════════════════════
+
+async function loadWhatsapp() {
+  try {
+    const [sentiment, signals, agents] = await Promise.all([
+      api("/whatsapp/sentiment?days=30"),
+      api("/whatsapp/signals?days=30"),
+      api("/whatsapp/agents"),
+    ]);
+
+    // Signals stacked bar chart
+    new Chart(document.getElementById("chart-wa-signals"), {
+      type: "bar",
+      data: {
+        labels: signals.map(s => s.day),
+        datasets: [
+          { label: "Buying",     data: signals.map(s => s.buying),      backgroundColor: "#16a34a" },
+          { label: "Objection",  data: signals.map(s => s.objections),  backgroundColor: "#dc2626" },
+          { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
+          { label: "Referral",   data: signals.map(s => s.referrals),   backgroundColor: "#9333ea" },
+          { label: "Urgency",    data: signals.map(s => s.urgency),     backgroundColor: "#d97706" },
+        ]
+      },
+      options: {
+        responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+
+    // Agents radar chart
+    if (agents.length) {
+      const labels = ["Sentiment Texto", "Sentiment Emoji", "Buying Signals", "Objections", "Conversaciones"];
+      const maxConv = Math.max(...agents.map(a => a.conversations), 1);
+      new Chart(document.getElementById("chart-wa-agents"), {
+        type: "radar",
+        data: {
+          labels,
+          datasets: agents.map((a, i) => {
+            const colors = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#9333ea"];
+            return {
+              label: a.agent_name,
+              data: [
+                Math.max(0, (parseFloat(a.avg_text_sentiment) + 1) / 2),
+                Math.max(0, (parseFloat(a.avg_emoji_sentiment) + 1) / 2),
+                parseFloat(a.avg_buying_signals) / 10,
+                parseFloat(a.avg_objection_signals) / 10,
+                a.conversations / maxConv,
+              ],
+              borderColor: colors[i % colors.length],
+              backgroundColor: colors[i % colors.length] + "22",
+            };
+          })
+        },
+        options: {
+          responsive: true,
+          scales: { r: { beginAtZero: true, max: 1 } },
+          plugins: { legend: { position: "bottom" } }
+        }
+      });
+    }
+
+    // Conversations table
+    const convBody = document.querySelector("#table-conversations tbody");
+    convBody.innerHTML = sentiment.map(s => `<tr>
+      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}<br>
+          <small style="color:#94a3b8">${s.client_phone}</small></td>
+      <td>${s.agent_name}</td>
+      <td>${s.message_count}</td>
+      <td>${sentimentBadge(s.avg_text_sentiment)}</td>
+      <td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
+      <td>${s.buying || 0}</td>
+      <td>${s.objections || 0}</td>
+      <td>${s.commitments || 0}</td>
+    </tr>`).join("");
+
+    document.getElementById("wa-loading").style.display = "none";
+    document.getElementById("wa-content").style.display = "block";
+    window._waLoaded = true;
+  } catch (err) {
+    document.getElementById("wa-loading").innerHTML =
+      `<div class="error-msg">Error: ${err.message}</div>`;
+  }
+}
+
+function sentimentBadge(val) {
+  if (val === null || val === undefined) return '<span class="badge">—</span>';
+  const n = parseFloat(val);
+  if (n > 0.2)  return `<span class="badge badge-green">${n.toFixed(3)}</span>`;
+  if (n < -0.2) return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
+  return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
+}
+
+// ── Init ──
+loadDashboard();
+</script>
+</body>
+</html>

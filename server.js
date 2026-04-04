@@ -43,6 +43,7 @@ import {
   onTakeover as onEugeniaTakeover,
   onTicketAuditsObserved as onEugeniaTicketAuditsObserved
 } from "./eugenia/index.js";
+import reviewRouter from "./review/router.js";
 import {
   searchSlotsViaApi,
   searchSlotsNoAuth,
@@ -55,6 +56,7 @@ import {
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+app.use("/api/review", reviewRouter);
 
 app.use((req, res, next) => {
   if (req.path.startsWith("/debug")) {
