@@ -128,6 +128,71 @@ export async function eugeniaActions() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  DEALS — Zendesk Sell Performance
+// ═══════════════════════════════════════════════════════════════════
+
+/** Deal phase summary across all agents */
+export async function dealsSummary() {
+  const { rows } = await getPool().query(`
+    SELECT pipeline_phase, count(*)::int AS total
+    FROM deals
+    WHERE pipeline_phase IS NOT NULL
+    GROUP BY pipeline_phase
+    ORDER BY total DESC
+  `);
+  return rows;
+}
+
+/** Deal performance per agent — success = CERRADO AGENDADO/OPERADO/INSTALADO */
+export async function dealsPerAgent() {
+  const { rows } = await getPool().query(`
+    SELECT d.owner_name,
+           count(*)::int AS total_deals,
+           count(*) FILTER (WHERE d.pipeline_phase IN (
+             'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+           ))::int AS deals_exitosos,
+           count(*) FILTER (WHERE d.pipeline_phase = 'CERRADO OPERADO')::int AS operados,
+           count(*) FILTER (WHERE d.pipeline_phase = 'CERRADO AGENDADO')::int AS agendados,
+           count(*) FILTER (WHERE d.pipeline_phase = 'CERRADO INSTALADO')::int AS instalados,
+           count(*) FILTER (WHERE d.pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta,
+           count(*) FILTER (WHERE d.pipeline_phase = 'SUSPENDIDO')::int AS suspendidos,
+           count(*) FILTER (WHERE d.pipeline_phase = 'DESCALIFICADO')::int AS descalificados,
+           count(*) FILTER (WHERE d.pipeline_phase IN (
+             'EXAMENES ENVIADOS','EXAMENES PRE-PAD ENVIADOS','ORDEN DE EXAMENES',
+             'EXAMENES ALLURION','EXAMENES ORBERA'
+           ))::int AS en_examenes,
+           count(*) FILTER (WHERE d.pipeline_phase IN (
+             'PROCESO PREOP','PROCESO PRE-OPERATORIO','CONTROLES PRE-INSTALACIÓN'
+           ))::int AS en_proceso,
+           count(*) FILTER (WHERE d.pipeline_phase IN ('CANDIDATO','CANDIDATOS'))::int AS candidatos,
+           CASE WHEN count(*) > 0
+             THEN round(
+               count(*) FILTER (WHERE d.pipeline_phase IN (
+                 'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+               ))::numeric / count(*)::numeric * 100, 1)
+             ELSE 0 END AS tasa_exito
+    FROM deals d
+    GROUP BY d.owner_name
+    ORDER BY deals_exitosos DESC
+  `);
+  return rows;
+}
+
+/** Deal phase breakdown for a single agent */
+export async function dealsForAgent(ownerName) {
+  const { rows } = await getPool().query(
+    `SELECT pipeline_phase, count(*)::int AS total,
+            min(added_at)::text AS earliest, max(added_at)::text AS latest
+     FROM deals
+     WHERE owner_name = $1
+     GROUP BY pipeline_phase
+     ORDER BY total DESC`,
+    [ownerName]
+  );
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  WHATSAPP — Sentiment & Metrics Review
 // ═══════════════════════════════════════════════════════════════════
 
@@ -403,7 +468,18 @@ export async function dashboardSummary() {
       (SELECT count(*)::int FROM conversation_messages
        WHERE 'referral_signal' = ANY(detected_signals))             AS zd_referral_signals,
       (SELECT count(*)::int FROM conversation_messages
-       WHERE 'urgency_signal' = ANY(detected_signals))              AS zd_urgency_signals
+       WHERE 'urgency_signal' = ANY(detected_signals))              AS zd_urgency_signals,
+
+      -- Deals (Zendesk Sell)
+      (SELECT count(*)::int FROM deals)                              AS deals_total,
+      (SELECT count(*)::int FROM deals
+       WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))
+                                                                     AS deals_exitosos,
+      (SELECT count(*)::int FROM deals
+       WHERE pipeline_phase = 'CERRADO OPERADO')                     AS deals_operados,
+      (SELECT count(*)::int FROM deals
+       WHERE pipeline_phase = 'CERRADO AGENDADO')                    AS deals_agendados,
+      (SELECT count(DISTINCT owner_name)::int FROM deals)            AS deals_agents
   `);
 
   const r = rows[0];
@@ -451,6 +527,16 @@ export async function dashboardSummary() {
         referral: r.zd_referral_signals,
         urgency: r.zd_urgency_signals,
       },
+    },
+    deals: {
+      total: r.deals_total,
+      exitosos: r.deals_exitosos,
+      operados: r.deals_operados,
+      agendados: r.deals_agendados,
+      agents: r.deals_agents,
+      tasa_exito: r.deals_total > 0
+        ? Math.round(r.deals_exitosos / r.deals_total * 1000) / 10
+        : 0,
     },
   };
 }

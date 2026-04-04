@@ -21,6 +21,9 @@ import {
   zendeskSignals,
   zendeskSentimentDetail,
   registeredAgents,
+  dealsSummary,
+  dealsPerAgent,
+  dealsForAgent,
   dashboardSummary,
 } from "./db.js";
 
@@ -186,6 +189,33 @@ router.get(
   wrap(async (req, res) => {
     const days = Math.min(parseInt(req.query.days) || 30, 365);
     res.json(await zendeskSignals(days));
+  })
+);
+
+// ═══════════════════════════════════════════════════════════════════
+//  DEALS (Zendesk Sell)
+// ═══════════════════════════════════════════════════════════════════
+
+router.get(
+  "/deals/summary",
+  wrap(async (_req, res) => {
+    res.json(await dealsSummary());
+  })
+);
+
+router.get(
+  "/deals/agents",
+  wrap(async (_req, res) => {
+    res.json(await dealsPerAgent());
+  })
+);
+
+router.get(
+  "/deals/agent/:name",
+  wrap(async (req, res) => {
+    const name = req.params.name;
+    if (!name) return res.status(400).json({ error: "missing agent name" });
+    res.json(await dealsForAgent(name));
   })
 );
 

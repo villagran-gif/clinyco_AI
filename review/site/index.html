@@ -103,6 +103,7 @@
     <button onclick="showTab('eugenia')">EugenIA</button>
     <button onclick="showTab('waha')">WhatsApp WAHA</button>
     <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
+    <button onclick="showTab('deals')">Deals Sell</button>
     <button onclick="showTab('agents')">Agentes</button>
   </div>
 
@@ -115,6 +116,9 @@
 
       <h2>WhatsApp WAHA <span class="source-tag source-waha">Directo</span></h2>
       <div class="kpi-grid" id="kpi-waha"></div>
+
+      <h2>Deals Zendesk Sell</h2>
+      <div class="kpi-grid" id="kpi-deals"></div>
 
       <h2>WhatsApp Zendesk <span class="source-tag source-zendesk">Bot + Agente</span></h2>
       <div class="kpi-grid" id="kpi-zendesk"></div>
@@ -210,6 +214,36 @@
     </div>
   </div>
 
+  <!-- ══════ TAB: DEALS ══════ -->
+  <div id="tab-deals" class="tab-content">
+    <div id="dl-loading" class="loading">Cargando deals...</div>
+    <div id="dl-content" style="display:none">
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Deals por agente — Tasa de exito</h3>
+          <canvas id="chart-deals-agents"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Distribucion de fases (global)</h3>
+          <canvas id="chart-deals-phases"></canvas>
+        </div>
+      </div>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Performance por agente (Zendesk Sell)</h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-deals" role="grid">
+            <thead><tr>
+              <th>Agente</th><th>Total</th><th>Exitosos</th><th>Tasa</th>
+              <th>Operados</th><th>Agendados</th><th>Instalados</th>
+              <th>Sin Resp.</th><th>Suspendidos</th><th>En Examenes</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════ TAB: AGENTS ══════ -->
   <div id="tab-agents" class="tab-content">
     <div id="ag-loading" class="loading">Cargando agentes...</div>
@@ -253,7 +287,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, agents: loadAgents };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, agents: loadAgents };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
@@ -283,7 +317,7 @@ function sourceTag(src) {
 async function loadDashboard() {
   try {
     const d = await api("/dashboard");
-    const e = d.eugenia, w = d.whatsapp_waha, z = d.whatsapp_zendesk;
+    const e = d.eugenia, w = d.whatsapp_waha, z = d.whatsapp_zendesk, dl = d.deals;
 
     document.getElementById("kpi-eugenia").innerHTML = [
       kpiCard(e.total_predictions, "Predicciones"),
@@ -304,6 +338,15 @@ async function loadDashboard() {
       kpiCard(w.signals.objection, "Objections"),
       kpiCard(w.signals.commitment, "Commitments"),
     ].join("");
+
+    document.getElementById("kpi-deals").innerHTML = dl ? [
+      kpiCard(dl.total, "Deals totales"),
+      kpiCard(dl.exitosos, "Exitosos"),
+      kpiCard(dl.tasa_exito + '%', "Tasa exito"),
+      kpiCard(dl.operados, "Operados"),
+      kpiCard(dl.agendados, "Agendados"),
+      kpiCard(dl.agents, "Agentes"),
+    ].join("") : "";
 
     document.getElementById("kpi-zendesk").innerHTML = [
       kpiCard(z.total_conversations, "Conversaciones"),
@@ -452,6 +495,56 @@ async function loadZendesk() {
     document.getElementById("zd-content").style.display = "block";
     window._zendeskLoaded = true;
   } catch (err) { document.getElementById("zd-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ DEALS ═══════════
+async function loadDeals() {
+  try {
+    const [summary, agents] = await Promise.all([
+      api("/deals/summary"), api("/deals/agents"),
+    ]);
+
+    // Phases donut
+    const successPhases = ['CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'];
+    const colors = summary.map(s => successPhases.includes(s.pipeline_phase) ? '#16a34a' : s.pipeline_phase === 'SIN RESPUESTA' ? '#dc2626' : '#94a3b8');
+    new Chart(document.getElementById("chart-deals-phases"), {
+      type: "doughnut",
+      data: { labels: summary.map(s => s.pipeline_phase), datasets: [{ data: summary.map(s => s.total), backgroundColor: colors }] },
+      options: { responsive: true, plugins: { legend: { position: "right", labels: { font: { size: 10 } } } } }
+    });
+
+    // Agents bar chart — exitosos vs total
+    const topAgents = agents.filter(a => a.total_deals > 10).slice(0, 10);
+    new Chart(document.getElementById("chart-deals-agents"), {
+      type: "bar",
+      data: {
+        labels: topAgents.map(a => a.owner_name),
+        datasets: [
+          { label: "Exitosos", data: topAgents.map(a => a.deals_exitosos), backgroundColor: "#16a34a" },
+          { label: "Sin Respuesta", data: topAgents.map(a => a.sin_respuesta), backgroundColor: "#dc2626" },
+          { label: "En Proceso", data: topAgents.map(a => a.en_examenes + a.en_proceso), backgroundColor: "#2563eb" },
+        ]
+      },
+      options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { legend: { position: "bottom" } } }
+    });
+
+    // Table
+    document.querySelector("#table-deals tbody").innerHTML = agents.map(a => {
+      const tasaClass = a.tasa_exito >= 30 ? 'badge-green' : a.tasa_exito >= 15 ? 'badge-amber' : 'badge-red';
+      return `<tr>
+        <td><strong>${a.owner_name}</strong></td>
+        <td>${a.total_deals}</td>
+        <td><strong>${a.deals_exitosos}</strong></td>
+        <td><span class="badge ${tasaClass}">${a.tasa_exito}%</span></td>
+        <td>${a.operados}</td><td>${a.agendados}</td><td>${a.instalados}</td>
+        <td>${a.sin_respuesta}</td><td>${a.suspendidos}</td><td>${a.en_examenes}</td>
+      </tr>`;
+    }).join("");
+
+    document.getElementById("dl-loading").style.display = "none";
+    document.getElementById("dl-content").style.display = "block";
+    window._dealsLoaded = true;
+  } catch (err) { document.getElementById("dl-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
 // ═══════════ AGENTS ═══════════
