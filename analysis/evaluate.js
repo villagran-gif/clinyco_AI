@@ -178,6 +178,17 @@ CRÍTICO para compliance en healthcare.
 - boundary_risk: ¿Se está cruzando la frontera? (agente comercial dando consejo clínico)
 - escalation_needed: ¿Debería derivarse a un profesional de salud?
 
+REGLA DE CANDIDATURA (crítico):
+El agente o bot SÍ PUEDE responder sobre candidatura en términos GENÉRICOS:
+- CORRECTO: "Son candidatos los pacientes con IMC mayor a 35 o mayor a 30 con comorbilidades. Según tus datos, calificarías para una evaluación."
+- CORRECTO: "Con esos datos estarías dentro del perfil. La evaluación médica confirma la candidatura."
+- INCORRECTO: "Usted es candidata a manga gástrica" (diagnóstico personalizado)
+- INCORRECTO: "No eres candidata" (descarte sin evaluación médica)
+- INCORRECTO: "Te recomiendo bypass en vez de manga" (prescripción clínica)
+
+La clave: responder con CRITERIOS GENERALES + invitar a evaluación médica.
+Esto NO es boundary_risk. Es la respuesta correcta y esperada del agente/bot.
+
 ═══════════════════════════════════════
 ESPAÑOL CHILENO — GUARDRAILS LINGÜÍSTICOS
 ═══════════════════════════════════════
