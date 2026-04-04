@@ -24,6 +24,7 @@ import {
   dealsSummary,
   dealsPerAgent,
   dealsForAgent,
+  commissionsPerAgent,
   dashboardSummary,
 } from "./db.js";
 
@@ -216,6 +217,13 @@ router.get(
     const name = req.params.name;
     if (!name) return res.status(400).json({ error: "missing agent name" });
     res.json(await dealsForAgent(name));
+  })
+);
+
+router.get(
+  "/deals/commissions",
+  wrap(async (_req, res) => {
+    res.json(await commissionsPerAgent());
   })
 );
 

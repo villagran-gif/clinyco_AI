@@ -192,6 +192,57 @@ export async function dealsForAgent(ownerName) {
   return rows;
 }
 
+/**
+ * Commission per agent — calculates total CLP earned per collaborator.
+ * Only for successful deals (CERRADO OPERADO/AGENDADO/INSTALADO).
+ * BAR1-3: always paid to colaborador1-3 respectively.
+ * BAR4-6: bonus paid to colaborador1-3 IF dias_added_cirugia <= 75.
+ */
+export async function commissionsPerAgent() {
+  const { rows } = await getPool().query(`
+    WITH exitosos AS (
+      SELECT * FROM deals
+      WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+    ),
+    comisiones AS (
+      -- Phase 1: colaborador1 earns BAR1, and BAR4 if bonus
+      SELECT colaborador1 AS agent,
+             COALESCE(comision_bar1, 0) AS base_clp,
+             CASE WHEN bono_75_dias THEN COALESCE(comision_bar4, 0) ELSE 0 END AS bonus_clp,
+             deal_id, bono_75_dias
+      FROM exitosos WHERE colaborador1 IS NOT NULL
+
+      UNION ALL
+
+      -- Phase 2: colaborador2 earns BAR2, and BAR5 if bonus
+      SELECT colaborador2,
+             COALESCE(comision_bar2, 0),
+             CASE WHEN bono_75_dias THEN COALESCE(comision_bar5, 0) ELSE 0 END,
+             deal_id, bono_75_dias
+      FROM exitosos WHERE colaborador2 IS NOT NULL
+
+      UNION ALL
+
+      -- Phase 3: colaborador3 earns BAR3, and BAR6 if bonus
+      SELECT colaborador3,
+             COALESCE(comision_bar3, 0),
+             CASE WHEN bono_75_dias THEN COALESCE(comision_bar6, 0) ELSE 0 END,
+             deal_id, bono_75_dias
+      FROM exitosos WHERE colaborador3 IS NOT NULL
+    )
+    SELECT agent,
+           count(DISTINCT deal_id)::int AS deals_participados,
+           sum(base_clp)::int AS comision_base_clp,
+           sum(bonus_clp)::int AS bono_75_dias_clp,
+           sum(base_clp + bonus_clp)::int AS comision_total_clp,
+           count(DISTINCT deal_id) FILTER (WHERE bono_75_dias)::int AS deals_con_bono
+    FROM comisiones
+    GROUP BY agent
+    ORDER BY comision_total_clp DESC
+  `);
+  return rows;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  WHATSAPP — Sentiment & Metrics Review
 // ═══════════════════════════════════════════════════════════════════
@@ -479,7 +530,15 @@ export async function dashboardSummary() {
        WHERE pipeline_phase = 'CERRADO OPERADO')                     AS deals_operados,
       (SELECT count(*)::int FROM deals
        WHERE pipeline_phase = 'CERRADO AGENDADO')                    AS deals_agendados,
-      (SELECT count(DISTINCT owner_name)::int FROM deals)            AS deals_agents
+      (SELECT count(DISTINCT owner_name)::int FROM deals)            AS deals_agents,
+      (SELECT count(*)::int FROM deals
+       WHERE bono_75_dias = true)                                    AS deals_con_bono,
+      (SELECT sum(COALESCE(comision_bar1,0)+COALESCE(comision_bar2,0)+COALESCE(comision_bar3,0))::int
+       FROM deals WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))
+                                                                     AS comisiones_base_total,
+      (SELECT sum(COALESCE(comision_bar4,0)+COALESCE(comision_bar5,0)+COALESCE(comision_bar6,0))::int
+       FROM deals WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+       AND bono_75_dias = true)                                      AS bonos_total
   `);
 
   const r = rows[0];
@@ -534,6 +593,9 @@ export async function dashboardSummary() {
       operados: r.deals_operados,
       agendados: r.deals_agendados,
       agents: r.deals_agents,
+      con_bono_75: r.deals_con_bono,
+      comisiones_base_clp: r.comisiones_base_total,
+      bonos_clp: r.bonos_total,
       tasa_exito: r.deals_total > 0
         ? Math.round(r.deals_exitosos / r.deals_total * 1000) / 10
         : 0,

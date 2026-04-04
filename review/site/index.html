@@ -241,6 +241,24 @@
           </table>
         </div>
       </div>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Comisiones por agente (CLP)</h3>
+          <canvas id="chart-commissions"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Detalle comisiones</h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-commissions" role="grid">
+              <thead><tr>
+                <th>Agente</th><th>Deals</th><th>Base CLP</th>
+                <th>Bono 75d CLP</th><th>Total CLP</th><th>Deals c/bono</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -339,13 +357,16 @@ async function loadDashboard() {
       kpiCard(w.signals.commitment, "Commitments"),
     ].join("");
 
+    const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
     document.getElementById("kpi-deals").innerHTML = dl ? [
       kpiCard(dl.total, "Deals totales"),
       kpiCard(dl.exitosos, "Exitosos"),
       kpiCard(dl.tasa_exito + '%', "Tasa exito"),
       kpiCard(dl.operados, "Operados"),
       kpiCard(dl.agendados, "Agendados"),
-      kpiCard(dl.agents, "Agentes"),
+      kpiCard(dl.con_bono_75, "Con bono 75d"),
+      kpiCard(fmtCLP(dl.comisiones_base_clp), "Comisiones base"),
+      kpiCard(fmtCLP(dl.bonos_clp), "Bonos 75d"),
     ].join("") : "";
 
     document.getElementById("kpi-zendesk").innerHTML = [
@@ -500,8 +521,8 @@ async function loadZendesk() {
 // ═══════════ DEALS ═══════════
 async function loadDeals() {
   try {
-    const [summary, agents] = await Promise.all([
-      api("/deals/summary"), api("/deals/agents"),
+    const [summary, agents, commissions] = await Promise.all([
+      api("/deals/summary"), api("/deals/agents"), api("/deals/commissions"),
     ]);
 
     // Phases donut
@@ -540,6 +561,31 @@ async function loadDeals() {
         <td>${a.sin_respuesta}</td><td>${a.suspendidos}</td><td>${a.en_examenes}</td>
       </tr>`;
     }).join("");
+
+    // Commissions chart + table
+    if (commissions.length) {
+      const fmt = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+      new Chart(document.getElementById("chart-commissions"), {
+        type: "bar",
+        data: {
+          labels: commissions.map(c => c.agent),
+          datasets: [
+            { label: "Base CLP", data: commissions.map(c => c.comision_base_clp), backgroundColor: "#2563eb" },
+            { label: "Bono 75 dias CLP", data: commissions.map(c => c.bono_75_dias_clp), backgroundColor: "#16a34a" },
+          ]
+        },
+        options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: "bottom" } } }
+      });
+
+      document.querySelector("#table-commissions tbody").innerHTML = commissions.map(c => `<tr>
+        <td><strong>${c.agent}</strong></td>
+        <td>${c.deals_participados}</td>
+        <td>${fmt(c.comision_base_clp)}</td>
+        <td>${fmt(c.bono_75_dias_clp)}</td>
+        <td><strong>${fmt(c.comision_total_clp)}</strong></td>
+        <td>${c.deals_con_bono}</td>
+      </tr>`).join("");
+    }
 
     document.getElementById("dl-loading").style.display = "none";
     document.getElementById("dl-content").style.display = "block";
