@@ -517,7 +517,57 @@ export async function dealsPerYearPerAgent() {
   return rows;
 }
 
-/** Agent participation by phase with optional year filter */
+/** Deal detail for a specific agent (by first name in colaborador fields) */
+export async function dealsForAgentDetail(agentFirstName, year = null) {
+  const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT d.deal_id, d.deal_name, d.pipeline_phase, d.pipeline_name,
+            d.added_at::text, d.fecha_cirugia::text, d.cirugia,
+            d.colaborador1, d.colaborador2, d.colaborador3,
+            d.comision_bar1, d.comision_bar2, d.comision_bar3,
+            d.comision_bar4, d.comision_bar5, d.comision_bar6,
+            d.dias_added_cirugia, d.bono_75_dias,
+            d.contact_name, d.contact_phone, d.rut_normalizado,
+            d.url_medinet, d.owner_name, d.synced_at
+     FROM deals d
+     WHERE (d.colaborador1 = $1 OR d.colaborador2 = $1 OR d.colaborador3 = $1) ${yearFilter}
+     ORDER BY d.added_at DESC
+     LIMIT 200`,
+    [agentFirstName]
+  );
+  return rows;
+}
+
+/** Audit log: recent changes */
+export async function auditLogRecent(limit = 100) {
+  const { rows } = await getPool().query(
+    `SELECT * FROM deal_audit_log ORDER BY detected_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+/** Deletion log: recent deletions */
+export async function deletionLogRecent(limit = 50) {
+  const { rows } = await getPool().query(
+    `SELECT id, deal_id, deal_name, rut_normalizado, pipeline_phase, owner_name,
+            colaborador1, colaborador2, colaborador3, detected_at
+     FROM deal_deletions_log ORDER BY detected_at DESC LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+/** Last sync status */
+export async function lastSyncStatus() {
+  const { rows } = await getPool().query(`
+    SELECT max(synced_at) AS last_sync,
+           count(*)::int AS total_deals,
+           count(*) FILTER (WHERE synced_at > now() - interval '15 minutes')::int AS synced_last_15m
+    FROM deals WHERE synced_at IS NOT NULL
+  `);
+  return rows[0];
+}
 export async function agentPhaseParticipation(year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
   const { rows } = await getPool().query(`

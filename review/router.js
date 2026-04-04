@@ -25,6 +25,10 @@ import {
   dealsPerYearPerAgent,
   agentPhaseParticipation,
   chainEffectiveness,
+  dealsForAgentDetail,
+  auditLogRecent,
+  deletionLogRecent,
+  lastSyncStatus,
   dealsSummary,
   dealsPerAgent,
   dealsForAgent,
@@ -221,6 +225,39 @@ router.get(
     const name = req.params.name;
     if (!name) return res.status(400).json({ error: "missing agent name" });
     res.json(await dealsForAgent(name));
+  })
+);
+
+router.get(
+  "/deals/agent-detail/:firstName",
+  wrap(async (req, res) => {
+    const name = req.params.firstName;
+    const year = req.query.year || null;
+    if (!name) return res.status(400).json({ error: "missing firstName" });
+    res.json(await dealsForAgentDetail(name, year));
+  })
+);
+
+router.get(
+  "/audit/changes",
+  wrap(async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    res.json(await auditLogRecent(limit));
+  })
+);
+
+router.get(
+  "/audit/deletions",
+  wrap(async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    res.json(await deletionLogRecent(limit));
+  })
+);
+
+router.get(
+  "/sync/status",
+  wrap(async (_req, res) => {
+    res.json(await lastSyncStatus());
   })
 );
 
