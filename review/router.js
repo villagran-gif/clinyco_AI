@@ -21,6 +21,7 @@ import {
   zendeskSignals,
   zendeskSentimentDetail,
   registeredAgents,
+  dealsPerMonthPerAgent,
   dealsSummary,
   dealsPerAgent,
   dealsForAgent,
@@ -235,6 +236,13 @@ router.get(
   "/agents",
   wrap(async (_req, res) => {
     res.json(await registeredAgents());
+  })
+);
+
+router.get(
+  "/agents/monthly",
+  wrap(async (_req, res) => {
+    res.json(await dealsPerMonthPerAgent());
   })
 );
 

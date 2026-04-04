@@ -423,7 +423,11 @@ export async function registeredAgents() {
            wa.avg_text_sentiment,
            wa.avg_emoji_sentiment,
            COALESCE(wa.buying, 0)::int AS buying_signals,
-           COALESCE(wa.objections, 0)::int AS objection_signals
+           COALESCE(wa.objections, 0)::int AS objection_signals,
+           COALESCE(dl.total_deals, 0)::int AS total_deals,
+           COALESCE(dl.deals_exitosos, 0)::int AS deals_exitosos,
+           COALESCE(dl.tasa_exito, 0) AS tasa_exito,
+           COALESCE(cm.comision_total, 0)::int AS comision_total_clp
     FROM agent_registry ar
     LEFT JOIN LATERAL (
       SELECT count(DISTINCT c.id) AS conversations,
@@ -442,8 +446,54 @@ export async function registeredAgents() {
       ) sub ON true
       WHERE c.session_name = ar.waha_session_name
     ) wa ON ar.waha_session_name IS NOT NULL
+    LEFT JOIN LATERAL (
+      SELECT count(*)::int AS total_deals,
+             count(*) FILTER (WHERE d.pipeline_phase IN (
+               'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+             ))::int AS deals_exitosos,
+             CASE WHEN count(*) > 0
+               THEN round(count(*) FILTER (WHERE d.pipeline_phase IN (
+                 'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+               ))::numeric / count(*)::numeric * 100, 1)
+               ELSE 0 END AS tasa_exito
+      FROM deals d WHERE d.owner_name = ar.canonical_name
+    ) dl ON true
+    LEFT JOIN LATERAL (
+      SELECT sum(base + bonus)::int AS comision_total
+      FROM (
+        SELECT COALESCE(comision_bar1,0) + CASE WHEN bono_75_dias THEN COALESCE(comision_bar4,0) ELSE 0 END AS base,
+               0 AS bonus FROM deals WHERE colaborador1 = split_part(ar.canonical_name,' ',1)
+               AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        UNION ALL
+        SELECT COALESCE(comision_bar2,0) + CASE WHEN bono_75_dias THEN COALESCE(comision_bar5,0) ELSE 0 END, 0
+               FROM deals WHERE colaborador2 = split_part(ar.canonical_name,' ',1)
+               AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        UNION ALL
+        SELECT COALESCE(comision_bar3,0) + CASE WHEN bono_75_dias THEN COALESCE(comision_bar6,0) ELSE 0 END, 0
+               FROM deals WHERE colaborador3 = split_part(ar.canonical_name,' ',1)
+               AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+      ) x
+    ) cm ON true
     WHERE ar.is_active = true
-    ORDER BY wa.messages DESC NULLS LAST
+    ORDER BY dl.total_deals DESC NULLS LAST
+  `);
+  return rows;
+}
+
+/** Deals per month per agent (owner) */
+export async function dealsPerMonthPerAgent() {
+  const { rows } = await getPool().query(`
+    SELECT date_trunc('month', added_at)::date AS month,
+           owner_name,
+           count(*)::int AS total_deals,
+           count(*) FILTER (WHERE pipeline_phase IN (
+             'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+           ))::int AS exitosos,
+           count(*) FILTER (WHERE pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta
+    FROM deals
+    WHERE added_at IS NOT NULL AND owner_name IS NOT NULL
+    GROUP BY 1, 2
+    ORDER BY 1 DESC, total_deals DESC
   `);
   return rows;
 }

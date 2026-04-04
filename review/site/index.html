@@ -267,22 +267,33 @@
     <div id="ag-loading" class="loading">Cargando agentes...</div>
     <div id="ag-content" style="display:none">
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Equipo Clinyco (agent_registry)</h3>
-        <div style="max-height:500px;overflow:auto">
+        <h3>Equipo Clinyco — Resumen</h3>
+        <div style="max-height:400px;overflow:auto">
           <table id="table-agents" role="grid">
             <thead><tr>
               <th>Agente</th><th>Rol</th><th>WhatsApp</th>
+              <th>Deals</th><th>Exitosos</th><th>Tasa</th>
+              <th>Comision CLP</th>
               <th>WAHA Conv.</th><th>WAHA Msgs</th>
-              <th>Sent. texto</th><th>Sent. emoji</th>
-              <th>Buying</th><th>Objections</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
-      <div class="chart-box">
-        <h3>Actividad WAHA por agente</h3>
-        <canvas id="chart-agents-bar"></canvas>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Deals por mes por agente</h3>
+        <canvas id="chart-agents-monthly"></canvas>
+      </div>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Detalle mensual</h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-agents-monthly" role="grid">
+            <thead><tr>
+              <th>Mes</th><th>Agente</th><th>Total Deals</th><th>Exitosos</th><th>Sin Resp.</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -596,30 +607,71 @@ async function loadDeals() {
 // ═══════════ AGENTS ═══════════
 async function loadAgents() {
   try {
-    const agents = await api("/agents");
-    const roleBadge = r => r === 'owner' ? '<span class="badge badge-purple">Owner</span>' : '<span class="badge badge-green">Agente</span>';
-    document.querySelector("#table-agents tbody").innerHTML = agents.map(a => `<tr>
-      <td><strong>${a.canonical_name}</strong><br><small style="color:#94a3b8">${a.email || ''}</small></td>
-      <td>${roleBadge(a.role)}</td>
-      <td><small>${a.waha_phone || '—'}</small></td>
-      <td>${a.waha_conversations}</td><td>${a.waha_messages}</td>
-      <td>${sentimentBadge(a.avg_text_sentiment)}</td><td>${sentimentBadge(a.avg_emoji_sentiment)}</td>
-      <td>${a.buying_signals || 0}</td><td>${a.objection_signals || 0}</td>
-    </tr>`).join("");
+    const [agents, monthly] = await Promise.all([
+      api("/agents"), api("/agents/monthly"),
+    ]);
 
-    const activeAgents = agents.filter(a => a.waha_messages > 0);
-    if (activeAgents.length) {
-      new Chart(document.getElementById("chart-agents-bar"), {
-        type: "bar",
-        data: {
-          labels: activeAgents.map(a => a.canonical_name),
-          datasets: [
-            { label: "Conversaciones WAHA", data: activeAgents.map(a => a.waha_conversations), backgroundColor: "#2563eb" },
-            { label: "Mensajes WAHA", data: activeAgents.map(a => a.waha_messages), backgroundColor: "#16a34a" },
-          ]
-        },
-        options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+    const roleBadge = r => r === 'owner' ? '<span class="badge badge-purple">Owner</span>' : '<span class="badge badge-green">Agente</span>';
+    const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+
+    // Summary table
+    document.querySelector("#table-agents tbody").innerHTML = agents.map(a => {
+      const tasaClass = a.tasa_exito >= 30 ? 'badge-green' : a.tasa_exito >= 15 ? 'badge-amber' : 'badge-red';
+      return `<tr>
+        <td><strong>${a.canonical_name}</strong><br><small style="color:#94a3b8">${a.email || ''}</small></td>
+        <td>${roleBadge(a.role)}</td>
+        <td><small>${a.waha_phone || '—'}</small></td>
+        <td>${a.total_deals}</td>
+        <td>${a.deals_exitosos}</td>
+        <td><span class="badge ${tasaClass}">${a.tasa_exito}%</span></td>
+        <td>${fmtCLP(a.comision_total_clp)}</td>
+        <td>${a.waha_conversations}</td><td>${a.waha_messages}</td>
+      </tr>`;
+    }).join("");
+
+    // Monthly chart
+    if (monthly.length) {
+      // Get unique months and agents
+      const months = [...new Set(monthly.map(m => m.month))].sort();
+      const agentNames = [...new Set(monthly.map(m => m.owner_name))];
+      const colors = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2","#ec4899","#84cc16","#f97316","#6366f1"];
+
+      // Build datasets per agent
+      const datasets = agentNames.slice(0, 10).map((name, i) => {
+        const data = months.map(mo => {
+          const row = monthly.find(m => m.month === mo && m.owner_name === name);
+          return row ? row.total_deals : 0;
+        });
+        return { label: name, data, backgroundColor: colors[i % colors.length], borderColor: colors[i % colors.length], tension: .3 };
       });
+
+      const monthLabels = months.map(m => {
+        const d = new Date(m);
+        return d.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
+      });
+
+      new Chart(document.getElementById("chart-agents-monthly"), {
+        type: "bar",
+        data: { labels: monthLabels, datasets },
+        options: {
+          responsive: true,
+          scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+          plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } }
+        }
+      });
+
+      // Monthly detail table
+      document.querySelector("#table-agents-monthly tbody").innerHTML = monthly.map(m => {
+        const d = new Date(m.month);
+        const mesLabel = d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
+        return `<tr>
+          <td>${mesLabel}</td>
+          <td><strong>${m.owner_name}</strong></td>
+          <td>${m.total_deals}</td>
+          <td><span class="badge badge-green">${m.exitosos}</span></td>
+          <td><span class="badge badge-red">${m.sin_respuesta}</span></td>
+        </tr>`;
+      }).join("");
     }
     document.getElementById("ag-loading").style.display = "none";
     document.getElementById("ag-content").style.display = "block";
