@@ -43,7 +43,9 @@
     .kpi-card {
       background: #fff; border-radius: 12px; padding: 1rem;
       box-shadow: 0 1px 3px rgba(0,0,0,.08); text-align: center;
+      cursor: pointer; transition: transform .15s, box-shadow .15s;
     }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.15); }
     .kpi-card .value {
       font-size: 1.8rem; font-weight: 700; color: #1e293b; line-height: 1.2;
     }
@@ -350,7 +352,17 @@ function showTab(name) {
 }
 
 function kpiCard(value, label) {
-  return `<div class="kpi-card"><div class="value">${value ?? '—'}</div><div class="label">${label}</div></div>`;
+  const hasHelp = KPI_HELP[label];
+  const onclick = hasHelp ? `onclick="showKpiHelp('${label.replace(/'/g,"\\'")}')"` : '';
+  return `<div class="kpi-card" ${onclick}><div class="value">${value ?? '—'}</div><div class="label">${label}${hasHelp ? ' <span style="opacity:.4">?</span>' : ''}</div></div>`;
+}
+function showKpiHelp(label) {
+  const h = KPI_HELP[label];
+  if (!h) return;
+  document.getElementById('help-title').textContent = h.title;
+  document.getElementById('help-text').innerHTML = h.text;
+  document.getElementById('help-example').innerHTML = h.example;
+  document.getElementById('help-overlay').classList.add('open');
 }
 function matchBadge(type) {
   const map = { same_intent: "badge-green", partial_match: "badge-amber", different_topic: "badge-red" };
@@ -709,6 +721,33 @@ async function loadAgents() {
 }
 
 // ═══════════ HELP POPUPS ═══════════
+// KPI explanations (shown when you tap any number card)
+const KPI_HELP = {
+  'Predicciones': { title: 'Predicciones de EugenIA', text: 'Cantidad de veces que EugenIA intento predecir que deberia hacer el agente humano antes de que respondiera.', example: '660 predicciones = EugenIA observo 660 turnos de conversacion y sugirio una accion para cada uno.' },
+  'Aciertos': { title: 'Aciertos (Same Intent)', text: 'Cuantas veces la sugerencia de EugenIA coincidio con lo que el agente realmente hizo.', example: 'Si hay 0 aciertos, significa que los agentes hicieron cosas diferentes a lo que EugenIA sugirio. Esto es normal al inicio — EugenIA esta aprendiendo.' },
+  'Match Score': { title: 'Match Score Promedio', text: 'De 0 a 1, que tan parecido fue lo que EugenIA sugirio vs lo que el agente hizo. 1 = identico, 0 = completamente diferente.', example: '0.000 significa que EugenIA y los agentes aun no estan sincronizados. A medida que EugenIA aprenda, este numero subira.' },
+  'Outcome': { title: 'Outcome Promedio', text: 'De 0 a 100, que tan bien terminaron los deals donde EugenIA hizo predicciones. 100 = deal cerrado exitosamente.', example: 'Falta ejecutar el sync de outcomes con Zendesk Sell para ver este dato.' },
+  'Gold Samples': { title: 'Gold Samples', text: 'Casos especialmente valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay patrones interesantes.', example: 'Un gold sample es cuando el agente hizo algo diferente a EugenIA y el deal termino bien — EugenIA aprende del humano.' },
+  'Directivas': { title: 'Directivas de Agentes', text: 'Correcciones explicitas que los agentes le dieron a EugenIA escribiendo CORREGIR, PIPELINE o NOTA en Zendesk.', example: 'Si un agente escribe "CORREGIR: pipeline = bariatrica", EugenIA aprende que ese paciente es de cirugia bariatrica.' },
+  'Conversaciones': { title: 'Conversaciones', text: 'Cantidad total de conversaciones registradas en este canal.', example: 'Cada conversacion es un hilo entre un agente/bot y un paciente.' },
+  'Mensajes': { title: 'Mensajes', text: 'Total de mensajes individuales enviados y recibidos.', example: '3 mensajes pueden ser: paciente saluda, agente responde, paciente pregunta.' },
+  'Agentes': { title: 'Agentes Activos', text: 'Cantidad de agentes con sesion activa en WhatsApp WAHA.', example: 'Cada agente tiene su propio WhatsApp conectado al sistema.' },
+  'Sent. texto': { title: 'Sentiment de Texto', text: 'Analisis del tono de los mensajes. Positivo (> 0) = palabras amables. Negativo (< 0) = palabras de queja o preocupacion.', example: '"gracias, excelente" = positivo. "es muy caro, me da miedo" = negativo.' },
+  'Sent. emoji': { title: 'Sentiment de Emojis', text: 'Analisis del sentimiento de los emojis usados, basado en un estudio academico con 751 emojis.', example: 'Emojis como ❤️😊🎉 son positivos. Emojis como 😢😡💔 son negativos.' },
+  'Buying': { title: 'Buying Signals', text: 'Mensajes donde el paciente muestra intencion de compra.', example: '"cuanto cuesta?", "me interesa", "como puedo agendar?" — todas son senales de compra.' },
+  'Objections': { title: 'Objection Signals', text: 'Mensajes donde el paciente muestra dudas o resistencia.', example: '"es muy caro", "lo voy a pensar", "no estoy segura" — son objeciones que el agente debe manejar.' },
+  'Commitments': { title: 'Commitment Signals', text: 'Mensajes donde el paciente confirma o se compromete.', example: '"dale, perfecto", "listo, confirmo", "nos vemos" — el paciente esta comprometido.' },
+  'Usuarios': { title: 'Usuarios Unicos', text: 'Cantidad de pacientes diferentes que han escrito mensajes.', example: 'Cada paciente con un numero de WhatsApp diferente cuenta como un usuario.' },
+  'Deals totales': { title: 'Deals Totales', text: 'Cantidad total de tratos (deals) en Zendesk Sell. Cada deal es un paciente potencial en el pipeline de ventas.', example: '4527 deals = 4527 pacientes que en algun momento mostraron interes en una cirugia.' },
+  'Exitosos': { title: 'Deals Exitosos', text: 'Deals que llegaron a CERRADO OPERADO, CERRADO AGENDADO o CERRADO INSTALADO. Son los que generan ingresos.', example: 'Si hay 1248 exitosos de 4527 totales, la tasa de exito es 27.6%.' },
+  'Tasa exito': { title: 'Tasa de Exito', text: 'Porcentaje de deals que llegan a un cierre exitoso respecto al total.', example: '27% significa que de cada 4 pacientes que entran, 1 termina operandose o agendandose.' },
+  'Operados': { title: 'Cerrados Operados', text: 'Pacientes que ya fueron operados exitosamente. Es el mejor resultado posible.', example: 'CERRADO OPERADO = el paciente paso por todo el proceso y ya se opero.' },
+  'Agendados': { title: 'Cerrados Agendados', text: 'Pacientes que tienen fecha de cirugia confirmada pero aun no se operan.', example: 'CERRADO AGENDADO = pabellon reservado, fecha definida, falta operarse.' },
+  'Con bono 75d': { title: 'Deals con Bono 75 dias', text: 'Deals donde pasaron 75 dias o menos entre que el paciente entro al sistema y la fecha de cirugia. Los agentes ganan comision extra.', example: 'Si un paciente entro el 1 de enero y se opero el 15 de febrero (45 dias), los agentes ganan el bono porque fueron rapidos.' },
+  'Comisiones base': { title: 'Comisiones Base (CLP)', text: 'Total en pesos chilenos que se paga a los agentes por participar en las 3 fases de deals exitosos. Fase 1 = captar, Fase 2 = seguimiento, Fase 3 = cierre.', example: 'Si el deal tiene ComisionBAR1=$8.001, BAR2=$5.002, BAR3=$5.003, se paga al colaborador de cada fase.' },
+  'Bonos 75d': { title: 'Bonos 75 dias (CLP)', text: 'Comision extra que ganan los mismos agentes cuando el proceso fue rapido (75 dias o menos). Valores de BAR4, BAR5 y BAR6.', example: 'Si un deal se cerro en 60 dias, los agentes ganan BAR1+BAR4 (fase1), BAR2+BAR5 (fase2), BAR3+BAR6 (fase3).' },
+};
+
 const HELP = {
   'eug-precision': {
     title: 'Precision semanal',
