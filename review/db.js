@@ -563,11 +563,23 @@ export async function dealsPerYearPerAgent() {
 /** Deal detail for a specific agent (by first name in colaborador fields) */
 export async function dealsForAgentDetail(agentFirstName, year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
+  // Check if colaborador4-6 columns exist
+  const { rows: cols } = await getPool().query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'deals' AND column_name = 'colaborador4'`
+  );
+  const hasC456 = cols.length > 0;
+  const c456Select = hasC456
+    ? 'd.colaborador4, d.colaborador5, d.colaborador6,'
+    : "null AS colaborador4, null AS colaborador5, null AS colaborador6,";
+  const c456Where = hasC456
+    ? 'OR d.colaborador4 = $1 OR d.colaborador5 = $1 OR d.colaborador6 = $1'
+    : '';
   const { rows } = await getPool().query(
     `SELECT d.deal_id, d.deal_name, d.pipeline_phase, d.pipeline_name,
             d.added_at::text, d.fecha_cirugia::text, d.cirugia,
             d.colaborador1, d.colaborador2, d.colaborador3,
-            d.colaborador4, d.colaborador5, d.colaborador6,
+            ${c456Select}
             d.comision_bar1, d.comision_bar2, d.comision_bar3,
             d.comision_bar4, d.comision_bar5, d.comision_bar6,
             d.dias_added_cirugia, d.bono_75_dias,
@@ -575,7 +587,7 @@ export async function dealsForAgentDetail(agentFirstName, year = null) {
             d.url_medinet, d.owner_name, d.synced_at
      FROM deals d
      WHERE (d.colaborador1 = $1 OR d.colaborador2 = $1 OR d.colaborador3 = $1
-            OR d.colaborador4 = $1 OR d.colaborador5 = $1 OR d.colaborador6 = $1) ${yearFilter}
+            ${c456Where}) ${yearFilter}
      ORDER BY d.added_at DESC
      LIMIT 200`,
     [agentFirstName]
@@ -601,10 +613,18 @@ export async function auditLogRecent(limit = 100) {
 
 /** Deletion log: recent deletions */
 export async function deletionLogRecent(limit = 50) {
+  // Check if colaborador4-6 columns exist in deletions table
+  const { rows: cols } = await getPool().query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'deal_deletions_log' AND column_name = 'colaborador4'`
+  );
+  const c456 = cols.length > 0
+    ? 'colaborador4, colaborador5, colaborador6,'
+    : "null AS colaborador4, null AS colaborador5, null AS colaborador6,";
   const { rows } = await getPool().query(
     `SELECT id, deal_id, deal_name, rut_normalizado, pipeline_phase, owner_name,
             colaborador1, colaborador2, colaborador3,
-            colaborador4, colaborador5, colaborador6, detected_at
+            ${c456} detected_at
      FROM deal_deletions_log ORDER BY detected_at DESC LIMIT $1`,
     [limit]
   );
@@ -613,13 +633,22 @@ export async function deletionLogRecent(limit = 50) {
 
 /** Raw deals table — all deals with key fields for transparency */
 export async function dealsRaw(limit = 200) {
+  // Check if colaborador4-6 columns exist (migration 008 may not have run yet)
+  const { rows: cols } = await getPool().query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'deals' AND column_name = 'colaborador4'`
+  );
+  const hasC456 = cols.length > 0;
+  const c456Select = hasC456
+    ? 'colaborador4, colaborador5, colaborador6,'
+    : "null AS colaborador4, null AS colaborador5, null AS colaborador6,";
   const { rows } = await getPool().query(
     `SELECT deal_id, deal_name, pipeline_phase, pipeline_name,
             added_at::text, fecha_cirugia::text,
             contact_name, contact_phone, rut_normalizado,
             owner_name, cirugia, ciudad, sucursal,
             colaborador1, colaborador2, colaborador3,
-            colaborador4, colaborador5, colaborador6,
+            ${c456Select}
             comision_bar1, comision_bar2, comision_bar3,
             comision_bar4, comision_bar5, comision_bar6,
             dias_added_cirugia, bono_75_dias, synced_at
