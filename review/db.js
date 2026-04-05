@@ -598,6 +598,25 @@ export async function deletionLogRecent(limit = 50) {
   return rows;
 }
 
+/** Raw deals table — all deals with key fields for transparency */
+export async function dealsRaw(limit = 200) {
+  const { rows } = await getPool().query(
+    `SELECT deal_id, deal_name, pipeline_phase, pipeline_name,
+            added_at::text, fecha_cirugia::text,
+            colaborador1, colaborador2, colaborador3,
+            comision_bar1, comision_bar2, comision_bar3,
+            comision_bar4, comision_bar5, comision_bar6,
+            dias_added_cirugia, bono_75_dias, contact_phone,
+            rut_normalizado, synced_at
+     FROM deals
+     WHERE synced_at IS NOT NULL
+     ORDER BY added_at DESC NULLS LAST
+     LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
 /** Last sync status */
 export async function lastSyncStatus() {
   const { rows } = await getPool().query(`

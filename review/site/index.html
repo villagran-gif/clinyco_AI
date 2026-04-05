@@ -354,6 +354,30 @@
           </div>
         </div>
       </div>
+
+      <!-- Raw deals table -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Todos los deals <button class="help-btn" onclick="showHelp('deals-performance')" title="Ayuda">?</button></h3>
+        <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+          <table id="table-deals-raw" role="grid" style="font-size:.7rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Deal</th>
+              <th class="sortable" data-col="1" data-type="text">Paciente</th>
+              <th class="sortable" data-col="2" data-type="text">Pipeline</th>
+              <th class="sortable" data-col="3" data-type="text">Fase</th>
+              <th class="sortable" data-col="4" data-type="text">Added</th>
+              <th class="sortable" data-col="5" data-type="text">F.Cirugia</th>
+              <th>C1</th><th>C2</th><th>C3</th>
+              <th class="sortable" data-col="9" data-type="num">BAR1</th>
+              <th class="sortable" data-col="10" data-type="num">BAR2</th>
+              <th class="sortable" data-col="11" data-type="num">BAR3</th>
+              <th class="sortable" data-col="12" data-type="num">Dias</th>
+              <th>Bono</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -879,6 +903,32 @@ async function loadDeals() {
 
     document.getElementById("dl-loading").style.display = "none";
     document.getElementById("dl-content").style.display = "block";
+    // Load raw deals table
+    try {
+      const raw = await api('/deals/raw?limit=500');
+      document.querySelector('#table-deals-raw tbody').innerHTML = raw.map(d => {
+        const url = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+        const phaseClass = /CERRADO/.test(d.pipeline_phase) ? 'badge-green' : d.pipeline_phase === 'SIN RESPUESTA' ? 'badge-red' : 'badge-amber';
+        return `<tr>
+          <td><a href="${url}" target="_blank" style="color:#2563eb;font-size:.65rem">${d.deal_id}</a></td>
+          <td style="font-size:.65rem">${d.deal_name || '—'}</td>
+          <td style="font-size:.65rem">${d.pipeline_name || '—'}</td>
+          <td><span class="badge ${phaseClass}" style="font-size:.6rem">${d.pipeline_phase || '—'}</span></td>
+          <td>${d.added_at || '—'}</td>
+          <td>${d.fecha_cirugia || '—'}</td>
+          <td>${d.colaborador1 || '—'}</td>
+          <td>${d.colaborador2 || '—'}</td>
+          <td>${d.colaborador3 || '—'}</td>
+          <td>${d.comision_bar1 || '—'}</td>
+          <td>${d.comision_bar2 || '—'}</td>
+          <td>${d.comision_bar3 || '—'}</td>
+          <td>${d.dias_added_cirugia ?? '—'}</td>
+          <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
+        </tr>`;
+      }).join('');
+      makeSortable('table-deals-raw');
+    } catch (err) { /* raw deals not critical */ }
+
     window._dealsLoaded = true;
   } catch (err) { document.getElementById("dl-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }

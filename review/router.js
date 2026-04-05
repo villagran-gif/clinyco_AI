@@ -36,6 +36,7 @@ import {
   goldEmotionalJourney,
   dealsSummary,
   dealsPerAgent,
+  dealsRaw,
   commissionsPerAgent,
   dashboardSummary,
 } from "./db.js";
@@ -271,6 +272,14 @@ router.get("/gold/patterns", wrap(async (_req, res) => res.json(await goldPatter
 router.get("/gold/signals", wrap(async (_req, res) => res.json(await goldSignals())));
 router.get("/gold/antonia", wrap(async (_req, res) => res.json(await goldAntoniaStats())));
 router.get("/gold/journey", wrap(async (_req, res) => res.json(await goldEmotionalJourney())));
+
+router.get(
+  "/deals/raw",
+  wrap(async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+    res.json(await dealsRaw(limit));
+  })
+);
 
 router.get(
   "/deals/commissions",
