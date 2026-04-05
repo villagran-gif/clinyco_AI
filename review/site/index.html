@@ -1234,6 +1234,8 @@ async function loadAgents() {
 function makeSortable(tableId) {
   const table = document.getElementById(tableId);
   if (!table) return;
+  if (table.dataset.sortable) return;
+  table.dataset.sortable = '1';
   table.querySelectorAll('th.sortable').forEach(th => {
     th.addEventListener('click', () => {
       const col = parseInt(th.dataset.col);
