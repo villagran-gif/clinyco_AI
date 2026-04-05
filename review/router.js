@@ -30,6 +30,10 @@ import {
   auditLogRecent,
   deletionLogRecent,
   lastSyncStatus,
+  goldPatterns,
+  goldSignals,
+  goldAntoniaStats,
+  goldEmotionalJourney,
   dealsSummary,
   dealsPerAgent,
   dealsForAgent,
@@ -268,6 +272,15 @@ router.get(
     res.json(await lastSyncStatus());
   })
 );
+
+// ═══════════════════════════════════════════════════════════════════
+//  GOLD STANDARD ANALYSIS
+// ═══════════════════════════════════════════════════════════════════
+
+router.get("/gold/patterns", wrap(async (_req, res) => res.json(await goldPatterns())));
+router.get("/gold/signals", wrap(async (_req, res) => res.json(await goldSignals())));
+router.get("/gold/antonia", wrap(async (_req, res) => res.json(await goldAntoniaStats())));
+router.get("/gold/journey", wrap(async (_req, res) => res.json(await goldEmotionalJourney())));
 
 router.get(
   "/deals/commissions",

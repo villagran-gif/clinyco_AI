@@ -604,6 +604,89 @@ export async function lastSyncStatus() {
   `);
   return rows[0];
 }
+
+/** Gold standard analysis — aggregate patterns from evaluated conversations */
+export async function goldPatterns() {
+  const { rows } = await getPool().query(`
+    SELECT
+      ce.deal_phase,
+      ce.role,
+      count(*)::int AS total_evals,
+      -- Patient state averages (only for user messages)
+      round(avg((ce.evaluation->'patient_state'->>'motivacion')::numeric) FILTER (WHERE ce.role = 'user'), 2) AS avg_motivacion,
+      round(avg((ce.evaluation->'patient_state'->>'miedo')::numeric) FILTER (WHERE ce.role = 'user'), 2) AS avg_miedo,
+      round(avg((ce.evaluation->'patient_state'->>'vergüenza')::numeric) FILTER (WHERE ce.role = 'user'), 2) AS avg_verguenza,
+      round(avg((ce.evaluation->'patient_state'->>'compromiso')::numeric) FILTER (WHERE ce.role = 'user'), 2) AS avg_compromiso,
+      round(avg((ce.evaluation->'patient_state'->>'readiness')::numeric) FILTER (WHERE ce.role = 'user'), 2) AS avg_readiness,
+      round(avg((ce.evaluation->'patient_state'->>'sensibilidad_precio')::numeric) FILTER (WHERE ce.role = 'user'), 2) AS avg_sensibilidad_precio,
+      -- MQS averages (only for assistant messages)
+      round(avg((ce.evaluation->'mqs'->>'composite')::numeric) FILTER (WHERE ce.role = 'assistant'), 2) AS avg_mqs,
+      round(avg((ce.evaluation->'mqs'->>'information_quality')::numeric) FILTER (WHERE ce.role = 'assistant'), 2) AS avg_info_quality,
+      round(avg((ce.evaluation->'mqs'->>'clarity')::numeric) FILTER (WHERE ce.role = 'assistant'), 2) AS avg_clarity,
+      -- Antonia eval
+      round(avg((ce.evaluation->'antonia_eval'->>'empathy_level')::numeric) FILTER (WHERE ce.role = 'assistant'), 2) AS avg_empathy,
+      round(avg((ce.evaluation->'antonia_eval'->>'adherence_to_protocol')::numeric) FILTER (WHERE ce.role = 'assistant'), 2) AS avg_adherence
+    FROM conversation_evaluations ce
+    GROUP BY ce.deal_phase, ce.role
+    ORDER BY ce.deal_phase, ce.role
+  `);
+  return rows;
+}
+
+/** Gold — most common patient signals in successful deals */
+export async function goldSignals() {
+  const { rows } = await getPool().query(`
+    SELECT signal, count(*)::int AS occurrences,
+           count(DISTINCT ce.conversation_id)::int AS conversations
+    FROM conversation_evaluations ce,
+         jsonb_array_elements_text(ce.evaluation->'signals'->'patient_signals') AS signal
+    WHERE ce.role = 'user'
+    GROUP BY signal
+    ORDER BY occurrences DESC
+  `);
+  return rows;
+}
+
+/** Gold — Antonia empathy distribution */
+export async function goldAntoniaStats() {
+  const { rows } = await getPool().query(`
+    SELECT ce.deal_id, ce.deal_phase,
+           round((ce.evaluation->'mqs'->>'composite')::numeric, 2) AS mqs,
+           round((ce.evaluation->'antonia_eval'->>'empathy_level')::numeric, 2) AS empathy,
+           round((ce.evaluation->'antonia_eval'->>'adherence_to_protocol')::numeric, 2) AS adherence,
+           ce.evaluation->'boundary'->>'boundary_risk' AS boundary_risk,
+           left(ce.content, 100) AS content_preview
+    FROM conversation_evaluations ce
+    WHERE ce.role = 'assistant'
+    ORDER BY empathy ASC NULLS LAST
+    LIMIT 50
+  `);
+  return rows;
+}
+
+/** Gold — patient emotional journey (avg per message position) */
+export async function goldEmotionalJourney() {
+  const { rows } = await getPool().query(`
+    WITH numbered AS (
+      SELECT ce.*,
+             row_number() OVER (PARTITION BY ce.conversation_id ORDER BY ce.created_at) AS msg_pos
+      FROM conversation_evaluations ce
+      WHERE ce.role = 'user'
+    )
+    SELECT msg_pos,
+           count(*)::int AS samples,
+           round(avg((evaluation->'patient_state'->>'motivacion')::numeric), 2) AS motivacion,
+           round(avg((evaluation->'patient_state'->>'miedo')::numeric), 2) AS miedo,
+           round(avg((evaluation->'patient_state'->>'compromiso')::numeric), 2) AS compromiso,
+           round(avg((evaluation->'patient_state'->>'readiness')::numeric), 2) AS readiness,
+           round(avg((evaluation->'patient_state'->>'sensibilidad_precio')::numeric), 2) AS sensibilidad_precio
+    FROM numbered
+    WHERE msg_pos <= 10
+    GROUP BY msg_pos
+    ORDER BY msg_pos
+  `);
+  return rows;
+}
 export async function agentPhaseParticipation(year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
   const { rows } = await getPool().query(`
