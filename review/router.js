@@ -36,7 +36,6 @@ import {
   goldEmotionalJourney,
   dealsSummary,
   dealsPerAgent,
-  dealsForAgent,
   commissionsPerAgent,
   dashboardSummary,
 } from "./db.js";
@@ -228,15 +227,6 @@ router.get(
   "/deals/agents",
   wrap(async (_req, res) => {
     res.json(await dealsPerAgent());
-  })
-);
-
-router.get(
-  "/deals/agent/:name",
-  wrap(async (req, res) => {
-    const name = req.params.name;
-    if (!name) return res.status(400).json({ error: "missing agent name" });
-    res.json(await dealsForAgent(name));
   })
 );
 
