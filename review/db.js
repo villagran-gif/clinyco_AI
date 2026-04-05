@@ -616,12 +616,13 @@ export async function dealsRaw(limit = 200) {
   const { rows } = await getPool().query(
     `SELECT deal_id, deal_name, pipeline_phase, pipeline_name,
             added_at::text, fecha_cirugia::text,
+            contact_name, contact_phone, rut_normalizado,
+            owner_name, cirugia, ciudad, sucursal,
             colaborador1, colaborador2, colaborador3,
             colaborador4, colaborador5, colaborador6,
             comision_bar1, comision_bar2, comision_bar3,
             comision_bar4, comision_bar5, comision_bar6,
-            dias_added_cirugia, bono_75_dias, contact_phone,
-            rut_normalizado, synced_at
+            dias_added_cirugia, bono_75_dias, synced_at
      FROM deals
      WHERE synced_at IS NOT NULL
      ORDER BY added_at DESC NULLS LAST

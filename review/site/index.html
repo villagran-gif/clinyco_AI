@@ -370,12 +370,12 @@
         <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
           <table id="table-deals-raw" role="grid" style="font-size:.7rem">
             <thead><tr>
-              <th class="sortable" data-col="0" data-type="text">Deal</th>
+              <th class="sortable" data-col="0" data-type="text">Deal ID</th>
               <th class="sortable" data-col="1" data-type="text">Paciente</th>
-              <th class="sortable" data-col="2" data-type="text">Pipeline</th>
-              <th class="sortable" data-col="3" data-type="text">Fase</th>
-              <th class="sortable" data-col="4" data-type="text">Added</th>
-              <th class="sortable" data-col="5" data-type="text">F.Cirugia</th>
+              <th class="sortable" data-col="2" data-type="text">Added</th>
+              <th class="sortable" data-col="3" data-type="text">F.Cirugía</th>
+              <th class="sortable" data-col="4" data-type="text">Pipeline</th>
+              <th class="sortable" data-col="5" data-type="text">Fase</th>
               <th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>
               <th class="sortable" data-col="12" data-type="num">BAR1</th>
               <th class="sortable" data-col="13" data-type="num">BAR2</th>
@@ -383,7 +383,8 @@
               <th class="sortable" data-col="15" data-type="num">BAR4</th>
               <th class="sortable" data-col="16" data-type="num">BAR5</th>
               <th class="sortable" data-col="17" data-type="num">BAR6</th>
-              <th class="sortable" data-col="18" data-type="num">Dias</th>
+              <th class="sortable" data-col="18" data-type="num">Total $</th>
+              <th class="sortable" data-col="19" data-type="num">Días</th>
               <th>Bono</th>
             </tr></thead>
             <tbody></tbody>
@@ -532,22 +533,19 @@
         <div style="overflow-x:auto;max-height:600px;overflow-y:auto">
           <table id="table-deal-detail" role="grid" style="font-size:.75rem">
             <thead><tr>
-              <th class="sortable" data-col="0" data-type="text">Deal ID</th>
-              <th class="sortable" data-col="1" data-type="text">Paciente</th>
-              <th class="sortable" data-col="2" data-type="text">Cirugia</th>
-              <th class="sortable" data-col="3" data-type="text">Fase</th>
-              <th class="sortable" data-col="4" data-type="text">Added</th>
-              <th class="sortable" data-col="5" data-type="text">F. Cirugia</th>
+              <th class="sortable" data-col="0" data-type="text">Deal</th>
+              <th class="sortable" data-col="1" data-type="text">Added</th>
+              <th class="sortable" data-col="2" data-type="text">F.Cirugía</th>
+              <th class="sortable" data-col="3" data-type="text">Pipeline</th>
+              <th class="sortable" data-col="4" data-type="text">Fase</th>
               <th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>
-              <th class="sortable" data-col="12" data-type="num">BAR1</th>
-              <th class="sortable" data-col="13" data-type="num">BAR2</th>
-              <th class="sortable" data-col="14" data-type="num">BAR3</th>
-              <th class="sortable" data-col="15" data-type="num">BAR4</th>
-              <th class="sortable" data-col="16" data-type="num">BAR5</th>
-              <th class="sortable" data-col="17" data-type="num">BAR6</th>
-              <th class="sortable" data-col="18" data-type="num">Dias</th>
-              <th>Bono</th>
-              <th>Links</th>
+              <th class="sortable" data-col="11" data-type="num">BAR1</th>
+              <th class="sortable" data-col="12" data-type="num">BAR2</th>
+              <th class="sortable" data-col="13" data-type="num">BAR3</th>
+              <th class="sortable" data-col="14" data-type="num">BAR4</th>
+              <th class="sortable" data-col="15" data-type="num">BAR5</th>
+              <th class="sortable" data-col="16" data-type="num">BAR6</th>
+              <th class="sortable" data-col="17" data-type="num">Total $</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -562,10 +560,9 @@
             <thead><tr>
               <th class="sortable" data-col="0" data-type="text">Fecha</th>
               <th class="sortable" data-col="1" data-type="text">Deal</th>
-              <th class="sortable" data-col="2" data-type="text">RUT</th>
-              <th class="sortable" data-col="3" data-type="text">Campo</th>
+              <th class="sortable" data-col="2" data-type="text">Campo</th>
               <th>Anterior</th><th>Nuevo</th>
-              <th class="sortable" data-col="6" data-type="text">Owner</th>
+              <th class="sortable" data-col="5" data-type="text">Owner</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -579,8 +576,7 @@
             <thead><tr>
               <th class="sortable" data-col="0" data-type="text">Fecha</th>
               <th class="sortable" data-col="1" data-type="text">Deal</th>
-              <th class="sortable" data-col="2" data-type="text">RUT</th>
-              <th class="sortable" data-col="3" data-type="text">Fase</th>
+              <th class="sortable" data-col="2" data-type="text">Fase</th>
               <th>Owner</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>
             </tr></thead>
             <tbody></tbody>
@@ -934,30 +930,34 @@ async function loadDeals() {
     // Load raw deals table
     try {
       const raw = await api('/deals/raw?limit=500');
+      const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '—';
       document.querySelector('#table-deals-raw tbody').innerHTML = raw.map(d => {
         const url = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
         const phaseClass = /CERRADO/.test(d.pipeline_phase) ? 'badge-green' : d.pipeline_phase === 'SIN RESPUESTA' ? 'badge-red' : 'badge-amber';
+        const bars = [d.comision_bar1,d.comision_bar2,d.comision_bar3,d.comision_bar4,d.comision_bar5,d.comision_bar6];
+        const totalCom = bars.reduce((s,v) => s + (Number(v)||0), 0);
         return `<tr>
           <td><a href="${url}" target="_blank" style="color:#2563eb;font-size:.65rem">${d.deal_id}</a></td>
-          <td style="font-size:.65rem">${d.deal_name || '—'}</td>
-          <td style="font-size:.65rem">${d.pipeline_name || '—'}</td>
-          <td><span class="badge ${phaseClass}" style="font-size:.6rem">${d.pipeline_phase || '—'}</span></td>
+          <td style="font-size:.65rem">${(d.contact_name || d.deal_name || '—').split(' ')[0]}</td>
           <td>${d.added_at || '—'}</td>
           <td>${d.fecha_cirugia || '—'}</td>
+          <td style="font-size:.65rem">${d.pipeline_name || '—'}</td>
+          <td><span class="badge ${phaseClass}" style="font-size:.6rem">${d.pipeline_phase || '—'}</span></td>
           <td>${d.colaborador1 || '—'}</td>
           <td>${d.colaborador2 || '—'}</td>
           <td>${d.colaborador3 || '—'}</td>
           <td>${d.colaborador4 || '—'}</td>
           <td>${d.colaborador5 || '—'}</td>
           <td>${d.colaborador6 || '—'}</td>
-          <td>${d.comision_bar1 || '—'}</td>
-          <td>${d.comision_bar2 || '—'}</td>
-          <td>${d.comision_bar3 || '—'}</td>
-          <td>${d.comision_bar4 || '—'}</td>
-          <td>${d.comision_bar5 || '—'}</td>
-          <td>${d.comision_bar6 || '—'}</td>
+          <td>${fmtCLP(d.comision_bar1)}</td>
+          <td>${fmtCLP(d.comision_bar2)}</td>
+          <td>${fmtCLP(d.comision_bar3)}</td>
+          <td>${fmtCLP(d.comision_bar4)}</td>
+          <td>${fmtCLP(d.comision_bar5)}</td>
+          <td>${fmtCLP(d.comision_bar6)}</td>
+          <td style="font-weight:700">${fmtCLP(totalCom)}</td>
           <td>${d.dias_added_cirugia ?? '—'}</td>
-          <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
+          <td>${d.bono_75_dias ? '<span class="badge badge-green">Sí</span>' : '—'}</td>
         </tr>`;
       }).join('');
       makeSortable('table-deals-raw');
@@ -1233,39 +1233,39 @@ async function showAgentDeals(firstName, fullName) {
 
   try {
     const deals = await api(`/deals/agent-detail/${encodeURIComponent(firstName)}`);
+    const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '—';
+    const chk = (colVal, fn) => colVal === fn ? '<span class="badge badge-green">&#9745;</span>' : '<span style="opacity:.3">—</span>';
     const tbody = document.querySelector('#table-deal-detail tbody');
     tbody.innerHTML = deals.map(d => {
       const phaseClass = /CERRADO/.test(d.pipeline_phase) ? 'badge-green' : d.pipeline_phase === 'SIN RESPUESTA' ? 'badge-red' : 'badge-amber';
-      const desktopUrl = `https://clinyco.zendesk.com/sales/deals/${d.deal_id}`;
-      const mobileUrl = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+      const url = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+      const bars = [d.comision_bar1,d.comision_bar2,d.comision_bar3,d.comision_bar4,d.comision_bar5,d.comision_bar6];
+      const totalCom = bars.reduce((s,v) => s + (Number(v)||0), 0);
       return `<tr>
-        <td>${d.deal_id}</td>
-        <td>${d.contact_name || d.deal_name || '—'}</td>
-        <td>${d.cirugia || '—'}</td>
-        <td><span class="badge ${phaseClass}">${d.pipeline_phase || '—'}</span></td>
+        <td><a href="${url}" target="_blank" style="color:#2563eb;font-size:.65rem">${d.deal_id}</a></td>
         <td>${d.added_at || '—'}</td>
         <td>${d.fecha_cirugia || '—'}</td>
-        <td>${d.colaborador1 || '—'}</td>
-        <td>${d.colaborador2 || '—'}</td>
-        <td>${d.colaborador3 || '—'}</td>
-        <td>${d.colaborador4 || '—'}</td>
-        <td>${d.colaborador5 || '—'}</td>
-        <td>${d.colaborador6 || '—'}</td>
-        <td>${d.comision_bar1 || '—'}</td>
-        <td>${d.comision_bar2 || '—'}</td>
-        <td>${d.comision_bar3 || '—'}</td>
-        <td>${d.comision_bar4 || '—'}</td>
-        <td>${d.comision_bar5 || '—'}</td>
-        <td>${d.comision_bar6 || '—'}</td>
-        <td>${d.dias_added_cirugia ?? '—'}</td>
-        <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
-        <td><a href="${desktopUrl}" target="_blank" style="font-size:.7rem">Desktop</a> | <a href="${mobileUrl}" target="_blank" style="font-size:.7rem">App</a></td>
+        <td style="font-size:.65rem">${d.pipeline_name || '—'}</td>
+        <td><span class="badge ${phaseClass}">${d.pipeline_phase || '—'}</span></td>
+        <td>${chk(d.colaborador1, firstName)}</td>
+        <td>${chk(d.colaborador2, firstName)}</td>
+        <td>${chk(d.colaborador3, firstName)}</td>
+        <td>${chk(d.colaborador4, firstName)}</td>
+        <td>${chk(d.colaborador5, firstName)}</td>
+        <td>${chk(d.colaborador6, firstName)}</td>
+        <td>${d.colaborador1 === firstName ? fmtCLP(d.comision_bar1) : '—'}</td>
+        <td>${d.colaborador2 === firstName ? fmtCLP(d.comision_bar2) : '—'}</td>
+        <td>${d.colaborador3 === firstName ? fmtCLP(d.comision_bar3) : '—'}</td>
+        <td>${d.colaborador4 === firstName ? fmtCLP(d.comision_bar4) : '—'}</td>
+        <td>${d.colaborador5 === firstName ? fmtCLP(d.comision_bar5) : '—'}</td>
+        <td>${d.colaborador6 === firstName ? fmtCLP(d.comision_bar6) : '—'}</td>
+        <td style="font-weight:700">${fmtCLP(totalCom)}</td>
       </tr>`;
     }).join('');
     makeSortable('table-deal-detail');
     el.scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
-    document.querySelector('#table-deal-detail tbody').innerHTML = `<tr><td colspan="21" class="error-msg">${err.message}</td></tr>`;
+    document.querySelector('#table-deal-detail tbody').innerHTML = `<tr><td colspan="18" class="error-msg">${err.message}</td></tr>`;
   }
 
   // Also load audit log
@@ -1283,7 +1283,6 @@ async function loadAuditLog() {
       return `<tr>
         <td>${new Date(c.detected_at).toLocaleString('es-CL')}</td>
         <td><a href="${dealUrl}" target="_blank" style="color:#2563eb;font-size:.7rem">${c.deal_name || c.deal_id}</a></td>
-        <td>${c.rut_normalizado || '—'}</td>
         <td><span class="badge badge-amber">${c.field_name}</span></td>
         <td><span class="badge badge-red">${c.old_value || '(vacio)'}</span></td>
         <td><span class="badge badge-green">${c.new_value || '(vacio)'}</span></td>
@@ -1305,7 +1304,6 @@ async function loadDeletionLog() {
       return `<tr>
         <td>${new Date(d.detected_at).toLocaleString('es-CL')}</td>
         <td><a href="${dealUrl}" target="_blank" style="color:#dc2626;font-size:.7rem">${d.deal_name || d.deal_id}</a></td>
-        <td>${d.rut_normalizado || '—'}</td>
         <td><span class="badge badge-red">${d.pipeline_phase || '—'}</span></td>
         <td>${d.owner_name || '—'}</td>
         <td>${d.colaborador1 || '—'}</td>
