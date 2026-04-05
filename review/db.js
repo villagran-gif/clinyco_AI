@@ -24,6 +24,18 @@ function getPool() {
   return pool;
 }
 
+// ── Helper: check if colaborador4-6 columns exist (migration 008) ──
+let _hasC456 = null;
+async function hasColaborador456() {
+  if (_hasC456 !== null) return _hasC456;
+  const { rows } = await getPool().query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'deals' AND column_name = 'colaborador4'`
+  );
+  _hasC456 = rows.length > 0;
+  return _hasC456;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  EUGENIA — Learning Review
 // ═══════════════════════════════════════════════════════════════════
@@ -143,8 +155,17 @@ export async function dealsSummary() {
   return rows;
 }
 
-/** Deal performance per agent — by colaborador participation, NOT owner */
+/** Deal performance per agent — by colaborador participation (1-6), NOT owner */
 export async function dealsPerAgent() {
+  const c456 = await hasColaborador456();
+  const c456Union = c456 ? `
+      UNION ALL SELECT colaborador4 FROM deals WHERE colaborador4 IS NOT NULL
+      UNION ALL SELECT colaborador5 FROM deals WHERE colaborador5 IS NOT NULL
+      UNION ALL SELECT colaborador6 FROM deals WHERE colaborador6 IS NOT NULL` : '';
+  const c456Expand = c456 ? `
+      UNION ALL SELECT d.*, d.colaborador4 AS _agent FROM deals d WHERE d.colaborador4 IS NOT NULL
+      UNION ALL SELECT d.*, d.colaborador5 FROM deals d WHERE d.colaborador5 IS NOT NULL
+      UNION ALL SELECT d.*, d.colaborador6 FROM deals d WHERE d.colaborador6 IS NOT NULL` : '';
   const { rows } = await getPool().query(`
     WITH agent_deals AS (
       SELECT colaborador1 AS agent FROM deals WHERE colaborador1 IS NOT NULL
@@ -152,6 +173,7 @@ export async function dealsPerAgent() {
       SELECT colaborador2 FROM deals WHERE colaborador2 IS NOT NULL
       UNION ALL
       SELECT colaborador3 FROM deals WHERE colaborador3 IS NOT NULL
+      ${c456Union}
     )
     SELECT ad.agent,
            count(*)::int AS total_participaciones,
@@ -184,6 +206,7 @@ export async function dealsPerAgent() {
       SELECT d.*, d.colaborador2 FROM deals d WHERE d.colaborador2 IS NOT NULL
       UNION ALL
       SELECT d.*, d.colaborador3 FROM deals d WHERE d.colaborador3 IS NOT NULL
+      ${c456Expand}
     ) d
     JOIN (SELECT DISTINCT agent FROM agent_deals) ad ON ad.agent = d._agent
     GROUP BY ad.agent
@@ -197,12 +220,29 @@ export async function dealsPerAgent() {
  * Only for successful deals (CERRADO OPERADO/AGENDADO/INSTALADO).
  * BAR1-3: always paid to colaborador1-3 respectively.
  * BAR4-6: bonus paid to colaborador1-3 IF dias_added_cirugia <= 75.
+ * Colaborador4-6 earn BAR4-6 as base (if they exist as separate positions).
  */
-export async function commissionsPerAgent() {
+export async function commissionsPerAgent(year = null) {
+  const c456 = await hasColaborador456();
+  const yearFilter = year ? `AND EXTRACT(YEAR FROM added_at) = ${parseInt(year)}` : '';
+  const c456Union = c456 ? `
+      UNION ALL
+      -- Position 4: colaborador4 earns BAR4
+      SELECT colaborador4, COALESCE(comision_bar4, 0), 0, deal_id, bono_75_dias
+      FROM exitosos WHERE colaborador4 IS NOT NULL
+      UNION ALL
+      -- Position 5: colaborador5 earns BAR5
+      SELECT colaborador5, COALESCE(comision_bar5, 0), 0, deal_id, bono_75_dias
+      FROM exitosos WHERE colaborador5 IS NOT NULL
+      UNION ALL
+      -- Position 6: colaborador6 earns BAR6
+      SELECT colaborador6, COALESCE(comision_bar6, 0), 0, deal_id, bono_75_dias
+      FROM exitosos WHERE colaborador6 IS NOT NULL` : '';
   const { rows } = await getPool().query(`
     WITH exitosos AS (
       SELECT * FROM deals
       WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        ${yearFilter}
     ),
     comisiones AS (
       -- Phase 1: colaborador1 earns BAR1, and BAR4 if bonus
@@ -229,6 +269,7 @@ export async function commissionsPerAgent() {
              CASE WHEN bono_75_dias THEN COALESCE(comision_bar6, 0) ELSE 0 END,
              deal_id, bono_75_dias
       FROM exitosos WHERE colaborador3 IS NOT NULL
+      ${c456Union}
     )
     SELECT agent,
            count(DISTINCT deal_id)::int AS deals_participados,
@@ -453,8 +494,26 @@ export async function zendeskSentimentDetail(conversationId) {
 //  AGENT REGISTRY — Consolidated agent view
 // ═══════════════════════════════════════════════════════════════════
 
-/** All registered agents with their stats from WAHA */
+/** All registered agents with their stats from WAHA + Zendesk Sell */
 export async function registeredAgents() {
+  const c456 = await hasColaborador456();
+  const c456DealWhere = c456
+    ? `OR d.colaborador4 = split_part(ar.canonical_name, ' ', 1)
+       OR d.colaborador5 = split_part(ar.canonical_name, ' ', 1)
+       OR d.colaborador6 = split_part(ar.canonical_name, ' ', 1)` : '';
+  const c456ComUnion = c456 ? `
+        UNION ALL
+        SELECT COALESCE(comision_bar4,0), 0
+               FROM deals WHERE colaborador4 = split_part(ar.canonical_name,' ',1)
+               AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        UNION ALL
+        SELECT COALESCE(comision_bar5,0), 0
+               FROM deals WHERE colaborador5 = split_part(ar.canonical_name,' ',1)
+               AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        UNION ALL
+        SELECT COALESCE(comision_bar6,0), 0
+               FROM deals WHERE colaborador6 = split_part(ar.canonical_name,' ',1)
+               AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')` : '';
   const { rows } = await getPool().query(`
     SELECT ar.canonical_name, ar.email, ar.role, ar.waha_phone,
            ar.zendesk_admin_id, ar.waha_session_name,
@@ -499,6 +558,7 @@ export async function registeredAgents() {
       FROM deals d WHERE d.colaborador1 = split_part(ar.canonical_name, ' ', 1)
          OR d.colaborador2 = split_part(ar.canonical_name, ' ', 1)
          OR d.colaborador3 = split_part(ar.canonical_name, ' ', 1)
+         ${c456DealWhere}
     ) dl ON true
     LEFT JOIN LATERAL (
       SELECT sum(base + bonus)::int AS comision_total
@@ -514,6 +574,7 @@ export async function registeredAgents() {
         SELECT COALESCE(comision_bar3,0) + CASE WHEN bono_75_dias THEN COALESCE(comision_bar6,0) ELSE 0 END, 0
                FROM deals WHERE colaborador3 = split_part(ar.canonical_name,' ',1)
                AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        ${c456ComUnion}
       ) x
     ) cm ON true
     WHERE ar.is_active = true
@@ -522,11 +583,11 @@ export async function registeredAgents() {
   return rows;
 }
 
-/** Deals per month per agent (owner) — ONLY active agents from registry */
+/** Deals per month per agent (by colaborador1 = captación) */
 export async function dealsPerMonthPerAgent() {
   const { rows } = await getPool().query(`
     SELECT date_trunc('month', d.added_at)::date AS month,
-           d.colaborador1 AS owner_name,
+           d.colaborador1 AS agent,
            count(*)::int AS total_deals,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
@@ -547,7 +608,7 @@ export async function dealsPerMonthPerAgent() {
 export async function dealsPerYearPerAgent() {
   const { rows } = await getPool().query(`
     SELECT EXTRACT(YEAR FROM d.added_at)::int AS year,
-           d.colaborador1 AS owner_name,
+           d.colaborador1 AS agent,
            count(*)::int AS total_deals,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
@@ -563,12 +624,7 @@ export async function dealsPerYearPerAgent() {
 /** Deal detail for a specific agent (by first name in colaborador fields) */
 export async function dealsForAgentDetail(agentFirstName, year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
-  // Check if colaborador4-6 columns exist
-  const { rows: cols } = await getPool().query(
-    `SELECT column_name FROM information_schema.columns
-     WHERE table_name = 'deals' AND column_name = 'colaborador4'`
-  );
-  const hasC456 = cols.length > 0;
+  const hasC456 = await hasColaborador456();
   const c456Select = hasC456
     ? 'd.colaborador4, d.colaborador5, d.colaborador6,'
     : "null AS colaborador4, null AS colaborador5, null AS colaborador6,";
@@ -584,7 +640,7 @@ export async function dealsForAgentDetail(agentFirstName, year = null) {
             d.comision_bar4, d.comision_bar5, d.comision_bar6,
             d.dias_added_cirugia, d.bono_75_dias,
             d.contact_name, d.contact_phone, d.rut_normalizado,
-            d.url_medinet, d.owner_name, d.synced_at
+            d.url_medinet, d.synced_at
      FROM deals d
      WHERE (d.colaborador1 = $1 OR d.colaborador2 = $1 OR d.colaborador3 = $1
             ${c456Where}) ${yearFilter}
@@ -613,12 +669,13 @@ export async function auditLogRecent(limit = 100) {
 
 /** Deletion log: recent deletions */
 export async function deletionLogRecent(limit = 50) {
-  // Check if colaborador4-6 columns exist in deletions table
-  const { rows: cols } = await getPool().query(
-    `SELECT column_name FROM information_schema.columns
-     WHERE table_name = 'deal_deletions_log' AND column_name = 'colaborador4'`
-  );
-  const c456 = cols.length > 0
+  const hasC456Del = await (async () => {
+    const { rows } = await getPool().query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'deal_deletions_log' AND column_name = 'colaborador4'`);
+    return rows.length > 0;
+  })();
+  const c456 = hasC456Del
     ? 'colaborador4, colaborador5, colaborador6,'
     : "null AS colaborador4, null AS colaborador5, null AS colaborador6,";
   const { rows } = await getPool().query(
@@ -633,12 +690,7 @@ export async function deletionLogRecent(limit = 50) {
 
 /** Raw deals table — all deals with key fields for transparency */
 export async function dealsRaw(limit = 200) {
-  // Check if colaborador4-6 columns exist (migration 008 may not have run yet)
-  const { rows: cols } = await getPool().query(
-    `SELECT column_name FROM information_schema.columns
-     WHERE table_name = 'deals' AND column_name = 'colaborador4'`
-  );
-  const hasC456 = cols.length > 0;
+  const hasC456 = await hasColaborador456();
   const c456Select = hasC456
     ? 'colaborador4, colaborador5, colaborador6,'
     : "null AS colaborador4, null AS colaborador5, null AS colaborador6,";
@@ -661,13 +713,16 @@ export async function dealsRaw(limit = 200) {
   return rows;
 }
 
-/** Last sync status */
+/** Last sync status — multi-source */
 export async function lastSyncStatus() {
   const { rows } = await getPool().query(`
-    SELECT max(synced_at) AS last_sync,
-           count(*)::int AS total_deals,
-           count(*) FILTER (WHERE synced_at > now() - interval '15 minutes')::int AS synced_last_15m
-    FROM deals WHERE synced_at IS NOT NULL
+    SELECT
+      (SELECT max(synced_at) FROM deals WHERE synced_at IS NOT NULL)   AS deals_last_sync,
+      (SELECT count(*)::int FROM deals)                                AS deals_total,
+      (SELECT max(created_at) FROM conversation_messages)              AS zendesk_last_msg,
+      (SELECT count(*)::int FROM conversation_messages)                AS zendesk_total_msgs,
+      (SELECT max(sent_at) FROM agent_direct_messages)                 AS waha_last_msg,
+      (SELECT count(*)::int FROM agent_direct_messages)                AS waha_total_msgs
   `);
   return rows[0];
 }
@@ -756,6 +811,33 @@ export async function goldEmotionalJourney() {
 }
 export async function agentPhaseParticipation(year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM d.added_at) = ${parseInt(year)}` : '';
+  const c456 = await hasColaborador456();
+  const c456Select = c456 ? `,
+           COALESCE(f4.cnt, 0)::int AS fase4,
+           COALESCE(f4.exitosos, 0)::int AS fase4_exitosos,
+           COALESCE(f5.cnt, 0)::int AS fase5,
+           COALESCE(f5.exitosos, 0)::int AS fase5_exitosos,
+           COALESCE(f6.cnt, 0)::int AS fase6,
+           COALESCE(f6.exitosos, 0)::int AS fase6_exitosos` : `,
+           0::int AS fase4, 0::int AS fase4_exitosos,
+           0::int AS fase5, 0::int AS fase5_exitosos,
+           0::int AS fase6, 0::int AS fase6_exitosos`;
+  const c456Joins = c456 ? `
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS cnt,
+             count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals d WHERE d.colaborador4 = an.first_name ${yearFilter}
+    ) f4 ON true
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS cnt,
+             count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals d WHERE d.colaborador5 = an.first_name ${yearFilter}
+    ) f5 ON true
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS cnt,
+             count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
+      FROM deals d WHERE d.colaborador6 = an.first_name ${yearFilter}
+    ) f6 ON true` : '';
   const { rows } = await getPool().query(`
     WITH active_names AS (
       SELECT canonical_name, split_part(canonical_name, ' ', 1) AS first_name
@@ -768,6 +850,7 @@ export async function agentPhaseParticipation(year = null) {
            COALESCE(f2.exitosos, 0)::int AS fase2_exitosos,
            COALESCE(f3.cnt, 0)::int AS fase3_cierre,
            COALESCE(f3.exitosos, 0)::int AS fase3_exitosos
+           ${c456Select}
     FROM active_names an
     LEFT JOIN LATERAL (
       SELECT count(*) AS cnt,
@@ -784,12 +867,13 @@ export async function agentPhaseParticipation(year = null) {
              count(*) FILTER (WHERE d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')) AS exitosos
       FROM deals d WHERE d.colaborador3 = an.first_name ${yearFilter}
     ) f3 ON true
+    ${c456Joins}
     ORDER BY fase1_captacion DESC
   `);
   return rows;
 }
 
-/** Chain effectiveness: Colaborador1+2+3 combinations and their success rate */
+/** Chain effectiveness: Colaborador1+2+3 combinations and their success rate + velocity */
 export async function chainEffectiveness(year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM added_at) = ${parseInt(year)}` : '';
   const { rows } = await getPool().query(`
@@ -798,6 +882,10 @@ export async function chainEffectiveness(year = null) {
            count(*) FILTER (WHERE pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS exitosos,
+           count(*) FILTER (WHERE bono_75_dias)::int AS con_bono,
+           round(avg(dias_added_cirugia) FILTER (WHERE pipeline_phase IN (
+             'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+           ))::numeric, 1) AS avg_dias,
            CASE WHEN count(*) > 0
              THEN round(count(*) FILTER (WHERE pipeline_phase IN (
                'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
@@ -808,6 +896,40 @@ export async function chainEffectiveness(year = null) {
     GROUP BY colaborador1, colaborador2, colaborador3
     HAVING count(*) >= 3
     ORDER BY exitosos DESC, efectividad DESC
+  `);
+  return rows;
+}
+
+/** Velocity ranking: avg days to close per agent (across all colaborador positions) */
+export async function velocityPerAgent() {
+  const hasC456 = await hasColaborador456();
+  const c456Unions = hasC456 ? `
+    UNION ALL SELECT colaborador4, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador4 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+    UNION ALL SELECT colaborador5, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador5 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+    UNION ALL SELECT colaborador6, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador6 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+  ` : '';
+  const { rows } = await getPool().query(`
+    WITH agent_deals AS (
+      SELECT colaborador1 AS agent, dias_added_cirugia AS dias, pipeline_phase, bono_75_dias FROM deals WHERE colaborador1 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+      UNION ALL
+      SELECT colaborador2, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador2 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+      UNION ALL
+      SELECT colaborador3, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador3 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+      ${c456Unions}
+    )
+    SELECT agent,
+      count(*)::int AS total_deals,
+      count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS exitosos,
+      count(*) FILTER (WHERE bono_75_dias)::int AS con_bono,
+      round(avg(dias)::numeric, 1) AS avg_dias,
+      round(avg(dias) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::numeric, 1) AS avg_dias_exitosos,
+      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY dias) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::numeric, 0)::int AS mediana_dias_exitosos,
+      count(*) FILTER (WHERE dias <= 30 AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS rapidos_30d,
+      count(*) FILTER (WHERE dias > 30 AND dias <= 75 AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS normales_31_75d,
+      count(*) FILTER (WHERE dias > 75 AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS lentos_75d_plus
+    FROM agent_deals
+    GROUP BY agent
+    ORDER BY avg_dias_exitosos ASC NULLS LAST
   `);
   return rows;
 }
@@ -901,8 +1023,8 @@ export async function dashboardSummary() {
        FROM deals WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))
                                                                      AS comisiones_base_total,
       (SELECT sum(COALESCE(comision_bar4,0)+COALESCE(comision_bar5,0)+COALESCE(comision_bar6,0))::int
-       FROM deals WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
-       AND bono_75_dias = true)                                      AS bonos_total
+       FROM deals WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))
+                                                                     AS bonos_total
   `);
 
   const r = rows[0];
