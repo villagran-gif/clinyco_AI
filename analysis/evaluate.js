@@ -1,5 +1,8 @@
 /**
- * analysis/evaluate.js — Unified evaluation module using Claude Opus.
+ * analysis/evaluate.js — Unified evaluation module for EugenIA fine-tuning.
+ *
+ * Default model: Haiku 4.5 for batch sync (cheap, fast).
+ * Override with EVAL_MODEL env var (e.g. "claude-opus-4-6" for deep analysis).
  *
  * Evaluates EVERY message across 7 dimensions:
  * 1. Intent comparison (EugenIA predict vs agent action)
@@ -10,7 +13,7 @@
  * 6. Sales signal classification
  * 7. Clinical vs commercial boundary detection
  *
- * Cost: ~$15-20/month with Opus at current volume.
+ * Cost: ~$1-3/month with Haiku at current volume (~$15-20 with Opus).
  *
  * References:
  * - Zheng et al. 2023 — MT-Bench / LLM-as-a-Judge (NeurIPS)
@@ -34,7 +37,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = "claude-opus-4-6";
+const MODEL = process.env.EVAL_MODEL || "claude-haiku-4-5-20251001";
 const TEMPERATURE = 0.1;
 const MAX_TOKENS = 1500;
 

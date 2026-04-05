@@ -12,6 +12,11 @@ import {
   eugeniaDirectives,
   eugeniaFeedback,
   eugeniaActions,
+  eugeniaSentimentImpact,
+  eugeniaFineTuningTrends,
+  eugeniaSignalAccuracy,
+  eugeniaCalibration,
+  eugeniaModelStats,
   whatsappSentiment,
   whatsappSentimentDetail,
   whatsappSignals,
@@ -130,6 +135,42 @@ router.get(
   "/eugenia/actions",
   wrap(async (_req, res) => {
     res.json(await eugeniaActions());
+  })
+);
+
+router.get(
+  "/eugenia/sentiment-impact",
+  wrap(async (_req, res) => {
+    res.json(await eugeniaSentimentImpact());
+  })
+);
+
+router.get(
+  "/eugenia/finetuning-trends",
+  wrap(async (req, res) => {
+    const weeks = Math.min(parseInt(req.query.weeks) || 12, 52);
+    res.json(await eugeniaFineTuningTrends(weeks));
+  })
+);
+
+router.get(
+  "/eugenia/signal-accuracy",
+  wrap(async (_req, res) => {
+    res.json(await eugeniaSignalAccuracy());
+  })
+);
+
+router.get(
+  "/eugenia/calibration",
+  wrap(async (_req, res) => {
+    res.json(await eugeniaCalibration());
+  })
+);
+
+router.get(
+  "/eugenia/model-stats",
+  wrap(async (_req, res) => {
+    res.json(await eugeniaModelStats());
   })
 );
 
