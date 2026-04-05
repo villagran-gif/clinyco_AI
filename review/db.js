@@ -143,11 +143,18 @@ export async function dealsSummary() {
   return rows;
 }
 
-/** Deal performance per agent — success = CERRADO AGENDADO/OPERADO/INSTALADO */
+/** Deal performance per agent — by colaborador participation, NOT owner */
 export async function dealsPerAgent() {
   const { rows } = await getPool().query(`
-    SELECT d.owner_name,
-           count(*)::int AS total_deals,
+    WITH agent_deals AS (
+      SELECT colaborador1 AS agent FROM deals WHERE colaborador1 IS NOT NULL
+      UNION ALL
+      SELECT colaborador2 FROM deals WHERE colaborador2 IS NOT NULL
+      UNION ALL
+      SELECT colaborador3 FROM deals WHERE colaborador3 IS NOT NULL
+    )
+    SELECT ad.agent,
+           count(*)::int AS total_participaciones,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS deals_exitosos,
@@ -171,24 +178,17 @@ export async function dealsPerAgent() {
                  'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
                ))::numeric / count(*)::numeric * 100, 1)
              ELSE 0 END AS tasa_exito
-    FROM deals d
-    GROUP BY d.owner_name
+    FROM (
+      SELECT d.*, d.colaborador1 AS _agent FROM deals d WHERE d.colaborador1 IS NOT NULL
+      UNION ALL
+      SELECT d.*, d.colaborador2 FROM deals d WHERE d.colaborador2 IS NOT NULL
+      UNION ALL
+      SELECT d.*, d.colaborador3 FROM deals d WHERE d.colaborador3 IS NOT NULL
+    ) d
+    JOIN (SELECT DISTINCT agent FROM agent_deals) ad ON ad.agent = d._agent
+    GROUP BY ad.agent
     ORDER BY deals_exitosos DESC
   `);
-  return rows;
-}
-
-/** Deal phase breakdown for a single agent */
-export async function dealsForAgent(ownerName) {
-  const { rows } = await getPool().query(
-    `SELECT pipeline_phase, count(*)::int AS total,
-            min(added_at)::text AS earliest, max(added_at)::text AS latest
-     FROM deals
-     WHERE owner_name = $1
-     GROUP BY pipeline_phase
-     ORDER BY total DESC`,
-    [ownerName]
-  );
   return rows;
 }
 
@@ -520,33 +520,31 @@ export async function registeredAgents() {
 export async function dealsPerMonthPerAgent() {
   const { rows } = await getPool().query(`
     SELECT date_trunc('month', d.added_at)::date AS month,
-           d.owner_name,
+           d.colaborador1 AS owner_name,
            count(*)::int AS total_deals,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS exitosos,
            count(*) FILTER (WHERE d.pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta
     FROM deals d
-    JOIN agent_registry ar ON ar.canonical_name = d.owner_name
-    WHERE d.added_at IS NOT NULL AND ar.is_active = true
+    WHERE d.added_at IS NOT NULL AND d.colaborador1 IS NOT NULL
     GROUP BY 1, 2
     ORDER BY 1 DESC, total_deals DESC
   `);
   return rows;
 }
 
-/** Annual deals per active agent — for ranking chart */
+/** Annual deals per agent (by colaborador1 = captación) — for ranking chart */
 export async function dealsPerYearPerAgent() {
   const { rows } = await getPool().query(`
     SELECT EXTRACT(YEAR FROM d.added_at)::int AS year,
-           d.owner_name,
+           d.colaborador1 AS owner_name,
            count(*)::int AS total_deals,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS exitosos
     FROM deals d
-    JOIN agent_registry ar ON ar.canonical_name = d.owner_name
-    WHERE d.added_at IS NOT NULL AND ar.is_active = true
+    WHERE d.added_at IS NOT NULL AND d.colaborador1 IS NOT NULL
     GROUP BY 1, 2
     ORDER BY 1, total_deals DESC
   `);
@@ -827,7 +825,7 @@ export async function dashboardSummary() {
        WHERE pipeline_phase = 'CERRADO OPERADO')                     AS deals_operados,
       (SELECT count(*)::int FROM deals
        WHERE pipeline_phase = 'CERRADO AGENDADO')                    AS deals_agendados,
-      (SELECT count(DISTINCT owner_name)::int FROM deals)            AS deals_agents,
+      (SELECT count(DISTINCT colaborador1)::int FROM deals WHERE colaborador1 IS NOT NULL) AS deals_agents,
       (SELECT count(*)::int FROM deals
        WHERE bono_75_dias = true)                                    AS deals_con_bono,
       (SELECT sum(COALESCE(comision_bar1,0)+COALESCE(comision_bar2,0)+COALESCE(comision_bar3,0))::int

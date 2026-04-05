@@ -740,11 +740,11 @@ async function loadDeals() {
     });
 
     // Agents bar chart — exitosos vs total
-    const topAgents = agents.filter(a => a.total_deals > 10).slice(0, 10);
+    const topAgents = agents.filter(a => (a.total_participaciones || a.total_deals) > 10).slice(0, 10);
     new Chart(document.getElementById("chart-deals-agents"), {
       type: "bar",
       data: {
-        labels: topAgents.map(a => a.owner_name),
+        labels: topAgents.map(a => a.agent || a.owner_name),
         datasets: [
           { label: "Exitosos", data: topAgents.map(a => a.deals_exitosos), backgroundColor: "#16a34a" },
           { label: "Sin Respuesta", data: topAgents.map(a => a.sin_respuesta), backgroundColor: "#dc2626" },
@@ -758,8 +758,8 @@ async function loadDeals() {
     document.querySelector("#table-deals tbody").innerHTML = agents.map(a => {
       const tasaClass = a.tasa_exito >= 30 ? 'badge-green' : a.tasa_exito >= 15 ? 'badge-amber' : 'badge-red';
       return `<tr>
-        <td><strong>${a.owner_name}</strong></td>
-        <td>${a.total_deals}</td>
+        <td><strong>${a.agent || a.owner_name}</strong></td>
+        <td>${a.total_participaciones || a.total_deals}</td>
         <td><strong>${a.deals_exitosos}</strong></td>
         <td><span class="badge ${tasaClass}">${a.tasa_exito}%</span></td>
         <td>${a.operados}</td><td>${a.agendados}</td><td>${a.instalados}</td>
