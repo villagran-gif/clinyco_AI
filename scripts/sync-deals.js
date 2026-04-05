@@ -193,6 +193,9 @@ function extractDeal(raw, pipelineId, pipelineName, stageName) {
     colaborador1: clean(cf["Colaborador 1 (BAR)"]),
     colaborador2: clean(cf["Colaborador 2 (BAR)"]),
     colaborador3: clean(cf["Colaborador 3 (BAR)"]),
+    colaborador4: clean(cf["Colaborador 4 (BAR)"]),
+    colaborador5: clean(cf["Colaborador 5 (BAR)"]),
+    colaborador6: clean(cf["Colaborador 6 (BAR)"]),
     comision_bar1: parseInt0(cf["ComisionBAR1"]),
     comision_bar2: parseInt0(cf["ComisionBAR2"]),
     comision_bar3: parseInt0(cf["ComisionBAR3"]),
@@ -207,7 +210,9 @@ function extractDeal(raw, pipelineId, pipelineName, stageName) {
 
 // ── Audit: detect changes ──
 const TRACKED_FIELDS = [
-  "pipeline_phase", "colaborador1", "colaborador2", "colaborador3",
+  "pipeline_phase",
+  "colaborador1", "colaborador2", "colaborador3",
+  "colaborador4", "colaborador5", "colaborador6",
   "comision_bar1", "comision_bar2", "comision_bar3",
   "comision_bar4", "comision_bar5", "comision_bar6",
   "fecha_cirugia",
@@ -271,14 +276,16 @@ async function logDeletions(deletedDeals) {
         `INSERT INTO deal_deletions_log (
           deal_id, deal_name, rut_normalizado, pipeline_phase, owner_name,
           colaborador1, colaborador2, colaborador3,
+          colaborador4, colaborador5, colaborador6,
           comision_bar1, comision_bar2, comision_bar3,
           comision_bar4, comision_bar5, comision_bar6,
           added_at, fecha_cirugia, contact_name, contact_phone,
           snapshot_json, sync_batch_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
         [
           d.deal_id, d.deal_name, d.rut_normalizado, d.pipeline_phase, d.owner_name,
           d.colaborador1, d.colaborador2, d.colaborador3,
+          d.colaborador4, d.colaborador5, d.colaborador6,
           d.comision_bar1, d.comision_bar2, d.comision_bar3,
           d.comision_bar4, d.comision_bar5, d.comision_bar6,
           d.added_at, d.fecha_cirugia, d.contact_name, d.contact_phone,
@@ -299,12 +306,13 @@ async function upsertDeal(d) {
       owner_name, added_at, contact_name, contact_phone, rut, rut_normalizado,
       ciudad, cirugia, fecha_cirugia, sucursal, url_medinet,
       colaborador1, colaborador2, colaborador3,
+      colaborador4, colaborador5, colaborador6,
       comision_bar1, comision_bar2, comision_bar3,
       comision_bar4, comision_bar5, comision_bar6,
       dias_added_cirugia, bono_75_dias, sell_updated_at, synced_at
     ) VALUES (
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-      $21,$22,$23,$24,$25,$26,$27,$28,$29,now()
+      $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,now()
     ) ON CONFLICT (deal_id) DO UPDATE SET
       deal_name=EXCLUDED.deal_name, pipeline_phase=EXCLUDED.pipeline_phase,
       pipeline_id=EXCLUDED.pipeline_id, pipeline_name=EXCLUDED.pipeline_name,
@@ -316,6 +324,8 @@ async function upsertDeal(d) {
       url_medinet=EXCLUDED.url_medinet,
       colaborador1=EXCLUDED.colaborador1, colaborador2=EXCLUDED.colaborador2,
       colaborador3=EXCLUDED.colaborador3,
+      colaborador4=EXCLUDED.colaborador4, colaborador5=EXCLUDED.colaborador5,
+      colaborador6=EXCLUDED.colaborador6,
       comision_bar1=EXCLUDED.comision_bar1, comision_bar2=EXCLUDED.comision_bar2,
       comision_bar3=EXCLUDED.comision_bar3, comision_bar4=EXCLUDED.comision_bar4,
       comision_bar5=EXCLUDED.comision_bar5, comision_bar6=EXCLUDED.comision_bar6,
@@ -326,6 +336,7 @@ async function upsertDeal(d) {
       d.owner_name, d.added_at, d.contact_name, d.contact_phone, d.rut, d.rut_normalizado,
       d.ciudad, d.cirugia, d.fecha_cirugia, d.sucursal, d.url_medinet,
       d.colaborador1, d.colaborador2, d.colaborador3,
+      d.colaborador4, d.colaborador5, d.colaborador6,
       d.comision_bar1, d.comision_bar2, d.comision_bar3,
       d.comision_bar4, d.comision_bar5, d.comision_bar6,
       d.dias_added_cirugia, d.bono_75_dias, d.sell_updated_at,

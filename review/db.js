@@ -564,13 +564,15 @@ export async function dealsForAgentDetail(agentFirstName, year = null) {
     `SELECT d.deal_id, d.deal_name, d.pipeline_phase, d.pipeline_name,
             d.added_at::text, d.fecha_cirugia::text, d.cirugia,
             d.colaborador1, d.colaborador2, d.colaborador3,
+            d.colaborador4, d.colaborador5, d.colaborador6,
             d.comision_bar1, d.comision_bar2, d.comision_bar3,
             d.comision_bar4, d.comision_bar5, d.comision_bar6,
             d.dias_added_cirugia, d.bono_75_dias,
             d.contact_name, d.contact_phone, d.rut_normalizado,
             d.url_medinet, d.owner_name, d.synced_at
      FROM deals d
-     WHERE (d.colaborador1 = $1 OR d.colaborador2 = $1 OR d.colaborador3 = $1) ${yearFilter}
+     WHERE (d.colaborador1 = $1 OR d.colaborador2 = $1 OR d.colaborador3 = $1
+            OR d.colaborador4 = $1 OR d.colaborador5 = $1 OR d.colaborador6 = $1) ${yearFilter}
      ORDER BY d.added_at DESC
      LIMIT 200`,
     [agentFirstName]
@@ -584,6 +586,7 @@ export async function auditLogRecent(limit = 100) {
     `SELECT * FROM deal_audit_log
      WHERE field_name IN (
        'colaborador1','colaborador2','colaborador3',
+       'colaborador4','colaborador5','colaborador6',
        'comision_bar1','comision_bar2','comision_bar3',
        'comision_bar4','comision_bar5','comision_bar6'
      )
@@ -597,7 +600,8 @@ export async function auditLogRecent(limit = 100) {
 export async function deletionLogRecent(limit = 50) {
   const { rows } = await getPool().query(
     `SELECT id, deal_id, deal_name, rut_normalizado, pipeline_phase, owner_name,
-            colaborador1, colaborador2, colaborador3, detected_at
+            colaborador1, colaborador2, colaborador3,
+            colaborador4, colaborador5, colaborador6, detected_at
      FROM deal_deletions_log ORDER BY detected_at DESC LIMIT $1`,
     [limit]
   );
@@ -610,6 +614,7 @@ export async function dealsRaw(limit = 200) {
     `SELECT deal_id, deal_name, pipeline_phase, pipeline_name,
             added_at::text, fecha_cirugia::text,
             colaborador1, colaborador2, colaborador3,
+            colaborador4, colaborador5, colaborador6,
             comision_bar1, comision_bar2, comision_bar3,
             comision_bar4, comision_bar5, comision_bar6,
             dias_added_cirugia, bono_75_dias, contact_phone,

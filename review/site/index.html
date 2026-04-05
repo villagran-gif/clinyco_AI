@@ -376,11 +376,14 @@
               <th class="sortable" data-col="3" data-type="text">Fase</th>
               <th class="sortable" data-col="4" data-type="text">Added</th>
               <th class="sortable" data-col="5" data-type="text">F.Cirugia</th>
-              <th>C1</th><th>C2</th><th>C3</th>
-              <th class="sortable" data-col="9" data-type="num">BAR1</th>
-              <th class="sortable" data-col="10" data-type="num">BAR2</th>
-              <th class="sortable" data-col="11" data-type="num">BAR3</th>
-              <th class="sortable" data-col="12" data-type="num">Dias</th>
+              <th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>
+              <th class="sortable" data-col="12" data-type="num">BAR1</th>
+              <th class="sortable" data-col="13" data-type="num">BAR2</th>
+              <th class="sortable" data-col="14" data-type="num">BAR3</th>
+              <th class="sortable" data-col="15" data-type="num">BAR4</th>
+              <th class="sortable" data-col="16" data-type="num">BAR5</th>
+              <th class="sortable" data-col="17" data-type="num">BAR6</th>
+              <th class="sortable" data-col="18" data-type="num">Dias</th>
               <th>Bono</th>
             </tr></thead>
             <tbody></tbody>
@@ -522,11 +525,14 @@
               <th class="sortable" data-col="3" data-type="text">Fase</th>
               <th class="sortable" data-col="4" data-type="text">Added</th>
               <th class="sortable" data-col="5" data-type="text">F. Cirugia</th>
-              <th>C1</th><th>C2</th><th>C3</th>
-              <th class="sortable" data-col="9" data-type="num">BAR1</th>
-              <th class="sortable" data-col="10" data-type="num">BAR2</th>
-              <th class="sortable" data-col="11" data-type="num">BAR3</th>
-              <th class="sortable" data-col="12" data-type="num">Dias</th>
+              <th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>
+              <th class="sortable" data-col="12" data-type="num">BAR1</th>
+              <th class="sortable" data-col="13" data-type="num">BAR2</th>
+              <th class="sortable" data-col="14" data-type="num">BAR3</th>
+              <th class="sortable" data-col="15" data-type="num">BAR4</th>
+              <th class="sortable" data-col="16" data-type="num">BAR5</th>
+              <th class="sortable" data-col="17" data-type="num">BAR6</th>
+              <th class="sortable" data-col="18" data-type="num">Dias</th>
               <th>Bono</th>
               <th>Links</th>
             </tr></thead>
@@ -562,7 +568,7 @@
               <th class="sortable" data-col="1" data-type="text">Deal</th>
               <th class="sortable" data-col="2" data-type="text">RUT</th>
               <th class="sortable" data-col="3" data-type="text">Fase</th>
-              <th>Owner</th><th>C1</th><th>C2</th><th>C3</th>
+              <th>Owner</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -928,9 +934,15 @@ async function loadDeals() {
           <td>${d.colaborador1 || '—'}</td>
           <td>${d.colaborador2 || '—'}</td>
           <td>${d.colaborador3 || '—'}</td>
+          <td>${d.colaborador4 || '—'}</td>
+          <td>${d.colaborador5 || '—'}</td>
+          <td>${d.colaborador6 || '—'}</td>
           <td>${d.comision_bar1 || '—'}</td>
           <td>${d.comision_bar2 || '—'}</td>
           <td>${d.comision_bar3 || '—'}</td>
+          <td>${d.comision_bar4 || '—'}</td>
+          <td>${d.comision_bar5 || '—'}</td>
+          <td>${d.comision_bar6 || '—'}</td>
           <td>${d.dias_added_cirugia ?? '—'}</td>
           <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
         </tr>`;
@@ -1223,9 +1235,15 @@ async function showAgentDeals(firstName, fullName) {
         <td>${d.colaborador1 || '—'}</td>
         <td>${d.colaborador2 || '—'}</td>
         <td>${d.colaborador3 || '—'}</td>
+        <td>${d.colaborador4 || '—'}</td>
+        <td>${d.colaborador5 || '—'}</td>
+        <td>${d.colaborador6 || '—'}</td>
         <td>${d.comision_bar1 || '—'}</td>
         <td>${d.comision_bar2 || '—'}</td>
         <td>${d.comision_bar3 || '—'}</td>
+        <td>${d.comision_bar4 || '—'}</td>
+        <td>${d.comision_bar5 || '—'}</td>
+        <td>${d.comision_bar6 || '—'}</td>
         <td>${d.dias_added_cirugia ?? '—'}</td>
         <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
         <td><a href="${desktopUrl}" target="_blank" style="font-size:.7rem">Desktop</a> | <a href="${mobileUrl}" target="_blank" style="font-size:.7rem">App</a></td>
@@ -1234,7 +1252,7 @@ async function showAgentDeals(firstName, fullName) {
     makeSortable('table-deal-detail');
     el.scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
-    document.querySelector('#table-deal-detail tbody').innerHTML = `<tr><td colspan="15" class="error-msg">${err.message}</td></tr>`;
+    document.querySelector('#table-deal-detail tbody').innerHTML = `<tr><td colspan="21" class="error-msg">${err.message}</td></tr>`;
   }
 
   // Also load audit log
@@ -1280,6 +1298,9 @@ async function loadDeletionLog() {
         <td>${d.colaborador1 || '—'}</td>
         <td>${d.colaborador2 || '—'}</td>
         <td>${d.colaborador3 || '—'}</td>
+        <td>${d.colaborador4 || '—'}</td>
+        <td>${d.colaborador5 || '—'}</td>
+        <td>${d.colaborador6 || '—'}</td>
       </tr>`;
     }).join('');
     makeSortable('table-deletions');

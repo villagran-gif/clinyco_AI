@@ -110,12 +110,13 @@ async function main() {
           rut, ciudad, cirugia, fecha_cirugia, sucursal, origen,
           probabilidad_ganar, fecha_cambio_fase, fecha_cierre,
           colaborador1, colaborador2, colaborador3,
+          colaborador4, colaborador5, colaborador6,
           comision_bar1, comision_bar2, comision_bar3,
           comision_bar4, comision_bar5, comision_bar6,
           dias_added_cirugia, bono_75_dias
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
         ) ON CONFLICT (deal_id) DO UPDATE SET
           pipeline_phase = EXCLUDED.pipeline_phase,
           owner_name = EXCLUDED.owner_name,
@@ -124,6 +125,9 @@ async function main() {
           colaborador1 = EXCLUDED.colaborador1,
           colaborador2 = EXCLUDED.colaborador2,
           colaborador3 = EXCLUDED.colaborador3,
+          colaborador4 = EXCLUDED.colaborador4,
+          colaborador5 = EXCLUDED.colaborador5,
+          colaborador6 = EXCLUDED.colaborador6,
           comision_bar1 = EXCLUDED.comision_bar1,
           comision_bar2 = EXCLUDED.comision_bar2,
           comision_bar3 = EXCLUDED.comision_bar3,
@@ -154,6 +158,9 @@ async function main() {
           clean(row["Colaborador 1 (BAR)"]),
           clean(row["Colaborador 2 (BAR)"]),
           clean(row["Colaborador 3 (BAR)"]),
+          clean(row["Colaborador 4 (BAR)"]),
+          clean(row["Colaborador 5 (BAR)"]),
+          clean(row["Colaborador 6 (BAR)"]),
           parseInt0(row["ComisionBAR1"]),
           parseInt0(row["ComisionBAR2"]),
           parseInt0(row["ComisionBAR3"]),
