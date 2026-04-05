@@ -4871,7 +4871,8 @@ app.post("/messages", async (req, res) => {
 
       // ── EugenIA observes human agent comments but never mutates Antonia state ──
       try {
-        const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, userText || "");
+        const businessText = info?.rawMessage?.content?.text || userText || "";
+        const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, businessText);
         const resolverForObservation = {
           ...resolverNext,
           actionLabel: inferBestNextAction(resolverNext)
@@ -4879,7 +4880,7 @@ app.post("/messages", async (req, res) => {
         await onEugeniaHumanAgentMessage({
           conversationId,
           ticketId: state.identity?.zendeskTicketId || null,
-          text: userText || "",
+          text: businessText,
           sourcePublic: true,
           state,
           resolverDecision: resolverForObservation,
