@@ -1234,6 +1234,8 @@ async function loadAgents() {
 function makeSortable(tableId) {
   const table = document.getElementById(tableId);
   if (!table) return;
+  if (table.dataset.sortable) return; // already bound
+  table.dataset.sortable = '1';
   table.querySelectorAll('th.sortable').forEach(th => {
     th.addEventListener('click', () => {
       const col = parseInt(th.dataset.col);
@@ -1246,15 +1248,16 @@ function makeSortable(tableId) {
       table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
       th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
 
+      const nextAsc = !isAsc;
       rows.sort((a, b) => {
         const aVal = a.cells[col]?.textContent?.trim() || '';
         const bVal = b.cells[col]?.textContent?.trim() || '';
         if (type === 'num') {
           const aNum = parseFloat(aVal.replace(/[$%.,]/g, '')) || 0;
           const bNum = parseFloat(bVal.replace(/[$%.,]/g, '')) || 0;
-          return isAsc ? aNum - bNum : bNum - aNum;
+          return nextAsc ? aNum - bNum : bNum - aNum;
         }
-        return isAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        return nextAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       });
 
       rows.forEach(r => tbody.appendChild(r));
