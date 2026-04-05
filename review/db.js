@@ -139,142 +139,6 @@ export async function eugeniaActions() {
   return rows;
 }
 
-// ── Fine-tuning KPIs: Sentiment × Predictions ──
-
-/** Sentiment impact: avg patient sentiment when Antonia handled vs human-only */
-export async function eugeniaSentimentImpact() {
-  const { rows } = await getPool().query(`
-    WITH antonia_convs AS (
-      SELECT DISTINCT conversation_id FROM eugenia_predictions
-    ),
-    sentiment AS (
-      SELECT
-        cm.conversation_id,
-        CASE WHEN ac.conversation_id IS NOT NULL THEN 'antonia' ELSE 'human_only' END AS handler,
-        cm.text_sentiment_score,
-        cm.emoji_sentiment_avg
-      FROM conversation_messages cm
-      LEFT JOIN antonia_convs ac ON ac.conversation_id = cm.conversation_id
-      WHERE cm.role = 'user' AND cm.text_sentiment_score IS NOT NULL
-    )
-    SELECT
-      handler,
-      count(DISTINCT conversation_id)::int AS conversations,
-      count(*)::int AS messages,
-      round(avg(text_sentiment_score)::numeric, 3) AS avg_text_sentiment,
-      round(avg(emoji_sentiment_avg)::numeric, 3) AS avg_emoji_sentiment
-    FROM sentiment
-    GROUP BY handler
-    ORDER BY handler
-  `);
-  return rows;
-}
-
-/** Weekly sentiment + prediction accuracy trend (for fine-tuning progress) */
-export async function eugeniaFineTuningTrends(weeks = 12) {
-  const { rows } = await getPool().query(
-    `SELECT
-       date_trunc('week', cm.created_at)::date AS week,
-       count(DISTINCT cm.conversation_id)::int AS conversations,
-       round(avg(cm.text_sentiment_score) FILTER (WHERE cm.role = 'user')::numeric, 3) AS avg_sentiment,
-       round(avg(cm.emoji_sentiment_avg) FILTER (WHERE cm.role = 'user')::numeric, 3) AS avg_emoji,
-       count(*) FILTER (WHERE 'buying_signal' = ANY(cm.detected_signals))::int AS buying_signals,
-       count(*) FILTER (WHERE 'objection_signal' = ANY(cm.detected_signals))::int AS objection_signals,
-       count(*) FILTER (WHERE 'commitment_signal' = ANY(cm.detected_signals))::int AS commitment_signals,
-       (SELECT round(avg(ep.match_score)::numeric, 3)
-        FROM eugenia_predictions ep
-        WHERE ep.match_score IS NOT NULL
-          AND date_trunc('week', ep.predicted_at) = date_trunc('week', cm.created_at)) AS avg_match_score,
-       (SELECT count(*)::int
-        FROM eugenia_predictions ep
-        WHERE ep.match_type = 'same_intent'
-          AND date_trunc('week', ep.predicted_at) = date_trunc('week', cm.created_at)) AS same_intent_count
-     FROM conversation_messages cm
-     WHERE cm.created_at >= now() - ($1 || ' weeks')::interval
-     GROUP BY 1 ORDER BY 1`,
-    [weeks]
-  );
-  return rows;
-}
-
-/** Per-signal accuracy: how well Antonia predicts by detected signal type */
-export async function eugeniaSignalAccuracy() {
-  const { rows } = await getPool().query(`
-    WITH pred_sentiment AS (
-      SELECT
-        ep.id,
-        ep.match_type,
-        ep.match_score,
-        ep.outcome_score,
-        cm.detected_signals,
-        cm.text_sentiment_score
-      FROM eugenia_predictions ep
-      JOIN conversation_messages cm ON cm.conversation_id = ep.conversation_id
-      WHERE ep.human_actual_action IS NOT NULL
-        AND cm.role = 'user'
-        AND cm.detected_signals IS NOT NULL
-    )
-    SELECT
-      signal,
-      count(*)::int AS total,
-      round(avg(match_score)::numeric, 3) AS avg_match,
-      round(avg(outcome_score)::numeric, 1) AS avg_outcome,
-      count(*) FILTER (WHERE match_type = 'same_intent')::int AS aciertos,
-      round(avg(text_sentiment_score)::numeric, 3) AS avg_sentiment
-    FROM pred_sentiment,
-         unnest(detected_signals) AS signal
-    GROUP BY signal
-    ORDER BY avg_match DESC
-  `);
-  return rows;
-}
-
-/** Confidence calibration: match score buckets vs actual outcome */
-export async function eugeniaCalibration() {
-  const { rows } = await getPool().query(`
-    SELECT
-      CASE
-        WHEN match_score >= 0.8 THEN '0.8-1.0'
-        WHEN match_score >= 0.6 THEN '0.6-0.8'
-        WHEN match_score >= 0.4 THEN '0.4-0.6'
-        WHEN match_score >= 0.2 THEN '0.2-0.4'
-        ELSE '0.0-0.2'
-      END AS match_bucket,
-      count(*)::int AS predictions,
-      round(avg(outcome_score)::numeric, 1) AS avg_outcome,
-      count(*) FILTER (WHERE outcome_score >= 60)::int AS good_outcomes,
-      count(*) FILTER (WHERE is_gold_sample = true)::int AS gold_samples
-    FROM eugenia_predictions
-    WHERE match_score IS NOT NULL AND outcome_score IS NOT NULL
-    GROUP BY 1
-    ORDER BY 1
-  `);
-  return rows;
-}
-
-/** Model usage tracking: which model evaluated each prediction */
-export async function eugeniaModelStats() {
-  const { rows } = await getPool().query(`
-    SELECT
-      COALESCE(
-        CASE
-          WHEN compared_at IS NOT NULL THEN 'evaluated'
-          ELSE 'pending'
-        END, 'pending'
-      ) AS status,
-      count(*)::int AS total,
-      round(avg(match_score)::numeric, 3) AS avg_match,
-      round(avg(outcome_score)::numeric, 1) AS avg_outcome,
-      min(predicted_at)::date AS oldest,
-      max(predicted_at)::date AS newest
-    FROM eugenia_predictions
-    WHERE human_actual_action IS NOT NULL
-    GROUP BY 1
-    ORDER BY 1
-  `);
-  return rows;
-}
-
 // ═══════════════════════════════════════════════════════════════════
 //  DEALS — Zendesk Sell Performance
 // ═══════════════════════════════════════════════════════════════════
@@ -1095,21 +959,6 @@ export async function dashboardSummary() {
       (SELECT count(*)::int FROM eugenia_directives)                AS ep_directives,
       (SELECT count(*)::int FROM eugenia_help_sessions
        WHERE feedback_text IS NOT NULL)                             AS ep_feedback_sessions,
-      -- EugenIA fine-tuning: sentiment in Antonia conversations
-      (SELECT round(avg(cm.text_sentiment_score)::numeric, 3)
-       FROM conversation_messages cm
-       WHERE cm.role = 'user' AND cm.text_sentiment_score IS NOT NULL
-         AND cm.conversation_id IN (SELECT DISTINCT conversation_id FROM eugenia_predictions))
-                                                                     AS ep_antonia_avg_sentiment,
-      (SELECT round(avg(cm.emoji_sentiment_avg)::numeric, 3)
-       FROM conversation_messages cm
-       WHERE cm.role = 'user' AND cm.emoji_sentiment_avg IS NOT NULL
-         AND cm.conversation_id IN (SELECT DISTINCT conversation_id FROM eugenia_predictions))
-                                                                     AS ep_antonia_avg_emoji,
-      (SELECT count(*)::int FROM eugenia_predictions
-       WHERE compared_at IS NOT NULL)                                AS ep_evaluated,
-      (SELECT count(*)::int FROM eugenia_predictions
-       WHERE human_actual_action IS NOT NULL AND compared_at IS NULL) AS ep_pending_eval,
 
       -- WhatsApp WAHA (direct agent)
       (SELECT count(*)::int FROM agent_direct_conversations)        AS wa_conversations,
@@ -1192,10 +1041,6 @@ export async function dashboardSummary() {
       gold_samples: r.ep_gold_samples,
       directives_received: r.ep_directives,
       feedback_sessions: r.ep_feedback_sessions,
-      antonia_avg_sentiment: r.ep_antonia_avg_sentiment,
-      antonia_avg_emoji: r.ep_antonia_avg_emoji,
-      evaluated: r.ep_evaluated,
-      pending_eval: r.ep_pending_eval,
     },
     whatsapp_waha: {
       source: "WAHA (directo)",

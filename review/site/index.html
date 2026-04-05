@@ -223,42 +223,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Fine-tuning: Sentiment x Predictions -->
-      <h2 style="margin-top:2rem">Fine-tuning Antonia <button class="help-btn" onclick="showHelp('eug-finetuning')" title="Ayuda">?</button></h2>
-      <div class="kpi-grid" id="eug-ft-kpis"></div>
-      <div class="chart-row">
-        <div class="chart-box">
-          <h3>Sentiment + Match Score semanal <button class="help-btn" onclick="showHelp('eug-ft-trends')" title="Ayuda">?</button></h3>
-          <canvas id="chart-ft-trends"></canvas>
-        </div>
-        <div class="chart-box">
-          <h3>Impacto de Antonia en Sentiment <button class="help-btn" onclick="showHelp('eug-sentiment-impact')" title="Ayuda">?</button></h3>
-          <canvas id="chart-ft-impact"></canvas>
-        </div>
-      </div>
-      <div class="chart-row">
-        <div class="chart-box">
-          <h3>Precision por senal detectada <button class="help-btn" onclick="showHelp('eug-signal-accuracy')" title="Ayuda">?</button></h3>
-          <div style="max-height:350px;overflow:auto">
-            <table id="table-signal-accuracy" role="grid">
-              <thead><tr>
-                <th class="sortable" data-col="0" data-type="text">Senal</th>
-                <th class="sortable" data-col="1" data-type="num">Total</th>
-                <th class="sortable" data-col="2" data-type="num">Avg Match</th>
-                <th class="sortable" data-col="3" data-type="num">Avg Outcome</th>
-                <th class="sortable" data-col="4" data-type="num">Aciertos</th>
-                <th class="sortable" data-col="5" data-type="num">Avg Sentiment</th>
-              </tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="chart-box">
-          <h3>Calibracion: Match Score vs Outcome <button class="help-btn" onclick="showHelp('eug-calibration')" title="Ayuda">?</button></h3>
-          <canvas id="chart-ft-calibration"></canvas>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -708,13 +672,6 @@ function sentimentBadge(val) {
   if (n < -0.2) return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
   return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
 }
-function matchScoreBadge(val) {
-  if (val === null || val === undefined) return '<span class="badge">—</span>';
-  const n = parseFloat(val);
-  if (n >= 0.6) return `<span class="badge badge-green">${n.toFixed(3)}</span>`;
-  if (n >= 0.3) return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
-  return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
-}
 function pct(n, total) { return total ? (n / total * 100).toFixed(1) + "%" : "0%"; }
 function shortText(txt, max = 35) { return !txt ? "—" : txt.length > max ? txt.slice(0, max) + "..." : txt; }
 function sourceTag(src) {
@@ -755,10 +712,6 @@ async function loadDashboard() {
       kpiCard(e.avg_outcome_score, "Outcome"),
       kpiCard(e.gold_samples, "Gold Samples"),
       kpiCard(e.directives_received, "Directivas"),
-      kpiCard(sentimentBadge(e.antonia_avg_sentiment), "Sent. Antonia"),
-      kpiCard(sentimentBadge(e.antonia_avg_emoji), "Emoji Antonia"),
-      kpiCard(e.evaluated || 0, "Evaluadas"),
-      kpiCard(e.pending_eval || 0, "Pend. eval"),
     ].join("");
 
     document.getElementById("kpi-waha").innerHTML = [
@@ -806,11 +759,9 @@ async function loadDashboard() {
 // ═══════════ EUGENIA ═══════════
 async function loadEugenia() {
   try {
-    const [accuracy, trends, gold, actions, ftTrends, sentImpact, signalAcc, calibration] = await Promise.all([
+    const [accuracy, trends, gold, actions] = await Promise.all([
       api("/eugenia/accuracy"), api("/eugenia/trends?weeks=12"),
       api("/eugenia/gold-samples?limit=30"), api("/eugenia/actions"),
-      api("/eugenia/finetuning-trends?weeks=12"), api("/eugenia/sentiment-impact"),
-      api("/eugenia/signal-accuracy"), api("/eugenia/calibration"),
     ]);
     document.getElementById("eug-kpis").innerHTML = [
       kpiCard(accuracy.total, "Total comparadas"),
@@ -862,86 +813,6 @@ async function loadEugenia() {
     </tr>`).join("");
 
     makeSortable('table-gold');
-
-    // ── Fine-tuning section ──
-    const antoniaRow = sentImpact.find(r => r.handler === 'antonia') || {};
-    const humanRow = sentImpact.find(r => r.handler === 'human_only') || {};
-    document.getElementById("eug-ft-kpis").innerHTML = [
-      kpiCard(sentimentBadge(antoniaRow.avg_text_sentiment), "Sent. Antonia"),
-      kpiCard(sentimentBadge(antoniaRow.avg_emoji_sentiment), "Emoji Antonia"),
-      kpiCard(sentimentBadge(humanRow.avg_text_sentiment), "Sent. Solo humano"),
-      kpiCard(sentimentBadge(humanRow.avg_emoji_sentiment), "Emoji Solo humano"),
-      kpiCard(antoniaRow.conversations || 0, "Convs Antonia"),
-      kpiCard(humanRow.conversations || 0, "Convs Solo humano"),
-    ].join("");
-
-    // Fine-tuning trends: Sentiment + Match Score weekly
-    if (ftTrends.length) {
-      new Chart(document.getElementById("chart-ft-trends"), {
-        type: "line",
-        data: {
-          labels: ftTrends.map(t => t.week),
-          datasets: [
-            { label: "Sentiment texto", data: ftTrends.map(t => t.avg_sentiment), borderColor: "#2563eb", tension: .3, fill: false },
-            { label: "Sentiment emoji", data: ftTrends.map(t => t.avg_emoji), borderColor: "#9333ea", tension: .3, fill: false },
-            { label: "Match Score", data: ftTrends.map(t => t.avg_match_score), borderColor: "#16a34a", tension: .3, fill: false, borderDash: [5,5] },
-          ]
-        },
-        options: {
-          responsive: true, plugins: { legend: { position: "bottom" } },
-          scales: { y: { beginAtZero: false, title: { display: true, text: "Score" } } }
-        }
-      });
-    }
-
-    // Sentiment impact: Antonia vs Human bar chart
-    new Chart(document.getElementById("chart-ft-impact"), {
-      type: "bar",
-      data: {
-        labels: ["Sentiment Texto", "Sentiment Emoji"],
-        datasets: [
-          { label: "Con Antonia", data: [antoniaRow.avg_text_sentiment || 0, antoniaRow.avg_emoji_sentiment || 0], backgroundColor: "#2563eb" },
-          { label: "Solo humano", data: [humanRow.avg_text_sentiment || 0, humanRow.avg_emoji_sentiment || 0], backgroundColor: "#d97706" },
-        ]
-      },
-      options: { responsive: true, plugins: { legend: { position: "bottom" } }, scales: { y: { beginAtZero: false } } }
-    });
-
-    // Signal accuracy table
-    if (signalAcc.length) {
-      const signalLabels = { buying_signal: 'Buying', objection_signal: 'Objection', commitment_signal: 'Commitment', referral_signal: 'Referral', urgency_signal: 'Urgency' };
-      document.querySelector("#table-signal-accuracy tbody").innerHTML = signalAcc.map(s => `<tr>
-        <td><strong>${signalLabels[s.signal] || s.signal}</strong></td>
-        <td>${s.total}</td>
-        <td>${matchScoreBadge(s.avg_match)}</td>
-        <td><strong>${s.avg_outcome ?? '—'}</strong></td>
-        <td>${s.aciertos}</td>
-        <td>${sentimentBadge(s.avg_sentiment)}</td>
-      </tr>`).join("");
-      makeSortable('table-signal-accuracy');
-    }
-
-    // Calibration chart: match buckets vs outcome
-    if (calibration.length) {
-      new Chart(document.getElementById("chart-ft-calibration"), {
-        type: "bar",
-        data: {
-          labels: calibration.map(c => c.match_bucket),
-          datasets: [
-            { label: "Avg Outcome", data: calibration.map(c => c.avg_outcome), backgroundColor: "#16a34a" },
-            { label: "Predicciones", data: calibration.map(c => c.predictions), backgroundColor: "#2563eb", yAxisID: "y1" },
-          ]
-        },
-        options: {
-          responsive: true, plugins: { legend: { position: "bottom" } },
-          scales: {
-            y: { beginAtZero: true, max: 100, title: { display: true, text: "Outcome" } },
-            y1: { position: "right", beginAtZero: true, title: { display: true, text: "Count" }, grid: { drawOnChartArea: false } }
-          }
-        }
-      });
-    }
-
     document.getElementById("eug-loading").style.display = "none";
     document.getElementById("eug-content").style.display = "block";
     window._eugeniaLoaded = true;
@@ -1689,12 +1560,6 @@ const KPI_HELP = {
   'Diferentes': { title: 'Diferentes', text: 'Veces que el agente hizo algo completamente diferente. No es malo — el agente puede saber mas.', example: '100% al inicio es normal. Es un alumno nuevo. Con gold samples y directivas, baja.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge</a>' },
   'Match promedio': { title: 'Match Promedio', text: 'Nota promedio de similitud EugenIA vs agentes. De 0 a 1. Con el tiempo debe subir.', example: '0.000 → 0.4+ en 3 meses. 0.6+ = EugenIA y agentes piensan parecido.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/Similitud_coseno" target="_blank">Similitud de Texto</a>' },
   'Outcome promedio': { title: 'Outcome Promedio', text: 'Nota del resultado final de los deals vinculados a predicciones. De 0 (perdido) a 100 (operado).', example: 'Requiere ejecutar sync-outcomes.js para cruzar con Zendesk Sell.', tab: 'eugenia', ref: 'Outcome scoring, metodologia interna Clinyco.' },
-  'Sent. Antonia': { title: 'Sentiment en conversaciones de Antonia', text: 'Promedio del sentiment de texto en conversaciones donde Antonia participo. Compara con "Solo humano" para medir impacto.', example: 'Si Antonia tiene 0.5 y solo humano 0.3, los pacientes estan mas positivos con Antonia.', tab: 'eugenia', ref: 'Analisis keyword-based, espanol chileno.' },
-  'Emoji Antonia': { title: 'Emoji Sentiment en conversaciones de Antonia', text: 'Promedio del sentiment de emojis en conversaciones donde Antonia participo.', example: 'Emoji positivo = pacientes mandan mas corazones y caritas felices.', tab: 'eugenia', ref: '<a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Novak et al. 2015</a>' },
-  'Sent. Solo humano': { title: 'Sentiment sin Antonia', text: 'Promedio del sentiment en conversaciones donde NO participo Antonia (solo agente humano).', example: 'Baseline para comparar el efecto de Antonia en los pacientes.', tab: 'eugenia', ref: 'Grupo de control.' },
-  'Emoji Solo humano': { title: 'Emoji Sentiment sin Antonia', text: 'Emojis en conversaciones sin Antonia. Punto de comparacion.', example: 'Si es mas bajo que "Emoji Antonia", Antonia genera mejores interacciones.', tab: 'eugenia', ref: 'Grupo de control.' },
-  'Evaluadas': { title: 'Predicciones Evaluadas', text: 'Predicciones ya procesadas por el evaluador (Haiku). Tiene match_score y match_type asignados.', example: 'El evaluador corre automaticamente. Usa Haiku 4.5 para ahorrar costos.', tab: 'eugenia', ref: 'EVAL_MODEL env var configurable.' },
-  'Pend. eval': { title: 'Pendientes de Evaluacion', text: 'Predicciones con observacion humana pero sin evaluar aun. Necesitan que corra reevaluate-predictions.js.', example: 'Si hay muchas pendientes, ejecutar: node scripts/reevaluate-predictions.js', tab: 'eugenia', ref: 'Script manual o automatizable.' },
   'col-f1': { title: 'Fase 1: Captacion (Colaborador1)', text: 'Deals donde este agente capto al paciente — el primer contacto.', example: 'Si Gabriela tiene 677, capto 677 pacientes nuevos. Es la fase mas importante.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
   'col-f2': { title: 'Fase 2: Seguimiento (Colaborador2)', text: 'Deals donde este agente hizo seguimiento: llamadas, WhatsApp, coordinar examenes.', example: 'Si Carolin tiene 183, hizo seguimiento a 183 pacientes captados en F1.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
   'col-f3': { title: 'Fase 3: Cierre (Colaborador3)', text: 'Deals donde este agente participo en cerrar la venta, confirmar cirugia.', example: 'Si Carolin tiene 127 en F3, cerro 127 deals.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
@@ -1727,36 +1592,6 @@ const HELP = {
     text: 'Son los casos mas valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay algo interesante que estudiar.',
     example: '<b>high_match_good_outcome:</b> EugenIA acerto y el deal fue exitoso.<br><b>low_match_good_outcome:</b> El agente hizo diferente y funciono mejor.',
     ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Encuesta de Aprendizaje Activo (2020)</a>'
-  },
-  'eug-finetuning': {
-    title: 'Fine-tuning Antonia',
-    text: 'Metricas cruzadas de sentiment de pacientes con precision de predicciones. Permite ver si Antonia mejora la experiencia del paciente y si sus predicciones son mas precisas cuando hay senales claras.',
-    example: 'Si el sentiment sube junto con el match score semana a semana, Antonia esta aprendiendo bien.',
-    ref: 'Evaluacion automatica con Haiku 4.5 (configurable via EVAL_MODEL). <a href="https://arxiv.org/abs/2306.05685" target="_blank">LLM-as-a-Judge</a>'
-  },
-  'eug-ft-trends': {
-    title: 'Sentiment + Match Score semanal',
-    text: 'Tendencia semanal que cruza 3 metricas: sentiment de texto, sentiment de emojis, y match score de predicciones. Las 3 lineas deben subir con el tiempo.',
-    example: 'Linea punteada verde (match) subiendo = Antonia predice mejor. Lineas azul/morada = pacientes mas felices.',
-    ref: 'Correlacion sentiment-precision para fine-tuning.'
-  },
-  'eug-sentiment-impact': {
-    title: 'Impacto de Antonia en Sentiment',
-    text: 'Comparacion directa: conversaciones donde Antonia participo vs conversaciones solo con agente humano. Muestra si Antonia mejora o empeora la experiencia.',
-    example: 'Si "Con Antonia" > "Solo humano" en ambas barras, Antonia tiene impacto positivo.',
-    ref: 'Analisis A/B natural (no randomizado).'
-  },
-  'eug-signal-accuracy': {
-    title: 'Precision por senal detectada',
-    text: 'Muestra que tan bien predice Antonia segun el tipo de senal del paciente. Buying signals suelen ser mas predecibles que objections.',
-    example: 'Si "Buying" tiene match 0.6 y "Objection" solo 0.2, Antonia necesita mas entrenamiento en manejo de objeciones.',
-    ref: 'Cruce de detected_signals con match_score por tipo.'
-  },
-  'eug-calibration': {
-    title: 'Calibracion: Match Score vs Outcome',
-    text: 'Verifica si predicciones con alto match score realmente llevan a mejores outcomes. Una buena calibracion = las barras verdes suben de izquierda a derecha.',
-    example: 'Match 0.8-1.0 deberia tener outcome > 60. Si no, hay descalibracion.',
-    ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - Calibracion de evaluadores LLM</a>'
   },
   'wa-signals': {
     title: 'Senales de venta (WAHA)',
