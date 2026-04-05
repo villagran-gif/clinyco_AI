@@ -69,14 +69,14 @@
     }
     .chart-box h3 { font-size: .9rem; color: #475569; margin-bottom: .8rem; }
     th.sortable { cursor: pointer; user-select: none; position: relative; }
-    th.sortable:hover { background: #e2e8f0; }
-    th.sortable::after { content: ' ⇅'; opacity: .3; font-size: .7rem; }
-    th.sort-asc::after { content: ' ↑'; opacity: .8; }
-    th.sort-desc::after { content: ' ↓'; opacity: .8; }
+    th.sortable:hover { background: #dbeafe; }
+    th.sortable::after { content: ' ⇅'; opacity: .5; font-size: .8rem; }
+    th.sort-asc::after { content: ' ▲'; opacity: 1; color: #2563eb; font-size: .8rem; }
+    th.sort-desc::after { content: ' ▼'; opacity: 1; color: #2563eb; font-size: .8rem; }
     th .col-help { cursor: pointer; opacity: .4; font-size: .65rem; margin-left: 2px; }
     th .col-help:hover { opacity: 1; color: #2563eb; }
     table { font-size: .8rem; }
-    th { background: #f1f5f9; }
+    th { background: #f1f5f9; position: sticky; top: 0; z-index: 2; }
     .badge {
       display: inline-block; padding: .15rem .5rem; border-radius: 999px;
       font-size: .7rem; font-weight: 600;
@@ -798,7 +798,7 @@ async function loadDeals() {
           { label: "En Proceso", data: topAgents.map(a => a.en_examenes + a.en_proceso), backgroundColor: "#2563eb" },
         ]
       },
-      options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { legend: { position: "bottom" } } }
+      options: { indexAxis: 'y', responsive: true, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { legend: { position: "bottom" } } }
     });
 
     // Table
@@ -827,7 +827,7 @@ async function loadDeals() {
             { label: "Bono 75 dias CLP", data: commissions.map(c => c.bono_75_dias_clp), backgroundColor: "#16a34a" },
           ]
         },
-        options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: "bottom" } } }
+        options: { indexAxis: 'y', responsive: true, scales: { x: { stacked: true, beginAtZero: true }, y: { stacked: true } }, plugins: { legend: { position: "bottom" } } }
       });
 
       document.querySelector("#table-commissions tbody").innerHTML = commissions.map(c => `<tr>
@@ -1070,7 +1070,7 @@ function renderPhasesAndChains(phases, chains) {
         { label: "Fase 3: Cierre", data: activePhases.map(p => p.fase3_cierre), backgroundColor: "#16a34a" },
       ]
     },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+    options: { indexAxis: 'y', responsive: true, plugins: { legend: { position: "bottom" } } }
   });
 
   document.querySelector("#table-phases tbody").innerHTML = activePhases.map(p => `<tr>
