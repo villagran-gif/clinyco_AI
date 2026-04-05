@@ -13,6 +13,7 @@
       --clinyco-red: #dc2626;
       --clinyco-amber: #d97706;
       --clinyco-purple: #9333ea;
+      --clinyco-cyan: #0891b2;
     }
     body { background: #f8fafc; }
     .header-bar {
@@ -25,31 +26,39 @@
     .tabs {
       display: flex; gap: .5rem; margin-bottom: 1.5rem;
       border-bottom: 2px solid #e2e8f0; padding-bottom: .5rem;
+      flex-wrap: wrap;
     }
     .tabs button {
-      background: none; border: none; padding: .6rem 1.2rem;
+      background: none; border: none; padding: .6rem 1rem;
       font-weight: 600; cursor: pointer; border-radius: 6px 6px 0 0;
-      color: #64748b; font-size: .95rem;
+      color: #64748b; font-size: .85rem;
     }
     .tabs button.active { background: var(--clinyco-blue); color: #fff; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     .kpi-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 1rem; margin-bottom: 2rem;
     }
     .kpi-card {
-      background: #fff; border-radius: 12px; padding: 1.2rem;
+      background: #fff; border-radius: 12px; padding: 1rem;
       box-shadow: 0 1px 3px rgba(0,0,0,.08); text-align: center;
+      cursor: pointer; transition: transform .15s, box-shadow .15s;
     }
+    .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.15); }
     .kpi-card .value {
-      font-size: 2rem; font-weight: 700; color: #1e293b;
-      line-height: 1.2;
+      font-size: 1.8rem; font-weight: 700; color: #1e293b; line-height: 1.2;
     }
     .kpi-card .label {
-      font-size: .8rem; color: #64748b; margin-top: .3rem;
+      font-size: .75rem; color: #64748b; margin-top: .3rem;
       text-transform: uppercase; letter-spacing: .5px;
     }
+    .source-tag {
+      display: inline-block; padding: .1rem .4rem; border-radius: 4px;
+      font-size: .65rem; font-weight: 700; text-transform: uppercase;
+    }
+    .source-waha { background: #dbeafe; color: #1e40af; }
+    .source-zendesk { background: #fef3c7; color: #92400e; }
     .chart-row {
       display: grid; grid-template-columns: 1fr 1fr;
       gap: 1.5rem; margin-bottom: 2rem;
@@ -58,12 +67,26 @@
       background: #fff; border-radius: 12px; padding: 1.2rem;
       box-shadow: 0 1px 3px rgba(0,0,0,.08);
     }
-    .chart-box h3 { font-size: .95rem; color: #475569; margin-bottom: .8rem; }
-    table { font-size: .85rem; }
-    th { background: #f1f5f9; }
+    .chart-box h3 { font-size: .9rem; color: #475569; margin-bottom: .8rem; }
+    th.sortable { cursor: pointer; user-select: none; position: relative; }
+    th.sortable:hover { background: #dbeafe; }
+    th.sortable::after { content: ' ⇅'; opacity: .5; font-size: .8rem; }
+    th.sort-asc::after { content: ' ▲'; opacity: 1; color: #2563eb; font-size: .8rem; }
+    th.sort-desc::after { content: ' ▼'; opacity: 1; color: #2563eb; font-size: .8rem; }
+    th .col-help { cursor: pointer; opacity: .4; font-size: .65rem; margin-left: 2px; }
+    th .col-help:hover { opacity: 1; color: #2563eb; }
+    table { font-size: .8rem; border-collapse: separate; border-spacing: 0; }
+    thead th {
+      background: #f1f5f9 !important;
+      position: -webkit-sticky !important;
+      position: sticky !important;
+      top: 0 !important;
+      z-index: 2 !important;
+      box-shadow: 0 1px 2px rgba(0,0,0,.1);
+    }
     .badge {
       display: inline-block; padding: .15rem .5rem; border-radius: 999px;
-      font-size: .75rem; font-weight: 600;
+      font-size: .7rem; font-weight: 600;
     }
     .badge-green { background: #dcfce7; color: #166534; }
     .badge-amber { background: #fef3c7; color: #92400e; }
@@ -71,6 +94,53 @@
     .badge-purple { background: #f3e8ff; color: #6b21a8; }
     .loading { text-align: center; padding: 3rem; color: #94a3b8; }
     .error-msg { color: var(--clinyco-red); padding: 1rem; text-align: center; }
+    .section-label {
+      font-size: .75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1px; color: #94a3b8; margin: 1.5rem 0 .5rem;
+    }
+    /* Help popup */
+    .help-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 50%; background: #e2e8f0;
+      color: #475569; font-size: .7rem; font-weight: 700; cursor: pointer;
+      border: none; margin-left: .4rem; vertical-align: middle;
+      transition: background .2s;
+    }
+    .help-btn:hover { background: #2563eb; color: #fff; }
+    .help-overlay {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,.5); z-index: 999; justify-content: center; align-items: center;
+    }
+    .help-overlay.open { display: flex; }
+    .help-card {
+      background: #fff; border-radius: 16px; padding: 2rem; max-width: 500px;
+      width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    }
+    .help-card h3 { margin-top: 0; color: #1e293b; }
+    .help-card p { color: #475569; line-height: 1.6; font-size: .9rem; }
+    .help-card .example {
+      background: #f1f5f9; border-radius: 8px; padding: .8rem;
+      margin: .8rem 0; font-size: .85rem; color: #334155;
+    }
+    .help-card .help-buttons {
+      display: flex; gap: .5rem; margin-top: 1.2rem; flex-wrap: wrap;
+    }
+    .help-card .help-buttons button, .help-card .help-buttons a {
+      padding: .5rem 1rem; border: none; border-radius: 8px;
+      cursor: pointer; font-weight: 600; font-size: .85rem;
+      text-decoration: none; text-align: center;
+    }
+    .help-card .btn-ok { background: var(--clinyco-blue); color: #fff; }
+    .help-card .btn-data { background: #16a34a; color: #fff; }
+    .help-card .btn-ref { background: #f1f5f9; color: #475569; }
+    .help-card .btn-ref:hover { background: #e2e8f0; }
+    .help-card .ref-section {
+      margin-top: .8rem; padding-top: .8rem; border-top: 1px solid #e2e8f0;
+      font-size: .75rem; color: #94a3b8;
+    }
+    .help-card .ref-section a { color: #2563eb; }
+    /* Override Pico overflow on table containers */
+    figure, table { overflow: visible !important; }
     @media (max-width: 768px) {
       .chart-row { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
@@ -82,15 +152,19 @@
 <div class="header-bar">
   <div>
     <h1>Clinyco Review Dashboard</h1>
-    <small>EugenIA Learning + WhatsApp Sentiment Analysis</small>
+    <small>EugenIA + WhatsApp WAHA + WhatsApp Zendesk — Consolidado</small>
   </div>
 </div>
 
 <main class="container">
   <div class="tabs">
     <button class="active" onclick="showTab('dashboard')">Dashboard</button>
-    <button onclick="showTab('eugenia')">EugenIA Learning</button>
-    <button onclick="showTab('whatsapp')">WhatsApp Sentiment</button>
+    <button onclick="showTab('eugenia')">EugenIA</button>
+    <button onclick="showTab('waha')">WhatsApp WAHA</button>
+    <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
+    <button onclick="showTab('deals')">Deals Sell</button>
+    <button onclick="showTab('gold')">Gold Analysis</button>
+    <button onclick="showTab('agents')">Agentes</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -99,8 +173,15 @@
     <div id="dash-content" style="display:none">
       <h2>EugenIA</h2>
       <div class="kpi-grid" id="kpi-eugenia"></div>
-      <h2>WhatsApp Observer</h2>
-      <div class="kpi-grid" id="kpi-whatsapp"></div>
+
+      <h2>WhatsApp WAHA <span class="source-tag source-waha">Directo</span></h2>
+      <div class="kpi-grid" id="kpi-waha"></div>
+
+      <h2>Deals Zendesk Sell</h2>
+      <div class="kpi-grid" id="kpi-deals"></div>
+
+      <h2>WhatsApp Zendesk <span class="source-tag source-zendesk">Bot + Agente</span></h2>
+      <div class="kpi-grid" id="kpi-zendesk"></div>
     </div>
   </div>
 
@@ -111,38 +192,196 @@
       <div class="kpi-grid" id="eug-kpis"></div>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Precision semanal (match score)</h3>
+          <h3>Precision semanal (match score) <button class="help-btn" onclick="showHelp('eug-precision')" title="Ayuda">?</button></h3>
           <canvas id="chart-eug-trends"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Distribucion de match types</h3>
+          <h3>Distribucion de match types <button class="help-btn" onclick="showHelp('eug-donut')" title="Ayuda">?</button></h3>
           <canvas id="chart-eug-donut"></canvas>
         </div>
       </div>
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Acciones sugeridas por outcome</h3>
+          <h3>Acciones sugeridas por outcome <button class="help-btn" onclick="showHelp('eug-actions')" title="Ayuda">?</button></h3>
           <canvas id="chart-eug-actions"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Gold Samples</h3>
+          <h3>Gold Samples <button class="help-btn" onclick="showHelp('eug-gold')" title="Ayuda">?</button></h3>
           <div style="max-height:350px;overflow:auto">
             <table id="table-gold" role="grid">
               <thead><tr>
-                <th>Turn</th><th>AI sugirio</th><th>Humano hizo</th>
-                <th>Match</th><th>Outcome</th><th>Gold Reason</th>
+                <th class="sortable" data-col="0" data-type="num">Turn</th>
+                <th class="sortable" data-col="1" data-type="text">AI sugirio</th>
+                <th class="sortable" data-col="2" data-type="text">Humano hizo</th>
+                <th class="sortable" data-col="3" data-type="text">Match</th>
+                <th class="sortable" data-col="4" data-type="num">Outcome</th>
+                <th class="sortable" data-col="5" data-type="text">Gold Reason</th>
               </tr></thead>
               <tbody></tbody>
             </table>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: WAHA ══════ -->
+  <div id="tab-waha" class="tab-content">
+    <div id="wa-loading" class="loading">Cargando datos WAHA...</div>
+    <div id="wa-content" style="display:none">
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Senales de venta por dia <span class="source-tag source-waha">WAHA</span> <button class="help-btn" onclick="showHelp('wa-signals')" title="Ayuda">?</button></h3>
+          <canvas id="chart-wa-signals"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Conversaciones — Sentiment & Senales <button class="help-btn" onclick="showHelp('wa-conversations')" title="Ayuda">?</button></h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-wa-conversations" role="grid">
+              <thead><tr>
+                <th class="sortable" data-col="0" data-type="text">Cliente</th>
+                <th class="sortable" data-col="1" data-type="text">Agente</th>
+                <th class="sortable" data-col="2" data-type="num">Msgs</th>
+                <th class="sortable" data-col="3" data-type="num">Sent. texto</th>
+                <th class="sortable" data-col="4" data-type="num">Sent. emoji</th>
+                <th class="sortable" data-col="5" data-type="num">Buy</th>
+                <th class="sortable" data-col="6" data-type="num">Obj</th>
+                <th class="sortable" data-col="7" data-type="num">Commit</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: ZENDESK ══════ -->
+  <div id="tab-zendesk" class="tab-content">
+    <div id="zd-loading" class="loading">Cargando datos Zendesk...</div>
+    <div id="zd-content" style="display:none">
+      <!-- Agent effectiveness table -->
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Ultimas directivas de agentes</h3>
-        <div style="max-height:300px;overflow:auto">
-          <table id="table-directives" role="grid">
+        <h3>Efectividad por agente en WhatsApp Zendesk <button class="help-btn" onclick="showHelp('zd-sentiment')" title="Ayuda">?</button></h3>
+        <div style="overflow-x:auto">
+          <table id="table-zd-agents" role="grid">
             <thead><tr>
-              <th>Tipo</th><th>Campo</th><th>Valor</th><th>Texto original</th><th>Fecha</th>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">Conversaciones</th>
+              <th class="sortable" data-col="2" data-type="num">Mensajes</th>
+              <th class="sortable" data-col="3" data-type="num">Sent. paciente</th>
+              <th class="sortable" data-col="4" data-type="num">Emoji paciente</th>
+              <th class="sortable" data-col="5" data-type="num">Buying</th>
+              <th class="sortable" data-col="6" data-type="num">Objections</th>
+              <th class="sortable" data-col="7" data-type="num">Commitments</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="section-label">Detalle por conversacion</p>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Senales de compra pacientes por dia <span class="source-tag source-zendesk">Zendesk</span> <button class="help-btn" onclick="showHelp('zd-signals')" title="Ayuda">?</button></h3>
+          <canvas id="chart-zd-signals"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Conversaciones — Sentiment paciente <button class="help-btn" onclick="showHelp('zd-sentiment')" title="Ayuda">?</button></h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-zd-conversations" role="grid">
+              <thead><tr>
+                <th class="sortable" data-col="0" data-type="text">Paciente</th>
+                <th class="sortable" data-col="1" data-type="text">Atendido por</th>
+                <th class="sortable" data-col="2" data-type="num">Msgs</th>
+                <th class="sortable" data-col="3" data-type="num">Sent. paciente</th>
+                <th class="sortable" data-col="4" data-type="num">Emoji paciente</th>
+                <th class="sortable" data-col="5" data-type="num">Buy</th>
+                <th class="sortable" data-col="6" data-type="num">Obj</th>
+                <th class="sortable" data-col="7" data-type="num">Commit</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: DEALS ══════ -->
+  <div id="tab-deals" class="tab-content">
+    <div id="dl-loading" class="loading">Cargando deals...</div>
+    <div id="dl-content" style="display:none">
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Deals por agente — Tasa de exito <button class="help-btn" onclick="showHelp('deals-agents')" title="Ayuda">?</button></h3>
+          <canvas id="chart-deals-agents"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Distribucion de fases (global) <button class="help-btn" onclick="showHelp('deals-phases')" title="Ayuda">?</button></h3>
+          <canvas id="chart-deals-phases"></canvas>
+        </div>
+      </div>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Performance por agente (Zendesk Sell) <button class="help-btn" onclick="showHelp('deals-performance')" title="Ayuda">?</button></h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-deals" role="grid">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">Total</th>
+              <th class="sortable" data-col="2" data-type="num">Exitosos</th>
+              <th class="sortable" data-col="3" data-type="num">Tasa</th>
+              <th class="sortable" data-col="4" data-type="num">Operados</th>
+              <th class="sortable" data-col="5" data-type="num">Agendados</th>
+              <th class="sortable" data-col="6" data-type="num">Instalados</th>
+              <th class="sortable" data-col="7" data-type="num">Sin Resp.</th>
+              <th class="sortable" data-col="8" data-type="num">Suspendidos</th>
+              <th class="sortable" data-col="9" data-type="num">En Examenes</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Comisiones por agente (CLP) <button class="help-btn" onclick="showHelp('commissions')" title="Ayuda">?</button></h3>
+          <canvas id="chart-commissions"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Detalle comisiones <button class="help-btn" onclick="showHelp('deals-commissions-detail')" title="Ayuda">?</button></h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-commissions" role="grid">
+              <thead><tr>
+                <th class="sortable" data-col="0" data-type="text">Agente</th>
+                <th class="sortable" data-col="1" data-type="num">Deals</th>
+                <th class="sortable" data-col="2" data-type="num">Base CLP</th>
+                <th class="sortable" data-col="3" data-type="num">Bono 75d CLP</th>
+                <th class="sortable" data-col="4" data-type="num">Total CLP</th>
+                <th class="sortable" data-col="5" data-type="num">Deals c/bono</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw deals table -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Todos los deals <button class="help-btn" onclick="showHelp('deals-performance')" title="Ayuda">?</button></h3>
+        <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+          <table id="table-deals-raw" role="grid" style="font-size:.7rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Deal</th>
+              <th class="sortable" data-col="1" data-type="text">Paciente</th>
+              <th class="sortable" data-col="2" data-type="text">Pipeline</th>
+              <th class="sortable" data-col="3" data-type="text">Fase</th>
+              <th class="sortable" data-col="4" data-type="text">Added</th>
+              <th class="sortable" data-col="5" data-type="text">F.Cirugia</th>
+              <th>C1</th><th>C2</th><th>C3</th>
+              <th class="sortable" data-col="9" data-type="num">BAR1</th>
+              <th class="sortable" data-col="10" data-type="num">BAR2</th>
+              <th class="sortable" data-col="11" data-type="num">BAR3</th>
+              <th class="sortable" data-col="12" data-type="num">Dias</th>
+              <th>Bono</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -151,28 +390,179 @@
     </div>
   </div>
 
-  <!-- ══════ TAB: WHATSAPP ══════ -->
-  <div id="tab-whatsapp" class="tab-content">
-    <div id="wa-loading" class="loading">Cargando datos de WhatsApp...</div>
-    <div id="wa-content" style="display:none">
+  <!-- ══════ TAB: GOLD ANALYSIS ══════ -->
+  <div id="tab-gold" class="tab-content">
+    <div id="gold-loading" class="loading">Cargando analisis gold...</div>
+    <div id="gold-content" style="display:none">
+      <div class="kpi-grid" id="kpi-gold"></div>
+
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Journey emocional del paciente (promedio por posicion de mensaje) <button class="help-btn" onclick="showHelp('gold-journey')" title="Ayuda">?</button></h3>
+        <canvas id="chart-gold-journey"></canvas>
+      </div>
+
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Senales de venta por dia</h3>
-          <canvas id="chart-wa-signals"></canvas>
+          <h3>Senales mas frecuentes en deals exitosos <button class="help-btn" onclick="showHelp('gold-signals')" title="Ayuda">?</button></h3>
+          <canvas id="chart-gold-signals"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Performance por agente</h3>
-          <canvas id="chart-wa-agents"></canvas>
+          <h3>Calidad de Antonia en deals exitosos <button class="help-btn" onclick="showHelp('gold-antonia')" title="Ayuda">?</button></h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-gold-antonia" role="grid">
+              <thead><tr>
+                <th class="sortable" data-col="0" data-type="num">MQS</th>
+                <th class="sortable" data-col="1" data-type="num">Empatia</th>
+                <th class="sortable" data-col="2" data-type="num">Protocolo</th>
+                <th class="sortable" data-col="3" data-type="text">Riesgo</th>
+                <th>Mensaje</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: AGENTS ══════ -->
+  <div id="tab-agents" class="tab-content">
+    <div id="ag-loading" class="loading">Cargando agentes...</div>
+    <div id="ag-content" style="display:none">
+      <!-- 1. Summary table — year selector -->
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Conversaciones — Sentiment & Senales</h3>
-        <div style="max-height:400px;overflow:auto">
-          <table id="table-conversations" role="grid">
+        <h3>Equipo Clinyco — Resumen <button class="help-btn" onclick="showHelp('agents-summary')" title="Ayuda">?</button></h3>
+        <div style="margin-bottom:.8rem">
+          <span id="summary-year-buttons" style="display:flex;gap:.5rem;flex-wrap:wrap"></span>
+        </div>
+        <div style="overflow-x:auto">
+          <table id="table-agents" role="grid">
             <thead><tr>
-              <th>Cliente</th><th>Agente</th><th>Msgs</th>
-              <th>Sentiment texto</th><th>Sentiment emoji</th>
-              <th>Buying</th><th>Objections</th><th>Commitments</th>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">F1 Captacion <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-f1')">?</span></th>
+              <th class="sortable" data-col="2" data-type="num">F2 Seguimiento <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-f2')">?</span></th>
+              <th class="sortable" data-col="3" data-type="num">F3 Cierre <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-f3')">?</span></th>
+              <th class="sortable" data-col="4" data-type="num">Cerrados <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-cerrados')">?</span></th>
+              <th class="sortable" data-col="5" data-type="num">Comision CLP <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-comision')">?</span></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 2. Annual ranking (click year to drill down) -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Ranking anual de deals por agente <button class="help-btn" onclick="showHelp('agents-monthly')" title="Ayuda">?</button></h3>
+        <div style="margin-bottom:.8rem">
+          <span id="year-buttons" style="display:flex;gap:.5rem;flex-wrap:wrap"></span>
+        </div>
+        <canvas id="chart-agents-annual"></canvas>
+      </div>
+
+      <!-- 3. Phase participation with year filter -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Participacion por fase <button class="help-btn" onclick="showHelp('agent-phases')" title="Ayuda">?</button></h3>
+        <div style="margin-bottom:.8rem">
+          <span id="phase-year-buttons" style="display:flex;gap:.5rem;flex-wrap:wrap"></span>
+        </div>
+        <canvas id="chart-agents-phases"></canvas>
+      </div>
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Detalle por fase <button class="help-btn" onclick="showHelp('phase-detail')" title="Ayuda">?</button></h3>
+        <div style="max-height:400px;overflow:auto">
+          <table id="table-phases" role="grid">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">F1 Captados</th>
+              <th class="sortable" data-col="2" data-type="num">F1 Cerrados</th>
+              <th class="sortable" data-col="3" data-type="num">F2 Seguimiento</th>
+              <th class="sortable" data-col="4" data-type="num">F2 Cerrados</th>
+              <th class="sortable" data-col="5" data-type="num">F3 Cierre</th>
+              <th class="sortable" data-col="6" data-type="num">F3 Cerrados</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 4. Chain effectiveness -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Efectividad de cadenas (Colaborador1 → 2 → 3) <button class="help-btn" onclick="showHelp('chain-effectiveness')" title="Ayuda">?</button></h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-chains" role="grid">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">F1 Captacion</th>
+              <th class="sortable" data-col="1" data-type="text">F2 Seguimiento</th>
+              <th class="sortable" data-col="2" data-type="text">F3 Cierre</th>
+              <th class="sortable" data-col="3" data-type="num">Deals</th>
+              <th class="sortable" data-col="4" data-type="num">Cerrados</th>
+              <th class="sortable" data-col="5" data-type="num">Efectividad %</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 5. Monthly drill-down -->
+      <div id="monthly-drilldown" class="chart-box" style="margin-bottom:2rem;display:none">
+        <h3 id="monthly-drilldown-title">Detalle mensual</h3>
+        <canvas id="chart-agents-monthly"></canvas>
+      </div>
+
+      <!-- Deal detail (shown when clicking agent name) -->
+      <div id="deal-detail" class="chart-box" style="margin-bottom:2rem;display:none">
+        <h3 id="deal-detail-title">Deals de agente</h3>
+        <p id="deal-detail-subtitle" style="font-size:.8rem;color:#94a3b8;margin-bottom:.8rem"></p>
+        <div style="overflow-x:auto;max-height:600px;overflow-y:auto">
+          <table id="table-deal-detail" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Deal ID</th>
+              <th class="sortable" data-col="1" data-type="text">Paciente</th>
+              <th class="sortable" data-col="2" data-type="text">Cirugia</th>
+              <th class="sortable" data-col="3" data-type="text">Fase</th>
+              <th class="sortable" data-col="4" data-type="text">Added</th>
+              <th class="sortable" data-col="5" data-type="text">F. Cirugia</th>
+              <th>C1</th><th>C2</th><th>C3</th>
+              <th class="sortable" data-col="9" data-type="num">BAR1</th>
+              <th class="sortable" data-col="10" data-type="num">BAR2</th>
+              <th class="sortable" data-col="11" data-type="num">BAR3</th>
+              <th class="sortable" data-col="12" data-type="num">Dias</th>
+              <th>Bono</th>
+              <th>Links</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Audit log section -->
+      <div id="audit-section" class="chart-box" style="margin-bottom:2rem;display:none">
+        <h3>Audit Log — Cambios en colaboradores <button class="help-btn" onclick="showHelp('audit-log')" title="Ayuda">?</button></h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-audit" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Fecha</th>
+              <th class="sortable" data-col="1" data-type="text">Deal</th>
+              <th class="sortable" data-col="2" data-type="text">RUT</th>
+              <th class="sortable" data-col="3" data-type="text">Campo</th>
+              <th>Anterior</th><th>Nuevo</th>
+              <th class="sortable" data-col="6" data-type="text">Owner</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="deletion-section" class="chart-box" style="margin-bottom:2rem;display:none">
+        <h3>Deals borrados</h3>
+        <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+          <table id="table-deletions" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Fecha</th>
+              <th class="sortable" data-col="1" data-type="text">Deal</th>
+              <th class="sortable" data-col="2" data-type="text">RUT</th>
+              <th class="sortable" data-col="3" data-type="text">Fase</th>
+              <th>Owner</th><th>C1</th><th>C2</th><th>C3</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -183,9 +573,8 @@
 </main>
 
 <script>
-// ── Config ──
 const API_BASE = window.location.hostname === "localhost"
-  ? "http://localhost:3000/api/review"
+  ? "http://localhost:10000/api/review"
   : "/api";
 
 async function api(path) {
@@ -200,85 +589,114 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-
-  if (name === "dashboard" && !window._dashLoaded) loadDashboard();
-  if (name === "eugenia"   && !window._eugLoaded)  loadEugenia();
-  if (name === "whatsapp"  && !window._waLoaded)   loadWhatsapp();
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents };
+  if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
-// ── Helpers ──
 function kpiCard(value, label) {
-  return `<div class="kpi-card"><div class="value">${value ?? '—'}</div><div class="label">${label}</div></div>`;
+  const hasHelp = KPI_HELP[label];
+  const onclick = hasHelp ? `onclick="showKpiHelp('${label.replace(/'/g,"\\'")}')"` : '';
+  return `<div class="kpi-card" ${onclick}><div class="value">${value ?? '—'}</div><div class="label">${label}${hasHelp ? ' <span style="opacity:.4">?</span>' : ''}</div></div>`;
 }
-
+function showKpiHelp(label) {
+  const h = KPI_HELP[label];
+  if (!h) return;
+  document.getElementById('help-title').textContent = h.title;
+  document.getElementById('help-text').innerHTML = h.text;
+  document.getElementById('help-example').innerHTML = h.example;
+  document.getElementById('help-refs').innerHTML = h.ref ? '<b>Referencia:</b> ' + h.ref : '';
+  const dataBtn = document.getElementById('help-data-btn');
+  if (h.tab) {
+    dataBtn.style.display = 'inline-block';
+    dataBtn.onclick = function() { closeHelp(); showTab(h.tab); };
+  } else {
+    dataBtn.style.display = 'none';
+  }
+  document.getElementById('help-overlay').classList.add('open');
+}
 function matchBadge(type) {
   const map = { same_intent: "badge-green", partial_match: "badge-amber", different_topic: "badge-red" };
   return `<span class="badge ${map[type] || ''}">${type || '—'}</span>`;
 }
-
-function pct(n, total) {
-  if (!total) return "0%";
-  return (n / total * 100).toFixed(1) + "%";
+function sentimentBadge(val) {
+  if (val === null || val === undefined) return '<span class="badge">—</span>';
+  const n = parseFloat(val);
+  if (n > 0.2)  return `<span class="badge badge-green">${n.toFixed(3)}</span>`;
+  if (n < -0.2) return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
+  return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
+}
+function pct(n, total) { return total ? (n / total * 100).toFixed(1) + "%" : "0%"; }
+function shortText(txt, max = 35) { return !txt ? "—" : txt.length > max ? txt.slice(0, max) + "..." : txt; }
+function sourceTag(src) {
+  return src === 'waha'
+    ? '<span class="source-tag source-waha">WAHA</span>'
+    : '<span class="source-tag source-zendesk">Zendesk</span>';
 }
 
-function shortText(txt, max = 40) {
-  if (!txt) return "—";
-  return txt.length > max ? txt.slice(0, max) + "..." : txt;
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  DASHBOARD TAB
-// ═══════════════════════════════════════════════════════════════════
-
+// ═══════════ DASHBOARD ═══════════
 async function loadDashboard() {
   try {
     const d = await api("/dashboard");
-    const e = d.eugenia, w = d.whatsapp;
+    const e = d.eugenia, w = d.whatsapp_waha, z = d.whatsapp_zendesk, dl = d.deals;
 
     document.getElementById("kpi-eugenia").innerHTML = [
       kpiCard(e.total_predictions, "Predicciones"),
-      kpiCard(e.accuracy.same_intent, "Aciertos (same intent)"),
-      kpiCard(e.avg_match_score, "Match Score promedio"),
-      kpiCard(e.avg_outcome_score, "Outcome promedio"),
+      kpiCard(e.accuracy.same_intent, "Aciertos"),
+      kpiCard(e.avg_match_score, "Match Score"),
+      kpiCard(e.avg_outcome_score, "Outcome"),
       kpiCard(e.gold_samples, "Gold Samples"),
-      kpiCard(e.directives_received, "Directivas recibidas"),
+      kpiCard(e.directives_received, "Directivas"),
     ].join("");
 
-    document.getElementById("kpi-whatsapp").innerHTML = [
+    document.getElementById("kpi-waha").innerHTML = [
       kpiCard(w.total_conversations, "Conversaciones"),
       kpiCard(w.total_messages, "Mensajes"),
-      kpiCard(w.active_agents, "Agentes activos"),
-      kpiCard(w.avg_text_sentiment, "Sentiment texto"),
-      kpiCard(w.avg_emoji_sentiment, "Sentiment emoji"),
-      kpiCard(w.signals.buying, "Buying signals"),
+      kpiCard(w.active_agents, "Agentes"),
+      kpiCard(w.avg_text_sentiment, "Sent. texto"),
+      kpiCard(w.avg_emoji_sentiment, "Sent. emoji"),
+      kpiCard(w.signals.buying, "Buying"),
       kpiCard(w.signals.objection, "Objections"),
       kpiCard(w.signals.commitment, "Commitments"),
     ].join("");
 
+    const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+    document.getElementById("kpi-deals").innerHTML = dl ? [
+      kpiCard(dl.total, "Deals totales"),
+      kpiCard(dl.exitosos, "Exitosos"),
+      kpiCard(dl.tasa_exito + '%', "Tasa exito"),
+      kpiCard(dl.operados, "Operados"),
+      kpiCard(dl.agendados, "Agendados"),
+      kpiCard(dl.con_bono_75, "Con bono 75d"),
+      kpiCard(fmtCLP(dl.comisiones_base_clp), "Comisiones base"),
+      kpiCard(fmtCLP(dl.bonos_clp), "Bonos 75d"),
+    ].join("") : "";
+
+    document.getElementById("kpi-zendesk").innerHTML = [
+      kpiCard(z.total_conversations, "Conversaciones"),
+      kpiCard(z.total_messages, "Mensajes"),
+      kpiCard(z.unique_users, "Usuarios"),
+      kpiCard(z.avg_text_sentiment, "Sent. texto"),
+      kpiCard(z.avg_emoji_sentiment, "Sent. emoji"),
+      kpiCard(z.signals.buying, "Buying"),
+      kpiCard(z.signals.objection, "Objections"),
+      kpiCard(z.signals.commitment, "Commitments"),
+    ].join("");
+
     document.getElementById("dash-loading").style.display = "none";
     document.getElementById("dash-content").style.display = "block";
-    window._dashLoaded = true;
+    window._dashboardLoaded = true;
   } catch (err) {
-    document.getElementById("dash-loading").innerHTML =
-      `<div class="error-msg">Error: ${err.message}</div>`;
+    document.getElementById("dash-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  EUGENIA TAB
-// ═══════════════════════════════════════════════════════════════════
-
+// ═══════════ EUGENIA ═══════════
 async function loadEugenia() {
   try {
-    const [accuracy, trends, gold, actions, directives] = await Promise.all([
-      api("/eugenia/accuracy"),
-      api("/eugenia/trends?weeks=12"),
-      api("/eugenia/gold-samples?limit=30"),
-      api("/eugenia/actions"),
-      api("/eugenia/directives?limit=30"),
+    const [accuracy, trends, gold, actions] = await Promise.all([
+      api("/eugenia/accuracy"), api("/eugenia/trends?weeks=12"),
+      api("/eugenia/gold-samples?limit=30"), api("/eugenia/actions"),
     ]);
-
-    // KPIs
     document.getElementById("eug-kpis").innerHTML = [
       kpiCard(accuracy.total, "Total comparadas"),
       kpiCard(pct(accuracy.same_intent, accuracy.total), "Aciertos"),
@@ -288,186 +706,897 @@ async function loadEugenia() {
       kpiCard(accuracy.avg_outcome_score, "Outcome promedio"),
     ].join("");
 
-    // Trends line chart
     new Chart(document.getElementById("chart-eug-trends"), {
       type: "line",
       data: {
         labels: trends.map(t => t.week),
         datasets: [
-          { label: "Match Score", data: trends.map(t => t.avg_match),
-            borderColor: "#2563eb", tension: .3, fill: false },
-          { label: "Outcome", data: trends.map(t => t.avg_outcome),
-            borderColor: "#16a34a", tension: .3, fill: false, yAxisID: "y1" },
+          { label: "Match Score", data: trends.map(t => t.avg_match), borderColor: "#2563eb", tension: .3, fill: false },
+          { label: "Outcome", data: trends.map(t => t.avg_outcome), borderColor: "#16a34a", tension: .3, fill: false, yAxisID: "y1" },
         ]
       },
       options: {
         responsive: true, plugins: { legend: { position: "bottom" } },
         scales: {
-          y:  { beginAtZero: true, max: 1, title: { display: true, text: "Match Score" } },
-          y1: { position: "right", beginAtZero: true, max: 100, title: { display: true, text: "Outcome" },
-                grid: { drawOnChartArea: false } }
+          y: { beginAtZero: true, max: 1, title: { display: true, text: "Match" } },
+          y1: { position: "right", beginAtZero: true, max: 100, title: { display: true, text: "Outcome" }, grid: { drawOnChartArea: false } }
         }
       }
     });
 
-    // Donut chart
     new Chart(document.getElementById("chart-eug-donut"), {
       type: "doughnut",
       data: {
-        labels: ["Same Intent", "Partial Match", "Different Topic"],
-        datasets: [{
-          data: [accuracy.same_intent, accuracy.partial_match, accuracy.different_topic],
-          backgroundColor: ["#16a34a", "#d97706", "#dc2626"],
-        }]
+        labels: ["Same Intent", "Partial", "Different"],
+        datasets: [{ data: [accuracy.same_intent, accuracy.partial_match, accuracy.different_topic], backgroundColor: ["#16a34a", "#d97706", "#dc2626"] }]
       },
       options: { responsive: true, plugins: { legend: { position: "bottom" } } }
     });
 
-    // Actions bar chart
     const topActions = actions.slice(0, 10);
     new Chart(document.getElementById("chart-eug-actions"), {
       type: "bar",
-      data: {
-        labels: topActions.map(a => shortText(a.ai_suggested_action, 25)),
-        datasets: [{
-          label: "Outcome promedio",
-          data: topActions.map(a => a.avg_outcome),
-          backgroundColor: "#2563eb",
-        }]
-      },
-      options: {
-        indexAxis: "y", responsive: true,
-        scales: { x: { beginAtZero: true, max: 100 } },
-        plugins: { legend: { display: false } }
-      }
+      data: { labels: topActions.map(a => shortText(a.ai_suggested_action, 25)), datasets: [{ label: "Outcome", data: topActions.map(a => a.avg_outcome), backgroundColor: "#2563eb" }] },
+      options: { indexAxis: "y", responsive: true, scales: { x: { beginAtZero: true, max: 100 } }, plugins: { legend: { display: false } } }
     });
 
-    // Gold samples table
-    const goldBody = document.querySelector("#table-gold tbody");
-    goldBody.innerHTML = gold.map(g => `<tr>
-      <td>${g.turn_number}</td>
-      <td>${shortText(g.ai_suggested_action)}</td>
-      <td>${shortText(g.human_actual_action)}</td>
-      <td>${matchBadge(g.match_type)}</td>
-      <td><strong>${g.outcome_score ?? '—'}</strong></td>
+    document.querySelector("#table-gold tbody").innerHTML = gold.map(g => `<tr>
+      <td>${g.turn_number}</td><td>${shortText(g.ai_suggested_action)}</td><td>${shortText(g.human_actual_action)}</td>
+      <td>${matchBadge(g.match_type)}</td><td><strong>${g.outcome_score ?? '—'}</strong></td>
       <td><span class="badge badge-purple">${g.gold_reason || '—'}</span></td>
     </tr>`).join("");
 
-    // Directives table
-    const dirBody = document.querySelector("#table-directives tbody");
-    dirBody.innerHTML = directives.map(d => `<tr>
-      <td><span class="badge badge-amber">${d.directive_type}</span></td>
-      <td>${d.parsed_field || '—'}</td>
-      <td>${d.parsed_value || '—'}</td>
-      <td>${shortText(d.raw_text, 50)}</td>
-      <td>${new Date(d.created_at).toLocaleDateString("es-CL")}</td>
-    </tr>`).join("");
-
+    makeSortable('table-gold');
     document.getElementById("eug-loading").style.display = "none";
     document.getElementById("eug-content").style.display = "block";
-    window._eugLoaded = true;
-  } catch (err) {
-    document.getElementById("eug-loading").innerHTML =
-      `<div class="error-msg">Error: ${err.message}</div>`;
-  }
+    window._eugeniaLoaded = true;
+  } catch (err) { document.getElementById("eug-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  WHATSAPP TAB
-// ═══════════════════════════════════════════════════════════════════
-
-async function loadWhatsapp() {
+// ═══════════ WAHA ═══════════
+async function loadWaha() {
   try {
-    const [sentiment, signals, agents] = await Promise.all([
-      api("/whatsapp/sentiment?days=30"),
-      api("/whatsapp/signals?days=30"),
-      api("/whatsapp/agents"),
+    const [sentiment, signals] = await Promise.all([
+      api("/whatsapp/sentiment?days=30"), api("/whatsapp/signals?days=30"),
+    ]);
+    if (signals.length) {
+      new Chart(document.getElementById("chart-wa-signals"), {
+        type: "bar",
+        data: {
+          labels: signals.map(s => s.day),
+          datasets: [
+            { label: "Buying", data: signals.map(s => s.buying), backgroundColor: "#16a34a" },
+            { label: "Objection", data: signals.map(s => s.objections), backgroundColor: "#dc2626" },
+            { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
+            { label: "Referral", data: signals.map(s => s.referrals), backgroundColor: "#9333ea" },
+            { label: "Urgency", data: signals.map(s => s.urgency), backgroundColor: "#d97706" },
+          ]
+        },
+        options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: "bottom" } } }
+      });
+    }
+    document.querySelector("#table-wa-conversations tbody").innerHTML = sentiment.map(s => `<tr>
+      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}<br><small style="color:#94a3b8">${s.client_phone}</small></td>
+      <td>${s.agent_name}</td><td>${s.message_count}</td>
+      <td>${sentimentBadge(s.avg_text_sentiment)}</td><td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
+      <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
+    </tr>`).join("");
+    document.getElementById("wa-loading").style.display = "none";
+    makeSortable('table-wa-conversations');
+    document.getElementById("wa-content").style.display = "block";
+    window._wahaLoaded = true;
+  } catch (err) { document.getElementById("wa-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ ZENDESK ═══════════
+async function loadZendesk() {
+  try {
+    const [sentiment, signals, agentEff] = await Promise.all([
+      api("/zendesk/sentiment?days=30"), api("/zendesk/signals?days=30"), api("/zendesk/agent-effectiveness"),
     ]);
 
-    // Signals stacked bar chart
-    new Chart(document.getElementById("chart-wa-signals"), {
-      type: "bar",
-      data: {
-        labels: signals.map(s => s.day),
-        datasets: [
-          { label: "Buying",     data: signals.map(s => s.buying),      backgroundColor: "#16a34a" },
-          { label: "Objection",  data: signals.map(s => s.objections),  backgroundColor: "#dc2626" },
-          { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
-          { label: "Referral",   data: signals.map(s => s.referrals),   backgroundColor: "#9333ea" },
-          { label: "Urgency",    data: signals.map(s => s.urgency),     backgroundColor: "#d97706" },
-        ]
-      },
-      options: {
-        responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
-        plugins: { legend: { position: "bottom" } }
-      }
+    // Agent effectiveness table
+    if (agentEff.length) {
+      document.querySelector("#table-zd-agents tbody").innerHTML = agentEff.map(a => `<tr>
+        <td><strong>${a.agent_name}</strong></td>
+        <td>${a.conversations}</td>
+        <td>${a.total_messages}</td>
+        <td>${sentimentBadge(a.avg_patient_sentiment)}</td>
+        <td>${sentimentBadge(a.avg_patient_emoji)}</td>
+        <td>${a.buying}</td>
+        <td>${a.objections}</td>
+        <td>${a.commitments}</td>
+      </tr>`).join("");
+      makeSortable('table-zd-agents');
+    }
+    if (signals.length) {
+      new Chart(document.getElementById("chart-zd-signals"), {
+        type: "bar",
+        data: {
+          labels: signals.map(s => s.day),
+          datasets: [
+            { label: "Buying", data: signals.map(s => s.buying), backgroundColor: "#16a34a" },
+            { label: "Objection", data: signals.map(s => s.objections), backgroundColor: "#dc2626" },
+            { label: "Commitment", data: signals.map(s => s.commitments), backgroundColor: "#2563eb" },
+            { label: "Referral", data: signals.map(s => s.referrals), backgroundColor: "#9333ea" },
+            { label: "Urgency", data: signals.map(s => s.urgency), backgroundColor: "#d97706" },
+          ]
+        },
+        options: { responsive: true, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }, plugins: { legend: { position: "bottom" } } }
+      });
+    }
+    document.querySelector("#table-zd-conversations tbody").innerHTML = sentiment.map(s => `<tr>
+      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}</td>
+      <td>${s.attended_by || '—'}</td><td>${s.message_count}</td>
+      <td>${sentimentBadge(s.avg_patient_sentiment)}</td><td>${sentimentBadge(s.avg_patient_emoji)}</td>
+      <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
+    </tr>`).join("");
+    makeSortable('table-zd-conversations');
+    makeSortable('table-zd-agents');
+    document.getElementById("zd-loading").style.display = "none";
+    document.getElementById("zd-content").style.display = "block";
+    window._zendeskLoaded = true;
+  } catch (err) { document.getElementById("zd-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ DEALS ═══════════
+async function loadDeals() {
+  try {
+    const [summary, agents, commissions] = await Promise.all([
+      api("/deals/summary"), api("/deals/agents"), api("/deals/commissions"),
+    ]);
+
+    // Phases donut
+    const successPhases = ['CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'];
+    const colors = summary.map(s => successPhases.includes(s.pipeline_phase) ? '#16a34a' : s.pipeline_phase === 'SIN RESPUESTA' ? '#dc2626' : '#94a3b8');
+    new Chart(document.getElementById("chart-deals-phases"), {
+      type: "doughnut",
+      data: { labels: summary.map(s => s.pipeline_phase), datasets: [{ data: summary.map(s => s.total), backgroundColor: colors }] },
+      options: { responsive: true, plugins: { legend: { position: "right", labels: { font: { size: 10 } } } } }
     });
 
-    // Agents radar chart
-    if (agents.length) {
-      const labels = ["Sentiment Texto", "Sentiment Emoji", "Buying Signals", "Objections", "Conversaciones"];
-      const maxConv = Math.max(...agents.map(a => a.conversations), 1);
-      new Chart(document.getElementById("chart-wa-agents"), {
-        type: "radar",
+    // Agents bar chart — exitosos vs total
+    const topAgents = agents.filter(a => (a.total_participaciones || a.total_deals) > 10).slice(0, 10);
+    new Chart(document.getElementById("chart-deals-agents"), {
+      type: "bar",
+      data: {
+        labels: topAgents.map(a => a.agent || a.owner_name),
+        datasets: [
+          { label: "Exitosos", data: topAgents.map(a => a.deals_exitosos), backgroundColor: "#16a34a" },
+          { label: "Sin Respuesta", data: topAgents.map(a => a.sin_respuesta), backgroundColor: "#dc2626" },
+          { label: "En Proceso", data: topAgents.map(a => a.en_examenes + a.en_proceso), backgroundColor: "#2563eb" },
+        ]
+      },
+      options: { indexAxis: 'y', responsive: true, scales: { x: { stacked: true }, y: { stacked: true } }, plugins: { legend: { position: "bottom" } } }
+    });
+
+    // Table
+    document.querySelector("#table-deals tbody").innerHTML = agents.map(a => {
+      const tasaClass = a.tasa_exito >= 30 ? 'badge-green' : a.tasa_exito >= 15 ? 'badge-amber' : 'badge-red';
+      return `<tr>
+        <td><strong>${a.agent || a.owner_name}</strong></td>
+        <td>${a.total_participaciones || a.total_deals}</td>
+        <td><strong>${a.deals_exitosos}</strong></td>
+        <td><span class="badge ${tasaClass}">${a.tasa_exito}%</span></td>
+        <td>${a.operados}</td><td>${a.agendados}</td><td>${a.instalados}</td>
+        <td>${a.sin_respuesta}</td><td>${a.suspendidos}</td><td>${a.en_examenes}</td>
+      </tr>`;
+    }).join("");
+    makeSortable('table-deals');
+
+    // Commissions chart + table
+    if (commissions.length) {
+      const fmt = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+      new Chart(document.getElementById("chart-commissions"), {
+        type: "bar",
         data: {
-          labels,
-          datasets: agents.map((a, i) => {
-            const colors = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#9333ea"];
-            return {
-              label: a.agent_name,
-              data: [
-                Math.max(0, (parseFloat(a.avg_text_sentiment) + 1) / 2),
-                Math.max(0, (parseFloat(a.avg_emoji_sentiment) + 1) / 2),
-                parseFloat(a.avg_buying_signals) / 10,
-                parseFloat(a.avg_objection_signals) / 10,
-                a.conversations / maxConv,
-              ],
-              borderColor: colors[i % colors.length],
-              backgroundColor: colors[i % colors.length] + "22",
-            };
-          })
+          labels: commissions.map(c => c.agent),
+          datasets: [
+            { label: "Base CLP", data: commissions.map(c => c.comision_base_clp), backgroundColor: "#2563eb" },
+            { label: "Bono 75 dias CLP", data: commissions.map(c => c.bono_75_dias_clp), backgroundColor: "#16a34a" },
+          ]
+        },
+        options: { indexAxis: 'y', responsive: true, scales: { x: { stacked: true, beginAtZero: true }, y: { stacked: true } }, plugins: { legend: { position: "bottom" } } }
+      });
+
+      document.querySelector("#table-commissions tbody").innerHTML = commissions.map(c => `<tr>
+        <td><strong>${c.agent}</strong></td>
+        <td>${c.deals_participados}</td>
+        <td>${fmt(c.comision_base_clp)}</td>
+        <td>${fmt(c.bono_75_dias_clp)}</td>
+        <td><strong>${fmt(c.comision_total_clp)}</strong></td>
+        <td>${c.deals_con_bono}</td>
+      </tr>`).join("");
+      makeSortable('table-commissions');
+    }
+
+    document.getElementById("dl-loading").style.display = "none";
+    document.getElementById("dl-content").style.display = "block";
+    // Load raw deals table
+    try {
+      const raw = await api('/deals/raw?limit=500');
+      document.querySelector('#table-deals-raw tbody').innerHTML = raw.map(d => {
+        const url = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+        const phaseClass = /CERRADO/.test(d.pipeline_phase) ? 'badge-green' : d.pipeline_phase === 'SIN RESPUESTA' ? 'badge-red' : 'badge-amber';
+        return `<tr>
+          <td><a href="${url}" target="_blank" style="color:#2563eb;font-size:.65rem">${d.deal_id}</a></td>
+          <td style="font-size:.65rem">${d.deal_name || '—'}</td>
+          <td style="font-size:.65rem">${d.pipeline_name || '—'}</td>
+          <td><span class="badge ${phaseClass}" style="font-size:.6rem">${d.pipeline_phase || '—'}</span></td>
+          <td>${d.added_at || '—'}</td>
+          <td>${d.fecha_cirugia || '—'}</td>
+          <td>${d.colaborador1 || '—'}</td>
+          <td>${d.colaborador2 || '—'}</td>
+          <td>${d.colaborador3 || '—'}</td>
+          <td>${d.comision_bar1 || '—'}</td>
+          <td>${d.comision_bar2 || '—'}</td>
+          <td>${d.comision_bar3 || '—'}</td>
+          <td>${d.dias_added_cirugia ?? '—'}</td>
+          <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
+        </tr>`;
+      }).join('');
+      makeSortable('table-deals-raw');
+    } catch (err) { /* raw deals not critical */ }
+
+    window._dealsLoaded = true;
+  } catch (err) { document.getElementById("dl-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ AGENTS ═══════════
+// ═══════════ GOLD ANALYSIS ═══════════
+async function loadGold() {
+  try {
+    const [patterns, signals, antonia, journey] = await Promise.all([
+      api("/gold/patterns"), api("/gold/signals"), api("/gold/antonia"), api("/gold/journey"),
+    ]);
+
+    // KPIs
+    const patientPat = patterns.find(p => p.role === 'user') || {};
+    const botPat = patterns.find(p => p.role === 'assistant') || {};
+    document.getElementById("kpi-gold").innerHTML = [
+      kpiCard(patientPat.total_evals || 0, "Mensajes paciente evaluados"),
+      kpiCard(botPat.total_evals || 0, "Mensajes Antonia evaluados"),
+      kpiCard(botPat.avg_mqs || '—', "MQS promedio Antonia"),
+      kpiCard(botPat.avg_empathy || '—', "Empatia promedio Antonia"),
+      kpiCard(patientPat.avg_motivacion || '—', "Motivacion promedio paciente"),
+      kpiCard(patientPat.avg_compromiso || '—', "Compromiso promedio paciente"),
+    ].join("");
+
+    // Journey chart
+    if (journey.length) {
+      new Chart(document.getElementById("chart-gold-journey"), {
+        type: "line",
+        data: {
+          labels: journey.map(j => 'Msg ' + j.msg_pos),
+          datasets: [
+            { label: "Motivacion", data: journey.map(j => j.motivacion), borderColor: "#16a34a", tension: .3, fill: false },
+            { label: "Compromiso", data: journey.map(j => j.compromiso), borderColor: "#2563eb", tension: .3, fill: false },
+            { label: "Readiness", data: journey.map(j => j.readiness), borderColor: "#9333ea", tension: .3, fill: false },
+            { label: "Miedo", data: journey.map(j => j.miedo), borderColor: "#dc2626", tension: .3, fill: false },
+            { label: "Sens. precio", data: journey.map(j => j.sensibilidad_precio), borderColor: "#d97706", tension: .3, fill: false },
+          ]
         },
         options: {
-          responsive: true,
-          scales: { r: { beginAtZero: true, max: 1 } },
-          plugins: { legend: { position: "bottom" } }
+          responsive: true, plugins: { legend: { position: "bottom" } },
+          scales: { y: { beginAtZero: true, max: 1 } }
         }
       });
     }
 
-    // Conversations table
-    const convBody = document.querySelector("#table-conversations tbody");
-    convBody.innerHTML = sentiment.map(s => `<tr>
-      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}<br>
-          <small style="color:#94a3b8">${s.client_phone}</small></td>
-      <td>${s.agent_name}</td>
-      <td>${s.message_count}</td>
-      <td>${sentimentBadge(s.avg_text_sentiment)}</td>
-      <td>${sentimentBadge(s.avg_emoji_sentiment)}</td>
-      <td>${s.buying || 0}</td>
-      <td>${s.objections || 0}</td>
-      <td>${s.commitments || 0}</td>
-    </tr>`).join("");
+    // Signals bar
+    if (signals.length) {
+      new Chart(document.getElementById("chart-gold-signals"), {
+        type: "bar",
+        data: {
+          labels: signals.map(s => s.signal),
+          datasets: [{ label: "Ocurrencias", data: signals.map(s => s.occurrences), backgroundColor: "#2563eb" }]
+        },
+        options: { indexAxis: "y", responsive: true, plugins: { legend: { display: false } } }
+      });
+    }
 
-    document.getElementById("wa-loading").style.display = "none";
-    document.getElementById("wa-content").style.display = "block";
-    window._waLoaded = true;
-  } catch (err) {
-    document.getElementById("wa-loading").innerHTML =
-      `<div class="error-msg">Error: ${err.message}</div>`;
-  }
+    // Antonia table
+    if (antonia.length) {
+      document.querySelector("#table-gold-antonia tbody").innerHTML = antonia.map(a => {
+        const mqsClass = a.mqs >= 0.7 ? 'badge-green' : a.mqs >= 0.4 ? 'badge-amber' : 'badge-red';
+        const empClass = a.empathy >= 0.6 ? 'badge-green' : a.empathy >= 0.3 ? 'badge-amber' : 'badge-red';
+        return `<tr>
+          <td><span class="badge ${mqsClass}">${a.mqs || '—'}</span></td>
+          <td><span class="badge ${empClass}">${a.empathy || '—'}</span></td>
+          <td>${a.adherence || '—'}</td>
+          <td>${a.boundary_risk || 'none'}</td>
+          <td style="font-size:.7rem">${(a.content_preview || '').slice(0, 80)}</td>
+        </tr>`;
+      }).join("");
+      makeSortable('table-gold-antonia');
+    }
+
+    document.getElementById("gold-loading").style.display = "none";
+    document.getElementById("gold-content").style.display = "block";
+    window._goldLoaded = true;
+  } catch (err) { document.getElementById("gold-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
-function sentimentBadge(val) {
-  if (val === null || val === undefined) return '<span class="badge">—</span>';
-  const n = parseFloat(val);
-  if (n > 0.2)  return `<span class="badge badge-green">${n.toFixed(3)}</span>`;
-  if (n < -0.2) return `<span class="badge badge-red">${n.toFixed(3)}</span>`;
-  return `<span class="badge badge-amber">${n.toFixed(3)}</span>`;
+// ═══════════ AGENTS ═══════════
+async function loadAgents() {
+  try {
+    const [agents, yearly, phases, monthly, commissions] = await Promise.all([
+      api("/agents"), api("/agents/yearly"), api("/agents/phases"), api("/agents/monthly"), api("/deals/commissions"),
+    ]);
+
+    const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+    const COLORS = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2","#ec4899"];
+
+    // Store globally
+    const years = [...new Set(yearly.map(r => r.year))].sort();
+    window._yearlyData = yearly;
+    window._monthlyData = monthly;
+    window._annualChart = null;
+    window._monthlyChart = null;
+
+    // 1. Summary table — merge phases + commissions (NOT by owner)
+    function renderSummaryTable(phasesData, commissionsData, yearLabel) {
+      const comMap = {};
+      (commissionsData || []).forEach(c => { comMap[c.agent] = c; });
+
+      const tableData = phasesData
+        .filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0)
+        .map(p => {
+          const com = comMap[p.agent.split(' ')[0]] || {};
+          return { ...p, comision: com.comision_total_clp || 0 };
+        })
+        .sort((a, b) => b.fase1_captacion - a.fase1_captacion);
+
+      const title = yearLabel ? ` (${yearLabel})` : ' (Total historico)';
+      document.querySelector("#table-agents tbody").innerHTML = tableData.map(p => {
+        const fn = p.agent.split(' ')[0];
+        return `<tr>
+        <td><a href="#deal-detail" style="font-weight:700;color:#2563eb;cursor:pointer;text-decoration:none" onclick="showAgentDeals('${fn}','${p.agent}')">${p.agent}</a></td>
+        <td>${p.fase1_captacion}</td>
+        <td>${p.fase2_seguimiento}</td>
+        <td>${p.fase3_cierre}</td>
+        <td><strong>${p.fase1_exitosos + p.fase2_exitosos + p.fase3_exitosos}</strong></td>
+        <td>${fmtCLP(p.comision)}</td>
+      </tr>`; }).join("");
+
+      makeSortable('table-agents');
+    }
+
+    // Summary year buttons
+    const summaryBtns = document.getElementById('summary-year-buttons');
+    summaryBtns.innerHTML = ['Todos', ...years].map(y =>
+      `<button style="padding:.4rem .8rem;border:2px solid #2563eb;border-radius:6px;background:${y === 'Todos' ? '#2563eb' : '#fff'};color:${y === 'Todos' ? '#fff' : '#2563eb'};font-weight:700;cursor:pointer;font-size:.85rem" onclick="loadSummaryForYear('${y}')">${y}</button>`
+    ).join('');
+
+    // Initial render with all data
+    renderSummaryTable(phases, commissions, null);
+
+    window._loadSummaryForYear = async function(y) {
+      const yearParam = y === 'Todos' ? '' : `?year=${y}`;
+      const [p, c] = await Promise.all([api(`/agents/phases${yearParam}`), api(`/agents/chains${yearParam}`)]);
+      summaryBtns.querySelectorAll('button').forEach(btn => {
+        const isActive = btn.textContent == y;
+        btn.style.background = isActive ? '#2563eb' : '#fff';
+        btn.style.color = isActive ? '#fff' : '#2563eb';
+      });
+      // TODO: commissions also need year filter — for now use total
+      renderSummaryTable(p, commissions, y === 'Todos' ? null : y);
+    };
+
+    // 2. Annual ranking — year buttons + bar chart
+    const btnContainer = document.getElementById('year-buttons');
+    btnContainer.innerHTML = years.map(y =>
+      `<button style="padding:.4rem .8rem;border:2px solid #2563eb;border-radius:6px;background:${y === years[years.length-1] ? '#2563eb' : '#fff'};color:${y === years[years.length-1] ? '#fff' : '#2563eb'};font-weight:700;cursor:pointer;font-size:.85rem" onclick="renderAnnualChart(${y})">${y}</button>`
+    ).join('');
+
+    if (years.length) renderAnnualChart(years[years.length - 1]);
+
+    // 3. Phase participation — year buttons + chart
+    window._phaseChart = null;
+    const phaseYearBtns = document.getElementById('phase-year-buttons');
+    phaseYearBtns.innerHTML = ['Todos', ...years].map(y =>
+      `<button style="padding:.4rem .8rem;border:2px solid #2563eb;border-radius:6px;background:${y === 'Todos' ? '#2563eb' : '#fff'};color:${y === 'Todos' ? '#fff' : '#2563eb'};font-weight:700;cursor:pointer;font-size:.85rem" onclick="loadPhasesForYear('${y}')">${y}</button>`
+    ).join('');
+    renderPhasesAndChains(phases, null);
+
+    window._loadPhasesForYear = async function(y) {
+      const yearParam = y === 'Todos' ? '' : `?year=${y}`;
+      const [p, c] = await Promise.all([api(`/agents/phases${yearParam}`), api(`/agents/chains${yearParam}`)]);
+      phaseYearBtns.querySelectorAll('button').forEach(btn => {
+        const isActive = btn.textContent == y;
+        btn.style.background = isActive ? '#2563eb' : '#fff';
+        btn.style.color = isActive ? '#fff' : '#2563eb';
+      });
+      renderPhasesAndChains(p, c);
+    };
+
+    const chainsAll = await api("/agents/chains");
+    renderChains(chainsAll);
+    document.getElementById("ag-loading").style.display = "none";
+    document.getElementById("ag-content").style.display = "block";
+    // Load audit log + deletions
+    loadAuditLog();
+    loadDeletionLog();
+    window._agentsLoaded = true;
+  } catch (err) { document.getElementById("ag-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ SORTABLE TABLES ═══════════
+function makeSortable(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  table.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = parseInt(th.dataset.col);
+      const type = th.dataset.type || 'text';
+      const tbody = table.querySelector('tbody');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const isAsc = th.classList.contains('sort-asc');
+
+      // Clear all sort indicators
+      table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+      th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
+
+      rows.sort((a, b) => {
+        const aVal = a.cells[col]?.textContent?.trim() || '';
+        const bVal = b.cells[col]?.textContent?.trim() || '';
+        if (type === 'num') {
+          const aNum = parseFloat(aVal.replace(/[$%.,]/g, '')) || 0;
+          const bNum = parseFloat(bVal.replace(/[$%.,]/g, '')) || 0;
+          return isAsc ? aNum - bNum : bNum - aNum;
+        }
+        return isAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      });
+
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  });
+}
+
+// ═══════════ PHASES + CHAINS ═══════════
+function renderPhasesAndChains(phases, chains) {
+  const activePhases = phases.filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0);
+
+  if (window._phaseChart) window._phaseChart.destroy();
+  window._phaseChart = new Chart(document.getElementById("chart-agents-phases"), {
+    type: "bar",
+    data: {
+      labels: activePhases.map(p => p.agent),
+      datasets: [
+        { label: "Fase 1: Captacion", data: activePhases.map(p => p.fase1_captacion), backgroundColor: "#2563eb" },
+        { label: "Fase 2: Seguimiento", data: activePhases.map(p => p.fase2_seguimiento), backgroundColor: "#d97706" },
+        { label: "Fase 3: Cierre", data: activePhases.map(p => p.fase3_cierre), backgroundColor: "#16a34a" },
+      ]
+    },
+    options: { indexAxis: 'y', responsive: true, plugins: { legend: { position: "bottom" } } }
+  });
+
+  document.querySelector("#table-phases tbody").innerHTML = activePhases.map(p => `<tr>
+    <td><a href="#deal-detail" style="font-weight:700;color:#2563eb;cursor:pointer;text-decoration:none" onclick="showAgentDeals('${p.agent.split(' ')[0]}','${p.agent}')">${p.agent}</a></td>
+    <td>${p.fase1_captacion}</td><td><span class="badge badge-green">${p.fase1_exitosos}</span></td>
+    <td>${p.fase2_seguimiento}</td><td><span class="badge badge-green">${p.fase2_exitosos}</span></td>
+    <td>${p.fase3_cierre}</td><td><span class="badge badge-green">${p.fase3_exitosos}</span></td>
+  </tr>`).join("");
+
+  makeSortable('table-phases');
+  if (chains) renderChains(chains);
+}
+
+function renderChains(chains) {
+  document.querySelector("#table-chains tbody").innerHTML = chains.sort((a,b) => b.efectividad - a.efectividad).map(c => {
+    const efClass = c.efectividad >= 40 ? 'badge-green' : c.efectividad >= 20 ? 'badge-amber' : 'badge-red';
+    const c2 = c.colaborador2 || '—';
+    const c3 = c.colaborador3 || '—';
+    const isSame = c.colaborador1 === c2 && c2 === c3;
+    const chain = isSame ? `<b>${c.colaborador1}</b> (solo)` : `${c.colaborador1} → ${c2} → ${c3}`;
+    return `<tr>
+      <td>${c.colaborador1 || '—'}</td><td>${c2}</td><td>${c3}</td>
+      <td>${c.total_deals}</td>
+      <td><strong>${c.exitosos}</strong></td>
+      <td><span class="badge ${efClass}">${c.efectividad}%</span></td>
+    </tr>`;
+  }).join("");
+  makeSortable('table-chains');
+}
+
+// ═══════════ DEAL DETAIL (on agent click) ═══════════
+async function showAgentDeals(firstName, fullName) {
+  const el = document.getElementById('deal-detail');
+  el.style.display = 'block';
+  document.getElementById('deal-detail-title').textContent = `Deals de ${fullName}`;
+  document.getElementById('deal-detail-subtitle').textContent = `Mostrando deals donde ${firstName} participa como Colaborador 1, 2 o 3. Click columna para ordenar.`;
+
+  try {
+    const deals = await api(`/deals/agent-detail/${encodeURIComponent(firstName)}`);
+    const tbody = document.querySelector('#table-deal-detail tbody');
+    tbody.innerHTML = deals.map(d => {
+      const phaseClass = /CERRADO/.test(d.pipeline_phase) ? 'badge-green' : d.pipeline_phase === 'SIN RESPUESTA' ? 'badge-red' : 'badge-amber';
+      const desktopUrl = `https://clinyco.zendesk.com/sales/deals/${d.deal_id}`;
+      const mobileUrl = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+      return `<tr>
+        <td>${d.deal_id}</td>
+        <td>${d.contact_name || d.deal_name || '—'}</td>
+        <td>${d.cirugia || '—'}</td>
+        <td><span class="badge ${phaseClass}">${d.pipeline_phase || '—'}</span></td>
+        <td>${d.added_at || '—'}</td>
+        <td>${d.fecha_cirugia || '—'}</td>
+        <td>${d.colaborador1 || '—'}</td>
+        <td>${d.colaborador2 || '—'}</td>
+        <td>${d.colaborador3 || '—'}</td>
+        <td>${d.comision_bar1 || '—'}</td>
+        <td>${d.comision_bar2 || '—'}</td>
+        <td>${d.comision_bar3 || '—'}</td>
+        <td>${d.dias_added_cirugia ?? '—'}</td>
+        <td>${d.bono_75_dias ? '<span class="badge badge-green">Si</span>' : '—'}</td>
+        <td><a href="${desktopUrl}" target="_blank" style="font-size:.7rem">Desktop</a> | <a href="${mobileUrl}" target="_blank" style="font-size:.7rem">App</a></td>
+      </tr>`;
+    }).join('');
+    makeSortable('table-deal-detail');
+    el.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    document.querySelector('#table-deal-detail tbody').innerHTML = `<tr><td colspan="15" class="error-msg">${err.message}</td></tr>`;
+  }
+
+  // Also load audit log
+  loadAuditLog();
+}
+
+async function loadAuditLog() {
+  try {
+    const changes = await api('/audit/changes?limit=100');
+    const el = document.getElementById('audit-section');
+    if (changes.length === 0) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    document.querySelector('#table-audit tbody').innerHTML = changes.map(c => {
+      const dealUrl = `https://app.futuresimple.com/sales/deals/${c.deal_id}`;
+      return `<tr>
+        <td>${new Date(c.detected_at).toLocaleString('es-CL')}</td>
+        <td><a href="${dealUrl}" target="_blank" style="color:#2563eb;font-size:.7rem">${c.deal_name || c.deal_id}</a></td>
+        <td>${c.rut_normalizado || '—'}</td>
+        <td><span class="badge badge-amber">${c.field_name}</span></td>
+        <td><span class="badge badge-red">${c.old_value || '(vacio)'}</span></td>
+        <td><span class="badge badge-green">${c.new_value || '(vacio)'}</span></td>
+        <td>${c.owner_name || '—'}</td>
+      </tr>`;
+    }).join('');
+    makeSortable('table-audit');
+  } catch (err) { /* audit not available yet */ }
+}
+
+async function loadDeletionLog() {
+  try {
+    const deletions = await api('/audit/deletions?limit=50');
+    const el = document.getElementById('deletion-section');
+    if (deletions.length === 0) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    document.querySelector('#table-deletions tbody').innerHTML = deletions.map(d => {
+      const dealUrl = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+      return `<tr>
+        <td>${new Date(d.detected_at).toLocaleString('es-CL')}</td>
+        <td><a href="${dealUrl}" target="_blank" style="color:#dc2626;font-size:.7rem">${d.deal_name || d.deal_id}</a></td>
+        <td>${d.rut_normalizado || '—'}</td>
+        <td><span class="badge badge-red">${d.pipeline_phase || '—'}</span></td>
+        <td>${d.owner_name || '—'}</td>
+        <td>${d.colaborador1 || '—'}</td>
+        <td>${d.colaborador2 || '—'}</td>
+        <td>${d.colaborador3 || '—'}</td>
+      </tr>`;
+    }).join('');
+    makeSortable('table-deletions');
+  } catch (err) { /* deletions not available yet */ }
+}
+
+async function loadPhasesForYear(y) {
+  if (window._loadPhasesForYear) await window._loadPhasesForYear(y);
+}
+async function loadSummaryForYear(y) {
+  if (window._loadSummaryForYear) await window._loadSummaryForYear(y);
+}
+
+// ═══════════ ANNUAL CHART + DRILL-DOWN ═══════════
+function renderAnnualChart(year) {
+  const COLORS = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2"];
+  const data = window._yearlyData.filter(r => r.year === year);
+  // Sort by total_deals descending (ranking)
+  data.sort((a, b) => b.total_deals - a.total_deals);
+
+  // Update button styles
+  document.querySelectorAll('#year-buttons button').forEach(btn => {
+    const isActive = btn.textContent == year;
+    btn.style.background = isActive ? '#2563eb' : '#fff';
+    btn.style.color = isActive ? '#fff' : '#2563eb';
+  });
+
+  // Destroy previous chart
+  if (window._annualChart) window._annualChart.destroy();
+
+  window._annualChart = new Chart(document.getElementById("chart-agents-annual"), {
+    type: "bar",
+    data: {
+      labels: data.map(d => d.owner_name),
+      datasets: [
+        { label: "Total Deals", data: data.map(d => d.total_deals), backgroundColor: data.map((_, i) => COLORS[i % COLORS.length]) },
+        { label: "Exitosos", data: data.map(d => d.exitosos), backgroundColor: "#16a34a88" },
+      ]
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      onClick: (_evt, _el) => { renderMonthlyDrilldown(year); },
+      plugins: {
+        legend: { position: "bottom" },
+        title: { display: true, text: `Ranking ${year} — Click para ver detalle mensual`, font: { size: 13 } }
+      },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+
+  // Auto-show monthly drill-down
+  renderMonthlyDrilldown(year);
+}
+
+function renderMonthlyDrilldown(year) {
+  const COLORS = ["#2563eb","#16a34a","#d97706","#dc2626","#9333ea","#0891b2"];
+  const monthly = window._monthlyData.filter(r => {
+    const d = new Date(r.month);
+    return d.getFullYear() === year;
+  });
+  if (!monthly.length) {
+    document.getElementById('monthly-drilldown').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('monthly-drilldown').style.display = 'block';
+  document.getElementById('monthly-drilldown-title').textContent = `Detalle mensual ${year}`;
+
+  const months = [...new Set(monthly.map(m => m.month))].sort();
+  const agentNames = [...new Set(monthly.map(m => m.owner_name))];
+  // Sort agents by total deals in this year
+  const agentTotals = {};
+  monthly.forEach(m => { agentTotals[m.owner_name] = (agentTotals[m.owner_name] || 0) + m.total_deals; });
+  agentNames.sort((a, b) => (agentTotals[b] || 0) - (agentTotals[a] || 0));
+
+  const datasets = agentNames.map((name, i) => ({
+    label: name,
+    data: months.map(mo => {
+      const row = monthly.find(m => m.month === mo && m.owner_name === name);
+      return row ? row.total_deals : 0;
+    }),
+    backgroundColor: COLORS[i % COLORS.length],
+  }));
+
+  const labels = months.map(m => new Date(m).toLocaleDateString('es-CL', { month: 'short' }));
+
+  if (window._monthlyChart) window._monthlyChart.destroy();
+  window._monthlyChart = new Chart(document.getElementById("chart-agents-monthly"), {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+      plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } }
+    }
+  });
+}
+
+// ═══════════ HELP POPUPS ═══════════
+// KPI explanations (shown when you tap any number card)
+const KPI_HELP = {
+  'Predicciones': { title: 'Predicciones de EugenIA', text: 'Cantidad de veces que EugenIA intento predecir que deberia hacer el agente humano. Es como un asistente que dice "yo haria esto" antes de que el agente responda.', example: '660 predicciones = EugenIA observo 660 turnos y sugirio una accion para cada uno.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge (NeurIPS)</a>' },
+  'Aciertos': { title: 'Aciertos', text: 'Cuantas veces EugenIA sugirio lo mismo que hizo el agente. Como cuando dos personas piensan igual sin ponerse de acuerdo.', example: '0 al inicio es normal — EugenIA esta aprendiendo. Con el tiempo este numero sube.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard (Wikipedia)</a>' },
+  'Match Score': { title: 'Match Score', text: 'Termometro de 0 a 1. Mide que tan parecido penso EugenIA vs el agente. 0=nada parecido, 1=identico.', example: '0.000 es esperado al inicio. Meta: 0.4+ en 3 meses.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/Similitud_coseno" target="_blank">Similitud Coseno (Wikipedia)</a>' },
+  'Outcome': { title: 'Outcome', text: 'Nota de 0 a 100 del resultado final de los deals. 100=paciente operado, 0=perdido.', example: 'Requiere ejecutar sync-outcomes con Zendesk Sell.', tab: 'eugenia', ref: 'Score basado en fases de pipeline Zendesk Sell.' },
+  'Gold Samples': { title: 'Gold Samples', text: 'Los mejores "casos de estudio" para que EugenIA aprenda. Se marcan automaticamente como un profesor que selecciona los mejores trabajos.', example: '<b>Caso 1:</b> EugenIA acerto y deal exitoso (reforzar).<br><b>Caso 2:</b> Agente hizo diferente y funciono (aprender del humano).', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Encuesta de Aprendizaje Activo (2020)</a>' },
+  'Directivas': { title: 'Directivas', text: 'Correcciones directas de agentes a EugenIA. Como cuando un jefe dice "esto hazlo asi".', example: 'Agente escribe "CORREGIR: pipeline = bariatrica" → EugenIA aprende.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2203.02155" target="_blank">RLHF - Entrenamiento con retroalimentacion humana</a>' },
+  'Conversaciones': { title: 'Conversaciones', text: 'Total de hilos de chat. Cada conversacion = un paciente que escribio.', example: '1757 conversaciones = 1757 pacientes que contactaron por WhatsApp.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
+  'Mensajes': { title: 'Mensajes', text: 'Total de mensajes individuales (ida y vuelta) de pacientes y bot/agente.', example: 'Paciente saluda + bot responde + paciente pregunta = 3 mensajes.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
+  'Agentes': { title: 'Agentes Activos', text: 'Agentes con WhatsApp conectado al sistema de monitoreo WAHA.', example: '1 agente activo = solo un telefono conectado. Deben ser 5.', tab: 'agents', ref: '<a href="https://waha.devlike.pro/" target="_blank">Documentacion WAHA</a>' },
+  'Sent. texto': { title: 'Sentiment de Texto', text: 'Analisis del tono emocional de los mensajes buscando palabras positivas y negativas en espanol chileno. Va de -1 (muy negativo) a +1 (muy positivo).', example: '<b>0.567 = Positivo.</b> "gracias, excelente" → positivo. "es muy caro, me da miedo" → negativo.', tab: 'zendesk', ref: '<a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Novak et al. (2015) - PLOS ONE</a>' },
+  'Sent. emoji': { title: 'Sentiment de Emojis', text: 'Cada emoji tiene un puntaje cientifico basado en un estudio de 751 emojis en 83 idiomas. ❤️=+0.746, 😊=+0.634, 😢=-0.593.', example: '<b>0.430 = Positivo.</b> Los pacientes usan mas emojis felices que tristes.', tab: 'zendesk', ref: 'Novak, P.K. et al. (2015). <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Sentiment of Emojis. PLOS ONE</a>. Dataset: <a href="http://hdl.handle.net/11356/1048" target="_blank">CLARIN.SI</a>' },
+  'Buying': { title: 'Buying Signals', text: 'Mensajes donde el paciente muestra que QUIERE comprar o agendar. Son las senales mas valiosas.', example: '<b>Frases:</b> "cuanto cuesta", "me interesa", "quiero agendar", "formas de pago"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Deteccion de Senales de Venta en Comunicacion Digital</a>' },
+  'Objections': { title: 'Objection Signals', text: 'Mensajes donde el paciente tiene DUDAS o MIEDO. Detectarlas a tiempo permite que el agente las resuelva.', example: '<b>Frases:</b> "es muy caro", "lo voy a pensar", "me da miedo", "no estoy segura"', tab: 'zendesk', ref: '<a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: El Fin de las Ventas Consultivas</a>' },
+  'Commitments': { title: 'Commitment Signals', text: 'Mensajes donde el paciente CONFIRMA o se compromete. La senal mas fuerte de que el deal se va a cerrar.', example: '<b>Frases:</b> "dale, perfecto", "listo", "confirmo", "de acuerdo", "nos vemos"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1509/jm.15.0420" target="_blank">Journal of Marketing: Compromiso del Cliente</a>' },
+  'Usuarios': { title: 'Usuarios Unicos', text: 'Personas diferentes que enviaron mensajes. Cada WhatsApp = un usuario.', example: '0 puede indicar que falta procesar la identificacion de autores.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
+  'Deals totales': { title: 'Deals Totales', text: 'Cantidad de tratos en Zendesk Sell. Un deal = un paciente desde el primer contacto hasta cirugia o perdida.', example: '4527 deals = 4527 pacientes que mostraron interes en una cirugia.', tab: 'deals', ref: '<a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>' },
+  'Exitosos': { title: 'Deals Exitosos', text: 'Deals que llegaron a CERRADO OPERADO, AGENDADO o INSTALADO. Son los que generan ingresos reales.', example: '1248 exitosos de 4527 = 27.6%. De cada 4 pacientes, 1 se opera.', tab: 'deals', ref: 'Fases definidas por Clinyco en Zendesk Sell.' },
+  'Tasa exito': { title: 'Tasa de Exito', text: 'Porcentaje de deals que llegan a cierre exitoso. LA metrica principal del equipo comercial.', example: '27.6% = de cada 100 pacientes, 28 terminan operandose.', tab: 'deals', ref: '<a href="https://www.salesforce.com/blog/sales-statistics/" target="_blank">Salesforce: Estadisticas de Ventas</a>' },
+  'Operados': { title: 'Cerrados Operados', text: 'Pacientes que completaron TODO el proceso y ya se operaron. El mejor resultado posible.', example: 'Captacion → examenes → preoperatorio → cirugia = CERRADO OPERADO.', tab: 'deals', ref: 'Fase terminal exitosa del pipeline Clinyco.' },
+  'Agendados': { title: 'Cerrados Agendados', text: 'Pacientes con pabellon reservado y fecha de cirugia confirmada. A un paso del exito.', example: '72 agendados = 72 cirugias programadas pendientes.', tab: 'deals', ref: 'Fase pre-terminal del pipeline Clinyco.' },
+  'Con bono 75d': { title: 'Bono 75 Dias', text: 'Cuando el paciente se opera en 75 dias o menos desde que entro, los agentes ganan comision EXTRA. Incentivo por rapidez.', example: 'Entra 1/ene, se opera 15/feb (45 dias) → agentes ganan BAR1+BAR4, BAR2+BAR5, BAR3+BAR6.', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
+  'Comisiones base': { title: 'Comisiones Base (CLP)', text: 'Total en pesos chilenos pagado por participar en deals exitosos. 3 fases = 3 comisiones diferentes para 3 agentes (o el mismo).', example: '<b>Fase 1:</b> Colaborador1 gana BAR1 ($8.001)<br><b>Fase 2:</b> Colaborador2 gana BAR2 ($5.002)<br><b>Fase 3:</b> Colaborador3 gana BAR3 ($5.003)', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
+  'Total comparadas': { title: 'Total Comparadas', text: 'Predicciones de EugenIA ya comparadas con la accion real del agente. Es el tamano de la muestra de aprendizaje.', example: '660 = EugenIA tiene 660 ejemplos para aprender. Mas ejemplos = mejor.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge</a>' },
+  'Parciales': { title: 'Parciales', text: 'Veces que EugenIA sugirio algo parecido pero no identico. Como sacar un "casi" en un examen.', example: 'EugenIA: "preguntar peso" → Agente: "cuanto pesas y mides?" = parcial.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard</a>' },
+  'Diferentes': { title: 'Diferentes', text: 'Veces que el agente hizo algo completamente diferente. No es malo — el agente puede saber mas.', example: '100% al inicio es normal. Es un alumno nuevo. Con gold samples y directivas, baja.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge</a>' },
+  'Match promedio': { title: 'Match Promedio', text: 'Nota promedio de similitud EugenIA vs agentes. De 0 a 1. Con el tiempo debe subir.', example: '0.000 → 0.4+ en 3 meses. 0.6+ = EugenIA y agentes piensan parecido.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/Similitud_coseno" target="_blank">Similitud de Texto</a>' },
+  'Outcome promedio': { title: 'Outcome Promedio', text: 'Nota del resultado final de los deals vinculados a predicciones. De 0 (perdido) a 100 (operado).', example: 'Requiere ejecutar sync-outcomes.js para cruzar con Zendesk Sell.', tab: 'eugenia', ref: 'Outcome scoring, metodologia interna Clinyco.' },
+  'col-f1': { title: 'Fase 1: Captacion (Colaborador1)', text: 'Deals donde este agente capto al paciente — el primer contacto.', example: 'Si Gabriela tiene 677, capto 677 pacientes nuevos. Es la fase mas importante.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
+  'col-f2': { title: 'Fase 2: Seguimiento (Colaborador2)', text: 'Deals donde este agente hizo seguimiento: llamadas, WhatsApp, coordinar examenes.', example: 'Si Carolin tiene 183, hizo seguimiento a 183 pacientes captados en F1.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
+  'col-f3': { title: 'Fase 3: Cierre (Colaborador3)', text: 'Deals donde este agente participo en cerrar la venta, confirmar cirugia.', example: 'Si Carolin tiene 127 en F3, cerro 127 deals.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
+  'col-cerrados': { title: 'Deals Cerrados', text: 'Total donde este agente participo (cualquier fase) y el deal termino CERRADO OPERADO/AGENDADO/INSTALADO. NO es por owner.', example: 'Cuenta participacion real, no quien tiene asignado el deal.', tab: 'agents', ref: 'Fases exitosas Clinyco.' },
+  'col-comision': { title: 'Comision CLP', text: 'Suma de comisiones ganadas. Base (BAR1/2/3) + bono 75d (BAR4/5/6). El periodo se indica en el selector de ano arriba.', example: '"Todos" = historico. "2026" = solo ese ano.', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
+  'Bonos 75d': { title: 'Bonos 75 Dias (CLP)', text: 'Comision extra por rapidez. Si el proceso completo tomo 75 dias o menos, los 3 colaboradores ganan BAR4+BAR5+BAR6.', example: 'Deal en 60 dias: Colaborador1 gana $8.001+$9.004=$17.005. Colaborador2: $5.002+$6.005=$11.007.', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
+};
+
+const HELP = {
+  'eug-precision': {
+    title: 'Precision semanal',
+    text: 'Muestra semana a semana que tan bien predice EugenIA lo que el agente humano va a hacer. El "Match Score" va de 0 a 1: mas cerca de 1, mejor predice.',
+    example: 'Si el Match Score es 0.6, significa que en el 60% de los casos EugenIA sugirio algo parecido a lo que el agente hizo.',
+    ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge (NeurIPS)</a> | <a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard</a>'
+  },
+  'eug-donut': {
+    title: 'Distribucion de match types',
+    text: 'Cada vez que un agente responde, EugenIA compara su sugerencia con lo que el agente hizo. Hay 3 resultados posibles:',
+    example: '<b>Same Intent (verde):</b> EugenIA y el agente pensaron igual.<br><b>Partial Match (amarillo):</b> Parecido pero no exacto.<br><b>Different Topic (rojo):</b> El agente hizo algo completamente diferente.',
+    ref: 'Clasificacion por umbral de similitud: ≥0.6=same, ≥0.3=partial, <0.3=different. <a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard</a>'
+  },
+  'eug-actions': {
+    title: 'Acciones sugeridas por outcome',
+    text: 'Ranking de las acciones que EugenIA sugiere, ordenadas por que tan bien les fue a los deals despues. Un outcome alto significa que el deal avanzo bien.',
+    example: 'Si "Derivar a coordinacion" tiene outcome 80, significa que cuando EugenIA sugirio eso, los deals terminaron bien.',
+    ref: 'Outcome scoring basado en fases de Zendesk Sell pipeline. Metodologia interna Clinyco.'
+  },
+  'eug-gold': {
+    title: 'Gold Samples',
+    text: 'Son los casos mas valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay algo interesante que estudiar.',
+    example: '<b>high_match_good_outcome:</b> EugenIA acerto y el deal fue exitoso.<br><b>low_match_good_outcome:</b> El agente hizo diferente y funciono mejor.',
+    ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Encuesta de Aprendizaje Activo (2020)</a>'
+  },
+  'wa-signals': {
+    title: 'Senales de venta (WAHA)',
+    text: 'Los mensajes de WhatsApp directo se analizan buscando palabras clave que indican la intencion del paciente.',
+    example: '<b>Buying:</b> "cuanto cuesta", "me interesa"<br><b>Objection:</b> "es muy caro", "lo voy a pensar"<br><b>Commitment:</b> "listo", "dale", "perfecto"',
+    ref: 'Deteccion basada en keywords calibrada para espanol chileno. <a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Deteccion de Senales de Venta</a>'
+  },
+  'zd-signals': {
+    title: 'Senales de pacientes (Zendesk)',
+    text: 'Analisis de lo que los pacientes escriben al bot Antonia o al agente via Zendesk. Detecta intenciones de compra, objeciones y compromisos.',
+    example: '"cuanto sale la cirugia?" = Buying. "es muy caro" = Objection. "dale, perfecto" = Commitment.',
+    ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Deteccion de Senales de Venta</a> | <a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: Ventas Consultivas</a>'
+  },
+  'zd-sentiment': {
+    title: 'Sentiment de pacientes',
+    text: 'Mide si los mensajes del paciente son positivos, negativos o neutros. Se analiza el texto (palabras) y los emojis que usan.',
+    example: '<b>Verde (> 0.2):</b> Contento. <b>Rojo (< -0.2):</b> Molesto. <b>Amarillo:</b> Neutro.',
+    ref: 'Novak et al. (2015). <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Sentiment of Emojis, PLOS ONE</a> | Dataset: <a href="http://hdl.handle.net/11356/1048" target="_blank">CLARIN.SI</a>'
+  },
+  'deals-agents': {
+    title: 'Participacion por agente en deals',
+    text: 'Cada deal tiene un camino de 3 fases antes de cerrarse. Un agente puede participar en una, dos o las tres fases:<br><br><b>Fase 1 — Captacion (Colaborador1):</b> Quien genero el primer contacto con el paciente.<br><b>Fase 2 — Seguimiento (Colaborador2):</b> Quien hizo seguimiento, coordino examenes, mantuvo al paciente activo.<br><b>Fase 3 — Cierre (Colaborador3):</b> Quien cerro la venta, confirmo pabellon, coordino la cirugia.<br><br>Un mismo agente puede estar en las 3 fases (hizo todo solo) o pueden ser 3 agentes distintos. El numero que ves es la suma de TODAS las participaciones del agente en cualquier fase.',
+    example: 'Si Carolin aparece con 148 participaciones, significa que participo en 148 deals como Colaborador1, 2 o 3. No significa que "maneja" esos deals — significa que contribuyo al proceso en alguna etapa.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>'
+  },
+  'deals-phases': {
+    title: 'Distribucion de fases',
+    text: 'Muestra en que etapa estan todos los deals. Lo ideal es que la mayoria esten en fases verdes (cerrados exitosamente).',
+    example: '<b>Verde = Exito:</b> CERRADO OPERADO, AGENDADO, INSTALADO.<br><b>Rojo = Perdido:</b> SIN RESPUESTA.<br><b>Gris = En proceso:</b> EXAMENES, CANDIDATO, etc.',
+    ref: 'Fases de pipeline definidas en <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>. Configuracion interna Clinyco.'
+  },
+  'commissions': {
+    title: 'Comisiones por agente',
+    text: 'Cada deal exitoso genera comisiones en CLP para los agentes de las 3 fases. Si se cerro en 75 dias o menos, se paga bono extra (BAR4+BAR5+BAR6).',
+    example: 'Gabriela capto (Fase 1, BAR1=$8.001), Carolin siguio y cerro (Fase 2+3, BAR2=$5.002 + BAR3=$5.003). Si fue en <75 dias, suman BAR4+BAR5+BAR6.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>. Valores de comision configurados en Zendesk Sell custom fields.'
+  },
+  'agents-monthly': {
+    title: 'Deals por mes por agente',
+    text: 'Cuantos deals nuevos entro cada agente cada mes. Permite ver tendencias de captacion y carga de trabajo.',
+    example: 'Si Gabriela paso de 100 deals/mes a 50, puede indicar menos leads asignados o redistribucion de cargas.',
+    ref: 'Agrupacion por fecha "Agregado el" de <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>.'
+  },
+  'agent-phases': {
+    title: 'Participacion por fase',
+    text: 'Cada deal tiene 3 fases donde puede participar un agente diferente. Fase 1 = Captacion (quien trajo al paciente). Fase 2 = Seguimiento (quien lo acompano). Fase 3 = Cierre (quien cerro la venta).',
+    example: '<b>Fase 1 es la mas importante</b> porque sin captacion no hay pacientes. Si un agente tiene alta Fase 1 pero baja Fase 3, es buena captando pero necesita ayuda para cerrar.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> — Colaborador 1/2/3 en Zendesk Sell.'
+  },
+  'audit-log': {
+    title: 'Audit Log de Cambios',
+    text: 'Registra cada vez que un campo de colaborador o comision cambia en un deal. Detecta cuando alguien reasigna o borra un colaborador.',
+    example: 'Si alguien cambia Colaborador1 de "Gabriela" a "Camila", queda registrado con fecha y hora exacta.',
+    ref: 'Detectado automaticamente cada 10 min por sync-deals.js comparando estado actual vs Zendesk Sell API.'
+  },
+  'chain-effectiveness': {
+    title: 'Efectividad de cadenas',
+    text: 'Analiza que combinaciones de agentes (Captacion → Seguimiento → Cierre) producen los mejores resultados. Ejemplo: cuando Gabriela capta, Carolin hace seguimiento y Carolin cierra, la efectividad es X%.',
+    example: 'Una cadena "Gabriela → Carolin → Carolin" con 80% efectividad significa que 8 de cada 10 pacientes que siguen esa ruta terminan operados o agendados.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | Analisis de embudo de conversion por equipo.'
+  },
+  'gold-journey': {
+    title: 'Journey emocional del paciente',
+    text: 'Muestra como evolucionan las emociones del paciente a lo largo de la conversacion en deals que terminaron exitosamente (CERRADO OPERADO/AGENDADO/INSTALADO). Cada punto es el promedio de esa emocion en esa posicion del mensaje.',
+    example: 'Si la motivacion sube de 0.4 a 0.7 entre el mensaje 1 y el 5, significa que Antonia esta haciendo bien su trabajo de generar interes.',
+    ref: 'Evaluado con Claude Opus 4.6. Basado en 191+ evaluaciones de conversaciones gold standard.'
+  },
+  'wa-conversations': {
+    title: 'Conversaciones WhatsApp WAHA',
+    text: 'Detalle de cada conversacion capturada por el observer WAHA (WhatsApp directo del agente). Muestra el cliente, agente, cantidad de mensajes, sentiment del texto y emojis, y senales de venta detectadas.<br><br><b>Datos de:</b> WAHA webhook (tiempo real)<br><b>Actualizacion:</b> Cada mensaje nuevo',
+    example: 'Si un agente tiene 50 mensajes con sentiment 0.6 y 5 buying signals, la conversacion va bien.',
+    ref: 'Sentiment: <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Novak et al. 2015</a>. Senales: keywords en espanol chileno.',
+    tab: 'waha'
+  },
+  'deals-performance': {
+    title: 'Performance por agente (Zendesk Sell)',
+    text: 'Participacion de cada agente en deals como Colaborador 1 (captacion), 2 (seguimiento) o 3 (cierre). NO usa owner_name. Los deals se cuentan por participacion en cualquiera de las 3 fases.<br><br><b>Datos de:</b> Zendesk Sell API<br><b>Actualizacion:</b> Cada 10 minutos (sync automatico)',
+    example: 'Si Carolin tiene 476 participaciones y 295 exitosos, su tasa es 62%. Significa que de los deals donde participo, 62% terminaron cerrados.',
+    ref: '<a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a> | <a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>',
+    tab: 'agents'
+  },
+  'deals-commissions-detail': {
+    title: 'Detalle de comisiones por agente',
+    text: 'Desglose de comisiones ganadas por cada agente en deals exitosos (CERRADO OPERADO/AGENDADO/INSTALADO). Base = BAR1+BAR2+BAR3 segun fase de participacion. Bono = BAR4+BAR5+BAR6 si el deal se cerro en 75 dias o menos.<br><br><b>Datos de:</b> Zendesk Sell API + calculo de comisiones<br><b>Actualizacion:</b> Cada 10 minutos',
+    example: 'Si Danitza participo en 99 deals exitosos y gano $1.083.421 base + $861.667 bono = $1.945.088 total.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>. Valores en CLP.',
+    tab: 'deals'
+  },
+  'gold-signals': {
+    title: 'Senales frecuentes en deals exitosos',
+    text: 'Las senales de compra, objecion y compromiso mas comunes en conversaciones que terminaron con cirugia exitosa.<br><br><b>Datos de:</b> Evaluaciones Claude Opus 4.6 sobre conversaciones gold<br><b>Actualizacion:</b> Batch (cada vez que se ejecuta analyze-gold.js)',
+    example: 'Si "commitment" aparece 50 veces en deals exitosos, los pacientes que confirman temprano tienen mayor probabilidad de operarse.',
+    ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 LLM-as-a-Judge</a>. Claude Opus 4.6.',
+    tab: 'gold'
+  },
+  'gold-antonia': {
+    title: 'Calidad de Antonia en deals exitosos',
+    text: 'Evaluacion de cada mensaje de Antonia (bot) en conversaciones exitosas. MQS = Message Quality Score.<br><br><b>Datos de:</b> Claude Opus 4.6 evaluando mensajes de Antonia<br><b>Actualizacion:</b> Batch (analyze-gold.js)',
+    example: 'MQS 0.85 = alta calidad. Empatia 0.72 = buena contencion. Adherencia 0.92 = sigue protocolo.',
+    ref: 'Rita et al. 2026 (info_quality β=0.409, problem_solving β=0.315, understanding β=0.173). <a href="https://arxiv.org/abs/2306.05685" target="_blank">LLM-as-a-Judge</a>.',
+    tab: 'gold'
+  },
+  'phase-detail': {
+    title: 'Detalle por fase de participacion',
+    text: 'Deals donde cada agente participo como Colaborador 1 (captacion), 2 (seguimiento) o 3 (cierre). "Cerrados" = exitosos en esa fase.<br><br><b>Datos de:</b> Zendesk Sell API (colaborador1/2/3)<br><b>Actualizacion:</b> Cada 10 minutos',
+    example: 'Si Gabriela tiene 305 en F1 y 6 cerrados, capto 305 pacientes pero solo 6 llegaron a cierre.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a> | <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>',
+    tab: 'agents'
+  },
+  'agents-summary': {
+    title: 'Resumen del equipo',
+    text: 'Tabla maestra con cada agente: deals totales, exitosos, tasa de exito, comisiones en CLP, y actividad en WhatsApp WAHA.',
+    example: '"Tasa" = % de deals cerrados exitosamente. "Comision CLP" = total ganado como colaborador en deals exitosos (base + bono 75 dias).',
+    ref: 'Datos consolidados de <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a> + <a href="https://waha.devlike.pro/" target="_blank">WAHA</a> + <a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>'
+  },
+};
+
+function showHelp(key) {
+  const h = HELP[key];
+  if (!h) return;
+  document.getElementById('help-title').textContent = h.title;
+  document.getElementById('help-text').innerHTML = h.text;
+  document.getElementById('help-example').innerHTML = h.example;
+  document.getElementById('help-refs').innerHTML = h.ref ? '<b>Origen de datos:</b> ' + h.ref : '';
+  const dataBtn = document.getElementById('help-data-btn');
+  if (h.tab) {
+    dataBtn.style.display = 'inline-block';
+    dataBtn.onclick = function() { closeHelp(); showTab(h.tab); };
+  } else {
+    dataBtn.style.display = 'none';
+  }
+  document.getElementById('help-overlay').classList.add('open');
+}
+function closeHelp() {
+  document.getElementById('help-overlay').classList.remove('open');
+}
+function hb(key) {
+  return `<button class="help-btn" onclick="showHelp('${key}')" title="Ayuda">?</button>`;
 }
 
 // ── Init ──
 loadDashboard();
 </script>
+
+<!-- Help popup overlay -->
+<div id="help-overlay" class="help-overlay" onclick="if(event.target===this)closeHelp()">
+  <div class="help-card">
+    <h3 id="help-title"></h3>
+    <p id="help-text"></p>
+    <div class="example" id="help-example"></div>
+    <div class="ref-section" id="help-refs"></div>
+    <div class="help-buttons">
+      <button class="btn-ok" onclick="closeHelp()">Entendido</button>
+      <button class="btn-data" id="help-data-btn" onclick="closeHelp()" style="display:none">Ver Datos</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
