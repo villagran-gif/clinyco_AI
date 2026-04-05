@@ -201,8 +201,12 @@
           <div style="max-height:350px;overflow:auto">
             <table id="table-gold" role="grid">
               <thead><tr>
-                <th>Turn</th><th>AI sugirio</th><th>Humano hizo</th>
-                <th>Match</th><th>Outcome</th><th>Gold Reason</th>
+                <th class="sortable" data-col="0" data-type="num">Turn</th>
+                <th class="sortable" data-col="1" data-type="text">AI sugirio</th>
+                <th class="sortable" data-col="2" data-type="text">Humano hizo</th>
+                <th class="sortable" data-col="3" data-type="text">Match</th>
+                <th class="sortable" data-col="4" data-type="num">Outcome</th>
+                <th class="sortable" data-col="5" data-type="text">Gold Reason</th>
               </tr></thead>
               <tbody></tbody>
             </table>
@@ -222,13 +226,18 @@
           <canvas id="chart-wa-signals"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Conversaciones — Sentiment & Senales</h3>
+          <h3>Conversaciones — Sentiment & Senales <button class="help-btn" onclick="showHelp('wa-conversations')" title="Ayuda">?</button></h3>
           <div style="max-height:400px;overflow:auto">
             <table id="table-wa-conversations" role="grid">
               <thead><tr>
-                <th>Cliente</th><th>Agente</th><th>Msgs</th>
-                <th>Sent. texto</th><th>Sent. emoji</th>
-                <th>Buy</th><th>Obj</th><th>Commit</th>
+                <th class="sortable" data-col="0" data-type="text">Cliente</th>
+                <th class="sortable" data-col="1" data-type="text">Agente</th>
+                <th class="sortable" data-col="2" data-type="num">Msgs</th>
+                <th class="sortable" data-col="3" data-type="num">Sent. texto</th>
+                <th class="sortable" data-col="4" data-type="num">Sent. emoji</th>
+                <th class="sortable" data-col="5" data-type="num">Buy</th>
+                <th class="sortable" data-col="6" data-type="num">Obj</th>
+                <th class="sortable" data-col="7" data-type="num">Commit</th>
               </tr></thead>
               <tbody></tbody>
             </table>
@@ -272,9 +281,14 @@
           <div style="max-height:400px;overflow:auto">
             <table id="table-zd-conversations" role="grid">
               <thead><tr>
-                <th>Paciente</th><th>Atendido por</th><th>Msgs</th>
-                <th>Sent. paciente</th><th>Emoji paciente</th>
-                <th>Buy</th><th>Obj</th><th>Commit</th>
+                <th class="sortable" data-col="0" data-type="text">Paciente</th>
+                <th class="sortable" data-col="1" data-type="text">Atendido por</th>
+                <th class="sortable" data-col="2" data-type="num">Msgs</th>
+                <th class="sortable" data-col="3" data-type="num">Sent. paciente</th>
+                <th class="sortable" data-col="4" data-type="num">Emoji paciente</th>
+                <th class="sortable" data-col="5" data-type="num">Buy</th>
+                <th class="sortable" data-col="6" data-type="num">Obj</th>
+                <th class="sortable" data-col="7" data-type="num">Commit</th>
               </tr></thead>
               <tbody></tbody>
             </table>
@@ -299,7 +313,7 @@
         </div>
       </div>
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Performance por agente (Zendesk Sell)</h3>
+        <h3>Performance por agente (Zendesk Sell) <button class="help-btn" onclick="showHelp('deals-performance')" title="Ayuda">?</button></h3>
         <div style="max-height:500px;overflow:auto">
           <table id="table-deals" role="grid">
             <thead><tr>
@@ -324,7 +338,7 @@
           <canvas id="chart-commissions"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Detalle comisiones</h3>
+          <h3>Detalle comisiones <button class="help-btn" onclick="showHelp('deals-commissions-detail')" title="Ayuda">?</button></h3>
           <div style="max-height:400px;overflow:auto">
             <table id="table-commissions" role="grid">
               <thead><tr>
@@ -356,11 +370,11 @@
 
       <div class="chart-row">
         <div class="chart-box">
-          <h3>Senales mas frecuentes en deals exitosos</h3>
+          <h3>Senales mas frecuentes en deals exitosos <button class="help-btn" onclick="showHelp('gold-signals')" title="Ayuda">?</button></h3>
           <canvas id="chart-gold-signals"></canvas>
         </div>
         <div class="chart-box">
-          <h3>Calidad de Antonia en deals exitosos</h3>
+          <h3>Calidad de Antonia en deals exitosos <button class="help-btn" onclick="showHelp('gold-antonia')" title="Ayuda">?</button></h3>
           <div style="max-height:400px;overflow:auto">
             <table id="table-gold-antonia" role="grid">
               <thead><tr>
@@ -421,7 +435,7 @@
         <canvas id="chart-agents-phases"></canvas>
       </div>
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Detalle por fase</h3>
+        <h3>Detalle por fase <button class="help-btn" onclick="showHelp('phase-detail')" title="Ayuda">?</button></h3>
         <div style="max-height:400px;overflow:auto">
           <table id="table-phases" role="grid">
             <thead><tr>
@@ -681,6 +695,7 @@ async function loadEugenia() {
       <td><span class="badge badge-purple">${g.gold_reason || '—'}</span></td>
     </tr>`).join("");
 
+    makeSortable('table-gold');
     document.getElementById("eug-loading").style.display = "none";
     document.getElementById("eug-content").style.display = "block";
     window._eugeniaLoaded = true;
@@ -716,6 +731,7 @@ async function loadWaha() {
       <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
     </tr>`).join("");
     document.getElementById("wa-loading").style.display = "none";
+    makeSortable('table-wa-conversations');
     document.getElementById("wa-content").style.display = "block";
     window._wahaLoaded = true;
   } catch (err) { document.getElementById("wa-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
@@ -764,6 +780,8 @@ async function loadZendesk() {
       <td>${sentimentBadge(s.avg_patient_sentiment)}</td><td>${sentimentBadge(s.avg_patient_emoji)}</td>
       <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
     </tr>`).join("");
+    makeSortable('table-zd-conversations');
+    makeSortable('table-zd-agents');
     document.getElementById("zd-loading").style.display = "none";
     document.getElementById("zd-content").style.display = "block";
     window._zendeskLoaded = true;
@@ -1383,6 +1401,42 @@ const HELP = {
     text: 'Muestra como evolucionan las emociones del paciente a lo largo de la conversacion en deals que terminaron exitosamente (CERRADO OPERADO/AGENDADO/INSTALADO). Cada punto es el promedio de esa emocion en esa posicion del mensaje.',
     example: 'Si la motivacion sube de 0.4 a 0.7 entre el mensaje 1 y el 5, significa que Antonia esta haciendo bien su trabajo de generar interes.',
     ref: 'Evaluado con Claude Opus 4.6. Basado en 191+ evaluaciones de conversaciones gold standard.'
+  },
+  'wa-conversations': {
+    title: 'Conversaciones WhatsApp WAHA',
+    text: 'Detalle de cada conversacion capturada por el observer WAHA (WhatsApp directo del agente). Muestra el cliente, agente, cantidad de mensajes, sentiment del texto y emojis, y senales de venta detectadas.',
+    example: 'Si un agente tiene 50 mensajes con sentiment 0.6 y 5 buying signals, la conversacion va bien.',
+    ref: 'Datos en tiempo real via WAHA webhook. Sentiment: Novak et al. 2015. Senales: keywords en espanol chileno.'
+  },
+  'deals-performance': {
+    title: 'Performance por agente (Zendesk Sell)',
+    text: 'Participacion de cada agente en deals como Colaborador 1 (captacion), 2 (seguimiento) o 3 (cierre). NO usa owner_name. Los deals se cuentan por participacion en cualquiera de las 3 fases.',
+    example: 'Si Carolin tiene 476 participaciones y 295 exitosos, su tasa es 62%. Significa que de los deals donde participo, 62% terminaron cerrados.',
+    ref: 'Datos de <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a> API, sincronizados cada 10 minutos. <a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>'
+  },
+  'deals-commissions-detail': {
+    title: 'Detalle de comisiones por agente',
+    text: 'Desglose de comisiones ganadas por cada agente en deals exitosos (CERRADO OPERADO/AGENDADO/INSTALADO). Base = BAR1+BAR2+BAR3 segun fase de participacion. Bono = BAR4+BAR5+BAR6 si el deal se cerro en 75 dias o menos.',
+    example: 'Si Danitza participo en 99 deals exitosos y gano $1.083.421 base + $861.667 bono = $1.945.088 total.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>. Valores en CLP.'
+  },
+  'gold-signals': {
+    title: 'Senales frecuentes en deals exitosos',
+    text: 'Las senales de compra, objecion y compromiso mas comunes en conversaciones que terminaron con cirugia exitosa. Permite identificar que patrones de comunicacion del paciente correlacionan con exito.',
+    example: 'Si "commitment" aparece 50 veces en deals exitosos, significa que los pacientes que confirman y se comprometen temprano tienen mayor probabilidad de operarse.',
+    ref: 'Evaluado con Claude Opus 4.6 sobre 201 evaluaciones gold standard.'
+  },
+  'gold-antonia': {
+    title: 'Calidad de Antonia en deals exitosos',
+    text: 'Evaluacion de cada mensaje de Antonia (bot) en conversaciones que terminaron exitosamente. MQS = Message Quality Score basado en Rita et al. 2026. Empatia y adherencia al protocolo evaluadas por Claude Opus.',
+    example: 'MQS 0.85 = mensaje de alta calidad. Empatia 0.72 = buena contencion emocional. Adherencia 0.92 = sigue el protocolo correctamente.',
+    ref: 'Rita et al. 2026 (β pesos: info_quality=0.409, problem_solving=0.315, understanding=0.173). Evaluado con Claude Opus 4.6.'
+  },
+  'phase-detail': {
+    title: 'Detalle por fase de participacion',
+    text: 'Cantidad de deals donde cada agente participo como Colaborador 1 (captacion), 2 (seguimiento) o 3 (cierre). "Cerrados" = deals exitosos donde participo en esa fase especifica.',
+    example: 'Si Gabriela tiene 305 en F1 Captacion y 6 cerrados, significa que capto 305 pacientes pero solo 6 de esos llegaron a cierre exitoso.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>. Datos de <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a> API.'
   },
   'agents-summary': {
     title: 'Resumen del equipo',
