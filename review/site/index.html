@@ -154,6 +154,7 @@
     <h1>Clinyco Review Dashboard</h1>
     <small>EugenIA + WhatsApp WAHA + WhatsApp Zendesk — Consolidado</small>
   </div>
+  <div id="sync-status" style="margin-left:auto;font-size:.75rem;opacity:.7;text-align:right"></div>
 </div>
 
 <main class="container">
@@ -1113,14 +1114,17 @@ async function loadAgents() {
 
     window._loadSummaryForYear = async function(y) {
       const yearParam = y === 'Todos' ? '' : `?year=${y}`;
-      const [p, c] = await Promise.all([api(`/agents/phases${yearParam}`), api(`/agents/chains${yearParam}`)]);
+      const [p, c, comYear] = await Promise.all([
+        api(`/agents/phases${yearParam}`),
+        api(`/agents/chains${yearParam}`),
+        api(`/deals/commissions${yearParam}`),
+      ]);
       summaryBtns.querySelectorAll('button').forEach(btn => {
         const isActive = btn.textContent == y;
         btn.style.background = isActive ? '#2563eb' : '#fff';
         btn.style.color = isActive ? '#fff' : '#2563eb';
       });
-      // TODO: commissions also need year filter — for now use total
-      renderSummaryTable(p, commissions, y === 'Todos' ? null : y);
+      renderSummaryTable(p, comYear, y === 'Todos' ? null : y);
     };
 
     // 2. Annual ranking — year buttons + bar chart

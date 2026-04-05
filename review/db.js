@@ -222,8 +222,9 @@ export async function dealsPerAgent() {
  * BAR4-6: bonus paid to colaborador1-3 IF dias_added_cirugia <= 75.
  * Colaborador4-6 earn BAR4-6 as base (if they exist as separate positions).
  */
-export async function commissionsPerAgent() {
+export async function commissionsPerAgent(year = null) {
   const c456 = await hasColaborador456();
+  const yearFilter = year ? `AND EXTRACT(YEAR FROM added_at) = ${parseInt(year)}` : '';
   const c456Union = c456 ? `
       UNION ALL
       -- Position 4: colaborador4 earns BAR4
@@ -241,6 +242,7 @@ export async function commissionsPerAgent() {
     WITH exitosos AS (
       SELECT * FROM deals
       WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+        ${yearFilter}
     ),
     comisiones AS (
       -- Phase 1: colaborador1 earns BAR1, and BAR4 if bonus

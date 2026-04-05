@@ -283,8 +283,9 @@ router.get(
 
 router.get(
   "/deals/commissions",
-  wrap(async (_req, res) => {
-    res.json(await commissionsPerAgent());
+  wrap(async (req, res) => {
+    const year = req.query.year ? parseInt(req.query.year) : null;
+    res.json(await commissionsPerAgent(year));
   })
 );
 
