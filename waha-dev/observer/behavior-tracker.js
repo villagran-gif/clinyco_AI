@@ -7,13 +7,16 @@ const EMOJI_RE = /\p{Emoji_Presentation}|\p{Emoji}\uFE0F/gu;
 const URL_RE = /https?:\/\/[^\s]+|www\.[^\s]+/gi;
 
 // ── Question detection (Spanish) ──
-const QUESTION_RE = /\?|^(qué|cómo|cuándo|dónde|cuánto|cuál|quién|por qué)\b/im;
+const QUESTION_RE = /\?|^(qué|cómo|cuándo|dónde|cuánto|cuál|quién|por qué)(?=\s|$)/im;
 
 // ── Sales signal keywords (Chilean Spanish) ──
 const BUYING_SIGNALS = [
-  "cuánto cuesta", "cuánto vale", "precio", "valor", "costo",
-  "agendar", "reservar", "cuándo puedo", "horario disponible",
-  "tienen hora", "me interesa", "quiero hacerme", "cómo me inscribo",
+  "cuánto cuesta", "cuanto cuesta", "cuánto vale", "cuanto vale",
+  "precio", "valor", "costo",
+  "agendar", "reservar", "cuándo puedo", "cuando puedo",
+  "horario disponible",
+  "tienen hora", "me interesa", "quiero hacerme",
+  "cómo me inscribo", "como me inscribo",
   "formas de pago", "cuotas", "financiamiento",
 ];
 
@@ -35,8 +38,8 @@ const REFERRAL_SIGNALS = [
 ];
 
 const URGENCY_SIGNALS = [
-  "lo antes posible", "urgente", "esta semana", "mañana",
-  "lo más pronto", "cuanto antes", "hoy mismo", "ya",
+  "lo antes posible", "urgente", "esta semana", "mañana mismo",
+  "lo más pronto", "cuanto antes", "hoy mismo",
 ];
 
 // ── Formality markers (Chilean Spanish) ──
