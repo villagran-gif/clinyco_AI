@@ -364,9 +364,11 @@ export async function zendeskSentiment(days = 30) {
             count(*) FILTER (WHERE 'urgency_signal'    = ANY(m.detected_signals))::int AS urgency,
             CASE WHEN c.human_taken_over THEN
               COALESCE(
-                (SELECT ce.user_name FROM conversation_events ce
+                (SELECT ar.canonical_name FROM conversation_events ce
+                 JOIN agent_registry ar ON ce.user_name ILIKE ar.canonical_name || '%'
+                    OR ce.user_name ILIKE split_part(ar.canonical_name, ' ', 1) || ' ' || split_part(ar.canonical_name, ' ', 2) || '%'
                  WHERE ce.conversation_id = c.conversation_id
-                   AND ce.user_name IN (SELECT canonical_name FROM agent_registry WHERE is_active = true)
+                   AND ar.is_active = true
                  ORDER BY ce.created_at DESC LIMIT 1),
                 'Agente humano'
               )
@@ -386,13 +388,15 @@ export async function zendeskSentiment(days = 30) {
 export async function zendeskAgentEffectiveness() {
   const { rows } = await getPool().query(`
     WITH agent_convs AS (
-      SELECT c.conversation_id,
-             ce.user_name AS agent_name
+      SELECT DISTINCT ON (c.conversation_id)
+             c.conversation_id,
+             ar.canonical_name AS agent_name
       FROM conversations c
       JOIN conversation_events ce ON ce.conversation_id = c.conversation_id
-      WHERE c.human_taken_over = true
-        AND ce.user_name IN (SELECT canonical_name FROM agent_registry WHERE is_active = true)
-      GROUP BY c.conversation_id, ce.user_name
+      JOIN agent_registry ar ON ce.user_name ILIKE ar.canonical_name || '%'
+        OR ce.user_name ILIKE split_part(ar.canonical_name, ' ', 1) || ' ' || split_part(ar.canonical_name, ' ', 2) || '%'
+      WHERE c.human_taken_over = true AND ar.is_active = true
+      ORDER BY c.conversation_id, ce.created_at DESC
     )
     SELECT ac.agent_name,
            count(DISTINCT ac.conversation_id)::int AS conversations,
