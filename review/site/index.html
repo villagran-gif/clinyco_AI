@@ -302,9 +302,16 @@
         <div style="max-height:500px;overflow:auto">
           <table id="table-deals" role="grid">
             <thead><tr>
-              <th>Agente</th><th>Total</th><th>Exitosos</th><th>Tasa</th>
-              <th>Operados</th><th>Agendados</th><th>Instalados</th>
-              <th>Sin Resp.</th><th>Suspendidos</th><th>En Examenes</th>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">Total</th>
+              <th class="sortable" data-col="2" data-type="num">Exitosos</th>
+              <th class="sortable" data-col="3" data-type="num">Tasa</th>
+              <th class="sortable" data-col="4" data-type="num">Operados</th>
+              <th class="sortable" data-col="5" data-type="num">Agendados</th>
+              <th class="sortable" data-col="6" data-type="num">Instalados</th>
+              <th class="sortable" data-col="7" data-type="num">Sin Resp.</th>
+              <th class="sortable" data-col="8" data-type="num">Suspendidos</th>
+              <th class="sortable" data-col="9" data-type="num">En Examenes</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -320,8 +327,12 @@
           <div style="max-height:400px;overflow:auto">
             <table id="table-commissions" role="grid">
               <thead><tr>
-                <th>Agente</th><th>Deals</th><th>Base CLP</th>
-                <th>Bono 75d CLP</th><th>Total CLP</th><th>Deals c/bono</th>
+                <th class="sortable" data-col="0" data-type="text">Agente</th>
+                <th class="sortable" data-col="1" data-type="num">Deals</th>
+                <th class="sortable" data-col="2" data-type="num">Base CLP</th>
+                <th class="sortable" data-col="3" data-type="num">Bono 75d CLP</th>
+                <th class="sortable" data-col="4" data-type="num">Total CLP</th>
+                <th class="sortable" data-col="5" data-type="num">Deals c/bono</th>
               </tr></thead>
               <tbody></tbody>
             </table>
@@ -766,6 +777,7 @@ async function loadDeals() {
         <td>${a.sin_respuesta}</td><td>${a.suspendidos}</td><td>${a.en_examenes}</td>
       </tr>`;
     }).join("");
+    makeSortable('table-deals');
 
     // Commissions chart + table
     if (commissions.length) {
@@ -790,6 +802,7 @@ async function loadDeals() {
         <td><strong>${fmt(c.comision_total_clp)}</strong></td>
         <td>${c.deals_con_bono}</td>
       </tr>`).join("");
+      makeSortable('table-commissions');
     }
 
     document.getElementById("dl-loading").style.display = "none";
