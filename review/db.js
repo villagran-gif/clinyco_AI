@@ -531,7 +531,10 @@ export async function dealsPerMonthPerAgent() {
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS exitosos,
-           count(*) FILTER (WHERE d.pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta
+           count(*) FILTER (WHERE d.pipeline_phase = 'SIN RESPUESTA')::int AS sin_respuesta,
+           COALESCE(sum(CASE WHEN d.pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')
+             THEN COALESCE(d.comision_bar1,0) + CASE WHEN d.bono_75_dias THEN COALESCE(d.comision_bar4,0) ELSE 0 END
+             ELSE 0 END), 0)::int AS comision_clp
     FROM deals d
     WHERE d.added_at IS NOT NULL AND d.colaborador1 IS NOT NULL
     GROUP BY 1, 2

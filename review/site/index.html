@@ -510,6 +510,19 @@
       <div id="monthly-drilldown" class="chart-box" style="margin-bottom:2rem;display:none">
         <h3 id="monthly-drilldown-title">Detalle mensual</h3>
         <canvas id="chart-agents-monthly"></canvas>
+        <div style="overflow-x:auto;max-height:500px;overflow-y:auto;margin-top:1rem">
+          <table id="table-monthly-detail" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Mes</th>
+              <th class="sortable" data-col="1" data-type="text">Agente</th>
+              <th class="sortable" data-col="2" data-type="num">Total Deals</th>
+              <th class="sortable" data-col="3" data-type="num">Exitosos</th>
+              <th class="sortable" data-col="4" data-type="num">Sin Respuesta</th>
+              <th class="sortable" data-col="5" data-type="num">Comisión CLP</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Deal detail (shown when clicking agent name) -->
@@ -1398,6 +1411,25 @@ function renderMonthlyDrilldown(year) {
       plugins: { legend: { position: "bottom", labels: { font: { size: 10 } } } }
     }
   });
+
+  // Monthly detail table
+  const fmtCLP = n => n ? '$' + Number(n).toLocaleString('es-CL') : '$0';
+  const sortedMonthly = [...monthly].sort((a, b) => {
+    const mCmp = a.month.localeCompare(b.month);
+    return mCmp !== 0 ? mCmp : (b.total_deals - a.total_deals);
+  });
+  document.querySelector('#table-monthly-detail tbody').innerHTML = sortedMonthly.map(m => {
+    const mesLabel = new Date(m.month).toLocaleDateString('es-CL', { year: 'numeric', month: 'short' });
+    return `<tr>
+      <td>${mesLabel}</td>
+      <td><strong>${m.owner_name}</strong></td>
+      <td>${m.total_deals}</td>
+      <td><strong style="color:#16a34a">${m.exitosos}</strong></td>
+      <td>${m.sin_respuesta || 0}</td>
+      <td style="font-weight:600;color:#1e293b">${fmtCLP(m.comision_clp)}</td>
+    </tr>`;
+  }).join('');
+  makeSortable('table-monthly-detail');
 }
 
 // ═══════════ HELP POPUPS ═══════════
