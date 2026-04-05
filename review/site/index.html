@@ -154,6 +154,7 @@
     <button onclick="showTab('waha')">WhatsApp WAHA</button>
     <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
     <button onclick="showTab('deals')">Deals Sell</button>
+    <button onclick="showTab('gold')">Gold Analysis</button>
     <button onclick="showTab('agents')">Agentes</button>
   </div>
 
@@ -342,6 +343,41 @@
     </div>
   </div>
 
+  <!-- ══════ TAB: GOLD ANALYSIS ══════ -->
+  <div id="tab-gold" class="tab-content">
+    <div id="gold-loading" class="loading">Cargando analisis gold...</div>
+    <div id="gold-content" style="display:none">
+      <div class="kpi-grid" id="kpi-gold"></div>
+
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Journey emocional del paciente (promedio por posicion de mensaje) <button class="help-btn" onclick="showHelp('gold-journey')" title="Ayuda">?</button></h3>
+        <canvas id="chart-gold-journey"></canvas>
+      </div>
+
+      <div class="chart-row">
+        <div class="chart-box">
+          <h3>Senales mas frecuentes en deals exitosos</h3>
+          <canvas id="chart-gold-signals"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Calidad de Antonia en deals exitosos</h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-gold-antonia" role="grid">
+              <thead><tr>
+                <th class="sortable" data-col="0" data-type="num">MQS</th>
+                <th class="sortable" data-col="1" data-type="num">Empatia</th>
+                <th class="sortable" data-col="2" data-type="num">Protocolo</th>
+                <th class="sortable" data-col="3" data-type="text">Riesgo</th>
+                <th>Mensaje</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════ TAB: AGENTS ══════ -->
   <div id="tab-agents" class="tab-content">
     <div id="ag-loading" class="loading">Cargando agentes...</div>
@@ -488,7 +524,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, agents: loadAgents };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
@@ -809,6 +845,81 @@ async function loadDeals() {
     document.getElementById("dl-content").style.display = "block";
     window._dealsLoaded = true;
   } catch (err) { document.getElementById("dl-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ═══════════ AGENTS ═══════════
+// ═══════════ GOLD ANALYSIS ═══════════
+async function loadGold() {
+  try {
+    const [patterns, signals, antonia, journey] = await Promise.all([
+      api("/gold/patterns"), api("/gold/signals"), api("/gold/antonia"), api("/gold/journey"),
+    ]);
+
+    // KPIs
+    const patientPat = patterns.find(p => p.role === 'user') || {};
+    const botPat = patterns.find(p => p.role === 'assistant') || {};
+    document.getElementById("kpi-gold").innerHTML = [
+      kpiCard(patientPat.total_evals || 0, "Mensajes paciente evaluados"),
+      kpiCard(botPat.total_evals || 0, "Mensajes Antonia evaluados"),
+      kpiCard(botPat.avg_mqs || '—', "MQS promedio Antonia"),
+      kpiCard(botPat.avg_empathy || '—', "Empatia promedio Antonia"),
+      kpiCard(patientPat.avg_motivacion || '—', "Motivacion promedio paciente"),
+      kpiCard(patientPat.avg_compromiso || '—', "Compromiso promedio paciente"),
+    ].join("");
+
+    // Journey chart
+    if (journey.length) {
+      new Chart(document.getElementById("chart-gold-journey"), {
+        type: "line",
+        data: {
+          labels: journey.map(j => 'Msg ' + j.msg_pos),
+          datasets: [
+            { label: "Motivacion", data: journey.map(j => j.motivacion), borderColor: "#16a34a", tension: .3, fill: false },
+            { label: "Compromiso", data: journey.map(j => j.compromiso), borderColor: "#2563eb", tension: .3, fill: false },
+            { label: "Readiness", data: journey.map(j => j.readiness), borderColor: "#9333ea", tension: .3, fill: false },
+            { label: "Miedo", data: journey.map(j => j.miedo), borderColor: "#dc2626", tension: .3, fill: false },
+            { label: "Sens. precio", data: journey.map(j => j.sensibilidad_precio), borderColor: "#d97706", tension: .3, fill: false },
+          ]
+        },
+        options: {
+          responsive: true, plugins: { legend: { position: "bottom" } },
+          scales: { y: { beginAtZero: true, max: 1 } }
+        }
+      });
+    }
+
+    // Signals bar
+    if (signals.length) {
+      new Chart(document.getElementById("chart-gold-signals"), {
+        type: "bar",
+        data: {
+          labels: signals.map(s => s.signal),
+          datasets: [{ label: "Ocurrencias", data: signals.map(s => s.occurrences), backgroundColor: "#2563eb" }]
+        },
+        options: { indexAxis: "y", responsive: true, plugins: { legend: { display: false } } }
+      });
+    }
+
+    // Antonia table
+    if (antonia.length) {
+      document.querySelector("#table-gold-antonia tbody").innerHTML = antonia.map(a => {
+        const mqsClass = a.mqs >= 0.7 ? 'badge-green' : a.mqs >= 0.4 ? 'badge-amber' : 'badge-red';
+        const empClass = a.empathy >= 0.6 ? 'badge-green' : a.empathy >= 0.3 ? 'badge-amber' : 'badge-red';
+        return `<tr>
+          <td><span class="badge ${mqsClass}">${a.mqs || '—'}</span></td>
+          <td><span class="badge ${empClass}">${a.empathy || '—'}</span></td>
+          <td>${a.adherence || '—'}</td>
+          <td>${a.boundary_risk || 'none'}</td>
+          <td style="font-size:.7rem">${(a.content_preview || '').slice(0, 80)}</td>
+        </tr>`;
+      }).join("");
+      makeSortable('table-gold-antonia');
+    }
+
+    document.getElementById("gold-loading").style.display = "none";
+    document.getElementById("gold-content").style.display = "block";
+    window._goldLoaded = true;
+  } catch (err) { document.getElementById("gold-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
 
 // ═══════════ AGENTS ═══════════
@@ -1266,6 +1377,12 @@ const HELP = {
     text: 'Analiza que combinaciones de agentes (Captacion → Seguimiento → Cierre) producen los mejores resultados. Ejemplo: cuando Gabriela capta, Carolin hace seguimiento y Carolin cierra, la efectividad es X%.',
     example: 'Una cadena "Gabriela → Carolin → Carolin" con 80% efectividad significa que 8 de cada 10 pacientes que siguen esa ruta terminan operados o agendados.',
     ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | Analisis de embudo de conversion por equipo.'
+  },
+  'gold-journey': {
+    title: 'Journey emocional del paciente',
+    text: 'Muestra como evolucionan las emociones del paciente a lo largo de la conversacion en deals que terminaron exitosamente (CERRADO OPERADO/AGENDADO/INSTALADO). Cada punto es el promedio de esa emocion en esa posicion del mensaje.',
+    example: 'Si la motivacion sube de 0.4 a 0.7 entre el mensaje 1 y el 5, significa que Antonia esta haciendo bien su trabajo de generar interes.',
+    ref: 'Evaluado con Claude Opus 4.6. Basado en 191+ evaluaciones de conversaciones gold standard.'
   },
   'agents-summary': {
     title: 'Resumen del equipo',
