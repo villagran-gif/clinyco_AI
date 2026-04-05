@@ -1213,10 +1213,10 @@ const HELP = {
     ref: 'Novak et al. (2015). <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Sentiment of Emojis, PLOS ONE</a> | Dataset: <a href="http://hdl.handle.net/11356/1048" target="_blank">CLARIN.SI</a>'
   },
   'deals-agents': {
-    title: 'Deals por agente',
-    text: 'Cuantos deals maneja cada agente y cuantos terminaron bien. Exitosos = CERRADO OPERADO + AGENDADO + INSTALADO.',
-    example: 'Gabriela: 1919 deals, 600 exitosos = 31.3%. De cada 3 pacientes, 1 se opera.',
-    ref: '<a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a> | <a href="https://www.salesforce.com/resources/articles/sales-conversion-rate/" target="_blank">Conversion Benchmarks</a>'
+    title: 'Participacion por agente en deals',
+    text: 'Cada deal tiene un camino de 3 fases antes de cerrarse. Un agente puede participar en una, dos o las tres fases:<br><br><b>Fase 1 — Captacion (Colaborador1):</b> Quien genero el primer contacto con el paciente.<br><b>Fase 2 — Seguimiento (Colaborador2):</b> Quien hizo seguimiento, coordino examenes, mantuvo al paciente activo.<br><b>Fase 3 — Cierre (Colaborador3):</b> Quien cerro la venta, confirmo pabellon, coordino la cirugia.<br><br>Un mismo agente puede estar en las 3 fases (hizo todo solo) o pueden ser 3 agentes distintos. El numero que ves es la suma de TODAS las participaciones del agente en cualquier fase.',
+    example: 'Si Carolin aparece con 148 participaciones, significa que participo en 148 deals como Colaborador1, 2 o 3. No significa que "maneja" esos deals — significa que contribuyo al proceso en alguna etapa.',
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>'
   },
   'deals-phases': {
     title: 'Distribucion de fases',
