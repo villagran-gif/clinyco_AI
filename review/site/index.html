@@ -504,14 +504,32 @@
 
       <!-- Audit log section -->
       <div id="audit-section" class="chart-box" style="margin-bottom:2rem;display:none">
-        <h3>Audit Log — Cambios recientes <button class="help-btn" onclick="showHelp('audit-log')" title="Ayuda">?</button></h3>
+        <h3>Audit Log — Cambios en colaboradores <button class="help-btn" onclick="showHelp('audit-log')" title="Ayuda">?</button></h3>
         <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
           <table id="table-audit" role="grid" style="font-size:.75rem">
             <thead><tr>
               <th class="sortable" data-col="0" data-type="text">Fecha</th>
-              <th>Deal</th><th>RUT</th>
+              <th class="sortable" data-col="1" data-type="text">Deal</th>
+              <th class="sortable" data-col="2" data-type="text">RUT</th>
               <th class="sortable" data-col="3" data-type="text">Campo</th>
-              <th>Anterior</th><th>Nuevo</th><th>Owner</th>
+              <th>Anterior</th><th>Nuevo</th>
+              <th class="sortable" data-col="6" data-type="text">Owner</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="deletion-section" class="chart-box" style="margin-bottom:2rem;display:none">
+        <h3>Deals borrados</h3>
+        <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+          <table id="table-deletions" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Fecha</th>
+              <th class="sortable" data-col="1" data-type="text">Deal</th>
+              <th class="sortable" data-col="2" data-type="text">RUT</th>
+              <th class="sortable" data-col="3" data-type="text">Fase</th>
+              <th>Owner</th><th>C1</th><th>C2</th><th>C3</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -1037,6 +1055,9 @@ async function loadAgents() {
     renderChains(chainsAll);
     document.getElementById("ag-loading").style.display = "none";
     document.getElementById("ag-content").style.display = "block";
+    // Load audit log + deletions
+    loadAuditLog();
+    loadDeletionLog();
     window._agentsLoaded = true;
   } catch (err) { document.getElementById("ag-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
 }
@@ -1163,21 +1184,47 @@ async function showAgentDeals(firstName, fullName) {
 
 async function loadAuditLog() {
   try {
-    const changes = await api('/audit/changes?limit=50');
+    const changes = await api('/audit/changes?limit=100');
     const el = document.getElementById('audit-section');
     if (changes.length === 0) { el.style.display = 'none'; return; }
     el.style.display = 'block';
-    document.querySelector('#table-audit tbody').innerHTML = changes.map(c => `<tr>
-      <td>${new Date(c.detected_at).toLocaleString('es-CL')}</td>
-      <td>${c.deal_name || c.deal_id}</td>
-      <td>${c.rut_normalizado || '—'}</td>
-      <td><span class="badge badge-amber">${c.field_name}</span></td>
-      <td><span class="badge badge-red">${c.old_value || '(vacio)'}</span></td>
-      <td><span class="badge badge-green">${c.new_value || '(vacio)'}</span></td>
-      <td>${c.owner_name || '—'}</td>
-    </tr>`).join('');
+    document.querySelector('#table-audit tbody').innerHTML = changes.map(c => {
+      const dealUrl = `https://app.futuresimple.com/sales/deals/${c.deal_id}`;
+      return `<tr>
+        <td>${new Date(c.detected_at).toLocaleString('es-CL')}</td>
+        <td><a href="${dealUrl}" target="_blank" style="color:#2563eb;font-size:.7rem">${c.deal_name || c.deal_id}</a></td>
+        <td>${c.rut_normalizado || '—'}</td>
+        <td><span class="badge badge-amber">${c.field_name}</span></td>
+        <td><span class="badge badge-red">${c.old_value || '(vacio)'}</span></td>
+        <td><span class="badge badge-green">${c.new_value || '(vacio)'}</span></td>
+        <td>${c.owner_name || '—'}</td>
+      </tr>`;
+    }).join('');
     makeSortable('table-audit');
   } catch (err) { /* audit not available yet */ }
+}
+
+async function loadDeletionLog() {
+  try {
+    const deletions = await api('/audit/deletions?limit=50');
+    const el = document.getElementById('deletion-section');
+    if (deletions.length === 0) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    document.querySelector('#table-deletions tbody').innerHTML = deletions.map(d => {
+      const dealUrl = `https://app.futuresimple.com/sales/deals/${d.deal_id}`;
+      return `<tr>
+        <td>${new Date(d.detected_at).toLocaleString('es-CL')}</td>
+        <td><a href="${dealUrl}" target="_blank" style="color:#dc2626;font-size:.7rem">${d.deal_name || d.deal_id}</a></td>
+        <td>${d.rut_normalizado || '—'}</td>
+        <td><span class="badge badge-red">${d.pipeline_phase || '—'}</span></td>
+        <td>${d.owner_name || '—'}</td>
+        <td>${d.colaborador1 || '—'}</td>
+        <td>${d.colaborador2 || '—'}</td>
+        <td>${d.colaborador3 || '—'}</td>
+      </tr>`;
+    }).join('');
+    makeSortable('table-deletions');
+  } catch (err) { /* deletions not available yet */ }
 }
 
 async function loadPhasesForYear(y) {
