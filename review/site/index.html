@@ -446,8 +446,11 @@
               <th class="sortable" data-col="1" data-type="num">F1 Captacion <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-f1')">?</span></th>
               <th class="sortable" data-col="2" data-type="num">F2 Seguimiento <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-f2')">?</span></th>
               <th class="sortable" data-col="3" data-type="num">F3 Cierre <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-f3')">?</span></th>
-              <th class="sortable" data-col="4" data-type="num">Cerrados <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-cerrados')">?</span></th>
-              <th class="sortable" data-col="5" data-type="num">Comision CLP <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-comision')">?</span></th>
+              <th class="sortable" data-col="4" data-type="num">C4</th>
+              <th class="sortable" data-col="5" data-type="num">C5</th>
+              <th class="sortable" data-col="6" data-type="num">C6</th>
+              <th class="sortable" data-col="7" data-type="num">Cerrados <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-cerrados')">?</span></th>
+              <th class="sortable" data-col="8" data-type="num">Comision CLP <span class="col-help" onclick="event.stopPropagation();showKpiHelp('col-comision')">?</span></th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -483,6 +486,9 @@
               <th class="sortable" data-col="4" data-type="num">F2 Cerrados</th>
               <th class="sortable" data-col="5" data-type="num">F3 Cierre</th>
               <th class="sortable" data-col="6" data-type="num">F3 Cerrados</th>
+              <th class="sortable" data-col="7" data-type="num">C4</th>
+              <th class="sortable" data-col="8" data-type="num">C5</th>
+              <th class="sortable" data-col="9" data-type="num">C6</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -1068,7 +1074,8 @@ async function loadAgents() {
       (commissionsData || []).forEach(c => { comMap[c.agent] = c; });
 
       const tableData = phasesData
-        .filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0)
+        .filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0
+                  || (p.fase4 || 0) > 0 || (p.fase5 || 0) > 0 || (p.fase6 || 0) > 0)
         .map(p => {
           const com = comMap[p.agent.split(' ')[0]] || {};
           return { ...p, comision: com.comision_total_clp || 0 };
@@ -1078,12 +1085,17 @@ async function loadAgents() {
       const title = yearLabel ? ` (${yearLabel})` : ' (Total historico)';
       document.querySelector("#table-agents tbody").innerHTML = tableData.map(p => {
         const fn = p.agent.split(' ')[0];
+        const totalCerrados = p.fase1_exitosos + p.fase2_exitosos + p.fase3_exitosos
+          + (p.fase4_exitosos || 0) + (p.fase5_exitosos || 0) + (p.fase6_exitosos || 0);
         return `<tr>
         <td><a href="#deal-detail" style="font-weight:700;color:#2563eb;cursor:pointer;text-decoration:none" onclick="showAgentDeals('${fn}','${p.agent}')">${p.agent}</a></td>
         <td>${p.fase1_captacion}</td>
         <td>${p.fase2_seguimiento}</td>
         <td>${p.fase3_cierre}</td>
-        <td><strong>${p.fase1_exitosos + p.fase2_exitosos + p.fase3_exitosos}</strong></td>
+        <td>${p.fase4 || 0}</td>
+        <td>${p.fase5 || 0}</td>
+        <td>${p.fase6 || 0}</td>
+        <td><strong>${totalCerrados}</strong></td>
         <td>${fmtCLP(p.comision)}</td>
       </tr>`; }).join("");
 
@@ -1183,7 +1195,8 @@ function makeSortable(tableId) {
 
 // ═══════════ PHASES + CHAINS ═══════════
 function renderPhasesAndChains(phases, chains) {
-  const activePhases = phases.filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0);
+  const activePhases = phases.filter(p => p.fase1_captacion > 0 || p.fase2_seguimiento > 0 || p.fase3_cierre > 0
+    || (p.fase4 || 0) > 0 || (p.fase5 || 0) > 0 || (p.fase6 || 0) > 0);
 
   if (window._phaseChart) window._phaseChart.destroy();
   window._phaseChart = new Chart(document.getElementById("chart-agents-phases"), {
@@ -1204,6 +1217,9 @@ function renderPhasesAndChains(phases, chains) {
     <td>${p.fase1_captacion}</td><td><span class="badge badge-green">${p.fase1_exitosos}</span></td>
     <td>${p.fase2_seguimiento}</td><td><span class="badge badge-green">${p.fase2_exitosos}</span></td>
     <td>${p.fase3_cierre}</td><td><span class="badge badge-green">${p.fase3_exitosos}</span></td>
+    <td>${p.fase4 || 0}</td>
+    <td>${p.fase5 || 0}</td>
+    <td>${p.fase6 || 0}</td>
   </tr>`).join("");
 
   makeSortable('table-phases');
