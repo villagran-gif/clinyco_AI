@@ -578,10 +578,16 @@ export async function dealsForAgentDetail(agentFirstName, year = null) {
   return rows;
 }
 
-/** Audit log: recent changes */
+/** Audit log: recent changes (only collaborator + commission fields) */
 export async function auditLogRecent(limit = 100) {
   const { rows } = await getPool().query(
-    `SELECT * FROM deal_audit_log ORDER BY detected_at DESC LIMIT $1`,
+    `SELECT * FROM deal_audit_log
+     WHERE field_name IN (
+       'colaborador1','colaborador2','colaborador3',
+       'comision_bar1','comision_bar2','comision_bar3',
+       'comision_bar4','comision_bar5','comision_bar6'
+     )
+     ORDER BY detected_at DESC LIMIT $1`,
     [limit]
   );
   return rows;
