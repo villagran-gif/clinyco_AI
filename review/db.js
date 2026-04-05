@@ -492,7 +492,9 @@ export async function registeredAgents() {
                  'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
                ))::numeric / count(*)::numeric * 100, 1)
                ELSE 0 END AS tasa_exito
-      FROM deals d WHERE d.owner_name = ar.canonical_name
+      FROM deals d WHERE d.colaborador1 = split_part(ar.canonical_name, ' ', 1)
+         OR d.colaborador2 = split_part(ar.canonical_name, ' ', 1)
+         OR d.colaborador3 = split_part(ar.canonical_name, ' ', 1)
     ) dl ON true
     LEFT JOIN LATERAL (
       SELECT sum(base + bonus)::int AS comision_total

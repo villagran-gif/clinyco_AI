@@ -210,7 +210,7 @@ const TRACKED_FIELDS = [
   "pipeline_phase", "colaborador1", "colaborador2", "colaborador3",
   "comision_bar1", "comision_bar2", "comision_bar3",
   "comision_bar4", "comision_bar5", "comision_bar6",
-  "owner_name", "fecha_cirugia",
+  "fecha_cirugia",
 ];
 
 async function detectChanges(newDeal) {
