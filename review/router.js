@@ -39,6 +39,7 @@ import {
   dealsRaw,
   commissionsPerAgent,
   dashboardSummary,
+  velocityPerAgent,
 } from "./db.js";
 
 const router = Router();
@@ -193,7 +194,7 @@ router.get(
   "/zendesk/sentiment/:conversationId",
   wrap(async (req, res) => {
     const id = req.params.conversationId;
-    if (!id) return res.status(400).json({ error: "invalid conversationId" });
+    if (!id || id.length > 100) return res.status(400).json({ error: "invalid conversationId" });
     res.json(await zendeskSentimentDetail(id));
   })
 );
@@ -327,6 +328,13 @@ router.get(
   wrap(async (req, res) => {
     const year = req.query.year || null;
     res.json(await chainEffectiveness(year));
+  })
+);
+
+router.get(
+  "/agents/velocity",
+  wrap(async (_req, res) => {
+    res.json(await velocityPerAgent());
   })
 );
 

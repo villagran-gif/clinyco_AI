@@ -270,8 +270,8 @@
               <th class="sortable" data-col="0" data-type="text">Agente</th>
               <th class="sortable" data-col="1" data-type="num">Conversaciones</th>
               <th class="sortable" data-col="2" data-type="num">Mensajes</th>
-              <th class="sortable" data-col="3" data-type="num">Sent. paciente</th>
-              <th class="sortable" data-col="4" data-type="num">Emoji paciente</th>
+              <th class="sortable" data-col="3" data-type="num">Sentiment Texto</th>
+              <th class="sortable" data-col="4" data-type="num">Sentiment Emoji</th>
               <th class="sortable" data-col="5" data-type="num">Buying</th>
               <th class="sortable" data-col="6" data-type="num">Objections</th>
               <th class="sortable" data-col="7" data-type="num">Commitments</th>
@@ -291,14 +291,15 @@
           <div style="max-height:400px;overflow:auto">
             <table id="table-zd-conversations" role="grid">
               <thead><tr>
-                <th class="sortable" data-col="0" data-type="text">Paciente</th>
-                <th class="sortable" data-col="1" data-type="text">Atendido por</th>
-                <th class="sortable" data-col="2" data-type="num">Msgs</th>
-                <th class="sortable" data-col="3" data-type="num">Sent. paciente</th>
-                <th class="sortable" data-col="4" data-type="num">Emoji paciente</th>
-                <th class="sortable" data-col="5" data-type="num">Buy</th>
-                <th class="sortable" data-col="6" data-type="num">Obj</th>
-                <th class="sortable" data-col="7" data-type="num">Commit</th>
+                <th class="sortable" data-col="0" data-type="text">Conv ID</th>
+                <th class="sortable" data-col="1" data-type="text">Paciente</th>
+                <th class="sortable" data-col="2" data-type="text">Atendido por</th>
+                <th class="sortable" data-col="3" data-type="num">Msgs</th>
+                <th class="sortable" data-col="4" data-type="num">Sentiment Texto</th>
+                <th class="sortable" data-col="5" data-type="num">Sentiment Emoji</th>
+                <th class="sortable" data-col="6" data-type="num">Buy</th>
+                <th class="sortable" data-col="7" data-type="num">Obj</th>
+                <th class="sortable" data-col="8" data-type="num">Commit</th>
               </tr></thead>
               <tbody></tbody>
             </table>
@@ -507,14 +508,38 @@
               <th class="sortable" data-col="2" data-type="text">F3 Cierre</th>
               <th class="sortable" data-col="3" data-type="num">Deals</th>
               <th class="sortable" data-col="4" data-type="num">Cerrados</th>
-              <th class="sortable" data-col="5" data-type="num">Efectividad %</th>
+              <th class="sortable" data-col="5" data-type="num">Con Bono</th>
+              <th class="sortable" data-col="6" data-type="num">Avg Dias</th>
+              <th class="sortable" data-col="7" data-type="num">Efectividad %</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
 
-      <!-- 5. Monthly drill-down -->
+      <!-- 5. Velocity ranking -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Velocidad de cierre por agente <button class="help-btn" onclick="showHelp('velocity')" title="Ayuda">?</button></h3>
+        <div style="max-height:500px;overflow:auto">
+          <table id="table-velocity" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Agente</th>
+              <th class="sortable" data-col="1" data-type="num">Deals</th>
+              <th class="sortable" data-col="2" data-type="num">Exitosos</th>
+              <th class="sortable" data-col="3" data-type="num">Con Bono</th>
+              <th class="sortable" data-col="4" data-type="num">Avg Dias</th>
+              <th class="sortable" data-col="5" data-type="num">Avg Dias Exitosos</th>
+              <th class="sortable" data-col="6" data-type="num">Mediana</th>
+              <th class="sortable" data-col="7" data-type="num">&le;30d</th>
+              <th class="sortable" data-col="8" data-type="num">31-75d</th>
+              <th class="sortable" data-col="9" data-type="num">&gt;75d</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 6. Monthly drill-down -->
       <div id="monthly-drilldown" class="chart-box" style="margin-bottom:2rem;display:none">
         <h3 id="monthly-drilldown-title">Detalle mensual</h3>
         <canvas id="chart-agents-monthly"></canvas>
@@ -658,8 +683,27 @@ function sourceTag(src) {
 // ═══════════ DASHBOARD ═══════════
 async function loadDashboard() {
   try {
-    const d = await api("/dashboard");
+    const [d, sync] = await Promise.all([api("/dashboard"), api("/sync/status")]);
     const e = d.eugenia, w = d.whatsapp_waha, z = d.whatsapp_zendesk, dl = d.deals;
+
+    // Multi-source sync status
+    const syncEl = document.getElementById("sync-status");
+    const ago = (ts) => {
+      if (!ts) return { text: 'nunca', color: '#f87171' };
+      const mins = Math.round((Date.now() - new Date(ts)) / 60000);
+      if (mins < 15) return { text: mins + 'm', color: '#4ade80' };
+      if (mins < 60) return { text: mins + 'm', color: '#fbbf24' };
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return { text: hrs + 'h', color: '#f87171' };
+      return { text: Math.round(hrs / 24) + 'd', color: '#f87171' };
+    };
+    const ds = ago(sync.deals_last_sync);
+    const zs = ago(sync.zendesk_last_msg);
+    const ws = ago(sync.waha_last_msg);
+    syncEl.innerHTML =
+      `<span style="color:${ds.color}" title="Zendesk Sell: ${sync.deals_total} deals">\u25CF Sell ${ds.text}</span> ` +
+      `<span style="color:${zs.color}" title="Zendesk Support: ${sync.zendesk_total_msgs} msgs">\u25CF Support ${zs.text}</span> ` +
+      `<span style="color:${ws.color}" title="WAHA: ${sync.waha_total_msgs} msgs">\u25CF WAHA ${ws.text}</span>`;
 
     document.getElementById("kpi-eugenia").innerHTML = [
       kpiCard(e.total_predictions, "Predicciones"),
@@ -848,7 +892,8 @@ async function loadZendesk() {
       });
     }
     document.querySelector("#table-zd-conversations tbody").innerHTML = sentiment.map(s => `<tr>
-      <td>${s.customer_nombres || ''} ${s.customer_apellidos || ''}</td>
+      <td style="font-size:.65rem">${s.conversation_id || '—'}</td>
+      <td>${(s.customer_nombres || '').split(' ')[0] || '—'}</td>
       <td>${s.attended_by || '—'}</td><td>${s.message_count}</td>
       <td>${sentimentBadge(s.avg_patient_sentiment)}</td><td>${sentimentBadge(s.avg_patient_emoji)}</td>
       <td>${s.buying || 0}</td><td>${s.objections || 0}</td><td>${s.commitments || 0}</td>
@@ -882,7 +927,7 @@ async function loadDeals() {
     new Chart(document.getElementById("chart-deals-agents"), {
       type: "bar",
       data: {
-        labels: topAgents.map(a => a.agent || a.owner_name),
+        labels: topAgents.map(a => a.agent),
         datasets: [
           { label: "Exitosos", data: topAgents.map(a => a.deals_exitosos), backgroundColor: "#16a34a" },
           { label: "Sin Respuesta", data: topAgents.map(a => a.sin_respuesta), backgroundColor: "#dc2626" },
@@ -896,7 +941,7 @@ async function loadDeals() {
     document.querySelector("#table-deals tbody").innerHTML = agents.map(a => {
       const tasaClass = a.tasa_exito >= 30 ? 'badge-green' : a.tasa_exito >= 15 ? 'badge-amber' : 'badge-red';
       return `<tr>
-        <td><strong>${a.agent || a.owner_name}</strong></td>
+        <td><strong>${a.agent}</strong></td>
         <td>${a.total_participaciones || a.total_deals}</td>
         <td><strong>${a.deals_exitosos}</strong></td>
         <td><span class="badge ${tasaClass}">${a.tasa_exito}%</span></td>
@@ -1154,8 +1199,28 @@ async function loadAgents() {
       renderPhasesAndChains(p, c);
     };
 
-    const chainsAll = await api("/agents/chains");
+    const [chainsAll, velocity] = await Promise.all([api("/agents/chains"), api("/agents/velocity")]);
     renderChains(chainsAll);
+
+    // Velocity ranking table
+    document.querySelector("#table-velocity tbody").innerHTML = velocity.map(v => {
+      const diasClass = v.avg_dias_exitosos !== null ? (v.avg_dias_exitosos <= 45 ? 'badge-green' : v.avg_dias_exitosos <= 75 ? 'badge-amber' : 'badge-red') : '';
+      const bonoRate = v.exitosos > 0 ? Math.round(v.con_bono / v.exitosos * 100) : 0;
+      return `<tr>
+        <td><strong>${v.agent}</strong></td>
+        <td>${v.total_deals}</td>
+        <td>${v.exitosos}</td>
+        <td>${v.con_bono} <span style="opacity:.5;font-size:.7rem">(${bonoRate}%)</span></td>
+        <td>${v.avg_dias || '—'}</td>
+        <td>${v.avg_dias_exitosos !== null ? `<span class="badge ${diasClass}">${v.avg_dias_exitosos}d</span>` : '—'}</td>
+        <td>${v.mediana_dias_exitosos || '—'}</td>
+        <td style="color:#16a34a;font-weight:600">${v.rapidos_30d}</td>
+        <td style="color:#d97706;font-weight:600">${v.normales_31_75d}</td>
+        <td style="color:#dc2626;font-weight:600">${v.lentos_75d_plus}</td>
+      </tr>`;
+    }).join("");
+    makeSortable('table-velocity');
+
     document.getElementById("ag-loading").style.display = "none";
     document.getElementById("ag-content").style.display = "block";
     // Load audit log + deletions
@@ -1233,14 +1298,15 @@ function renderPhasesAndChains(phases, chains) {
 function renderChains(chains) {
   document.querySelector("#table-chains tbody").innerHTML = chains.sort((a,b) => b.efectividad - a.efectividad).map(c => {
     const efClass = c.efectividad >= 40 ? 'badge-green' : c.efectividad >= 20 ? 'badge-amber' : 'badge-red';
+    const diasClass = c.avg_dias !== null ? (c.avg_dias <= 45 ? 'badge-green' : c.avg_dias <= 75 ? 'badge-amber' : 'badge-red') : '';
     const c2 = c.colaborador2 || '—';
     const c3 = c.colaborador3 || '—';
-    const isSame = c.colaborador1 === c2 && c2 === c3;
-    const chain = isSame ? `<b>${c.colaborador1}</b> (solo)` : `${c.colaborador1} → ${c2} → ${c3}`;
     return `<tr>
       <td>${c.colaborador1 || '—'}</td><td>${c2}</td><td>${c3}</td>
       <td>${c.total_deals}</td>
       <td><strong>${c.exitosos}</strong></td>
+      <td>${c.con_bono || 0}</td>
+      <td>${c.avg_dias !== null ? `<span class="badge ${diasClass}">${c.avg_dias}d</span>` : '—'}</td>
       <td><span class="badge ${efClass}">${c.efectividad}%</span></td>
     </tr>`;
   }).join("");
@@ -1313,7 +1379,11 @@ async function loadAuditLog() {
       </tr>`;
     }).join('');
     makeSortable('table-audit');
-  } catch (err) { /* audit not available yet */ }
+  } catch (err) {
+    document.getElementById('audit-section').style.display = 'block';
+    document.querySelector('#table-audit tbody').innerHTML =
+      `<tr><td colspan="6" class="error-msg">Error cargando audit log: ${err.message}</td></tr>`;
+  }
 }
 
 async function loadDeletionLog() {
@@ -1338,7 +1408,11 @@ async function loadDeletionLog() {
       </tr>`;
     }).join('');
     makeSortable('table-deletions');
-  } catch (err) { /* deletions not available yet */ }
+  } catch (err) {
+    document.getElementById('deletion-section').style.display = 'block';
+    document.querySelector('#table-deletions tbody').innerHTML =
+      `<tr><td colspan="10" class="error-msg">Error cargando deletion log: ${err.message}</td></tr>`;
+  }
 }
 
 async function loadPhasesForYear(y) {
@@ -1368,7 +1442,7 @@ function renderAnnualChart(year) {
   window._annualChart = new Chart(document.getElementById("chart-agents-annual"), {
     type: "bar",
     data: {
-      labels: data.map(d => d.owner_name),
+      labels: data.map(d => d.agent),
       datasets: [
         { label: "Total Deals", data: data.map(d => d.total_deals), backgroundColor: data.map((_, i) => COLORS[i % COLORS.length]) },
         { label: "Exitosos", data: data.map(d => d.exitosos), backgroundColor: "#16a34a88" },
@@ -1405,16 +1479,16 @@ function renderMonthlyDrilldown(year) {
   document.getElementById('monthly-drilldown-title').textContent = `Detalle mensual ${year}`;
 
   const months = [...new Set(monthly.map(m => m.month))].sort();
-  const agentNames = [...new Set(monthly.map(m => m.owner_name))];
+  const agentNames = [...new Set(monthly.map(m => m.agent))];
   // Sort agents by total deals in this year
   const agentTotals = {};
-  monthly.forEach(m => { agentTotals[m.owner_name] = (agentTotals[m.owner_name] || 0) + m.total_deals; });
+  monthly.forEach(m => { agentTotals[m.agent] = (agentTotals[m.agent] || 0) + m.total_deals; });
   agentNames.sort((a, b) => (agentTotals[b] || 0) - (agentTotals[a] || 0));
 
   const datasets = agentNames.map((name, i) => ({
     label: name,
     data: months.map(mo => {
-      const row = monthly.find(m => m.month === mo && m.owner_name === name);
+      const row = monthly.find(m => m.month === mo && m.agent === name);
       return row ? row.total_deals : 0;
     }),
     backgroundColor: COLORS[i % COLORS.length],
@@ -1443,7 +1517,7 @@ function renderMonthlyDrilldown(year) {
     const mesLabel = new Date(m.month).toLocaleDateString('es-CL', { year: 'numeric', month: 'short' });
     return `<tr>
       <td>${mesLabel}</td>
-      <td><strong>${m.owner_name}</strong></td>
+      <td><strong>${m.agent}</strong></td>
       <td>${m.total_deals}</td>
       <td><strong style="color:#16a34a">${m.exitosos}</strong></td>
       <td>${m.sin_respuesta || 0}</td>
@@ -1572,9 +1646,15 @@ const HELP = {
   },
   'chain-effectiveness': {
     title: 'Efectividad de cadenas',
-    text: 'Analiza que combinaciones de agentes (Captacion → Seguimiento → Cierre) producen los mejores resultados. Ejemplo: cuando Gabriela capta, Carolin hace seguimiento y Carolin cierra, la efectividad es X%.',
-    example: 'Una cadena "Gabriela → Carolin → Carolin" con 80% efectividad significa que 8 de cada 10 pacientes que siguen esa ruta terminan operados o agendados.',
+    text: 'Analiza que combinaciones de agentes (Captacion → Seguimiento → Cierre) producen los mejores resultados. Ahora incluye Avg Dias (velocidad promedio en deals exitosos) y Con Bono (deals cerrados en ≤75 dias).',
+    example: 'Una cadena "Gabriela → Carolin → Carolin" con 80% efectividad y 45d promedio significa que 8 de cada 10 pacientes se cierran rapido.',
     ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | Analisis de embudo de conversion por equipo.'
+  },
+  'velocity': {
+    title: 'Velocidad de cierre por agente',
+    text: 'Mide cuantos dias tarda cada agente en cerrar deals exitosamente (CERRADO OPERADO/AGENDADO/INSTALADO). Cuenta participacion en CUALQUIER posicion (C1-C6). Distribucion: ≤30d (rapidos), 31-75d (normales con bono), >75d (sin bono).',
+    example: 'Si un agente tiene Avg Dias Exitosos de 40d y 80% con bono, cierra consistentemente rapido. Si otro tiene 90d y 10% bono, necesita mejorar velocidad.',
+    ref: 'Basado en dias_added_cirugia (dias entre captacion y cirugia). Bono 75 dias = incentivo por cierre rapido.'
   },
   'gold-journey': {
     title: 'Journey emocional del paciente',

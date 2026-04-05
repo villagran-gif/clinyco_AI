@@ -583,11 +583,11 @@ export async function registeredAgents() {
   return rows;
 }
 
-/** Deals per month per agent (owner) — ONLY active agents from registry */
+/** Deals per month per agent (by colaborador1 = captación) */
 export async function dealsPerMonthPerAgent() {
   const { rows } = await getPool().query(`
     SELECT date_trunc('month', d.added_at)::date AS month,
-           d.colaborador1 AS owner_name,
+           d.colaborador1 AS agent,
            count(*)::int AS total_deals,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
@@ -608,7 +608,7 @@ export async function dealsPerMonthPerAgent() {
 export async function dealsPerYearPerAgent() {
   const { rows } = await getPool().query(`
     SELECT EXTRACT(YEAR FROM d.added_at)::int AS year,
-           d.colaborador1 AS owner_name,
+           d.colaborador1 AS agent,
            count(*)::int AS total_deals,
            count(*) FILTER (WHERE d.pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
@@ -640,7 +640,7 @@ export async function dealsForAgentDetail(agentFirstName, year = null) {
             d.comision_bar4, d.comision_bar5, d.comision_bar6,
             d.dias_added_cirugia, d.bono_75_dias,
             d.contact_name, d.contact_phone, d.rut_normalizado,
-            d.url_medinet, d.owner_name, d.synced_at
+            d.url_medinet, d.synced_at
      FROM deals d
      WHERE (d.colaborador1 = $1 OR d.colaborador2 = $1 OR d.colaborador3 = $1
             ${c456Where}) ${yearFilter}
@@ -713,13 +713,16 @@ export async function dealsRaw(limit = 200) {
   return rows;
 }
 
-/** Last sync status */
+/** Last sync status — multi-source */
 export async function lastSyncStatus() {
   const { rows } = await getPool().query(`
-    SELECT max(synced_at) AS last_sync,
-           count(*)::int AS total_deals,
-           count(*) FILTER (WHERE synced_at > now() - interval '15 minutes')::int AS synced_last_15m
-    FROM deals WHERE synced_at IS NOT NULL
+    SELECT
+      (SELECT max(synced_at) FROM deals WHERE synced_at IS NOT NULL)   AS deals_last_sync,
+      (SELECT count(*)::int FROM deals)                                AS deals_total,
+      (SELECT max(created_at) FROM conversation_messages)              AS zendesk_last_msg,
+      (SELECT count(*)::int FROM conversation_messages)                AS zendesk_total_msgs,
+      (SELECT max(sent_at) FROM agent_direct_messages)                 AS waha_last_msg,
+      (SELECT count(*)::int FROM agent_direct_messages)                AS waha_total_msgs
   `);
   return rows[0];
 }
@@ -870,7 +873,7 @@ export async function agentPhaseParticipation(year = null) {
   return rows;
 }
 
-/** Chain effectiveness: Colaborador1+2+3 combinations and their success rate */
+/** Chain effectiveness: Colaborador1+2+3 combinations and their success rate + velocity */
 export async function chainEffectiveness(year = null) {
   const yearFilter = year ? `AND EXTRACT(YEAR FROM added_at) = ${parseInt(year)}` : '';
   const { rows } = await getPool().query(`
@@ -879,6 +882,10 @@ export async function chainEffectiveness(year = null) {
            count(*) FILTER (WHERE pipeline_phase IN (
              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
            ))::int AS exitosos,
+           count(*) FILTER (WHERE bono_75_dias)::int AS con_bono,
+           round(avg(dias_added_cirugia) FILTER (WHERE pipeline_phase IN (
+             'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+           ))::numeric, 1) AS avg_dias,
            CASE WHEN count(*) > 0
              THEN round(count(*) FILTER (WHERE pipeline_phase IN (
                'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
@@ -889,6 +896,40 @@ export async function chainEffectiveness(year = null) {
     GROUP BY colaborador1, colaborador2, colaborador3
     HAVING count(*) >= 3
     ORDER BY exitosos DESC, efectividad DESC
+  `);
+  return rows;
+}
+
+/** Velocity ranking: avg days to close per agent (across all colaborador positions) */
+export async function velocityPerAgent() {
+  const hasC456 = await hasColaborador456();
+  const c456Unions = hasC456 ? `
+    UNION ALL SELECT colaborador4, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador4 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+    UNION ALL SELECT colaborador5, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador5 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+    UNION ALL SELECT colaborador6, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador6 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+  ` : '';
+  const { rows } = await getPool().query(`
+    WITH agent_deals AS (
+      SELECT colaborador1 AS agent, dias_added_cirugia AS dias, pipeline_phase, bono_75_dias FROM deals WHERE colaborador1 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+      UNION ALL
+      SELECT colaborador2, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador2 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+      UNION ALL
+      SELECT colaborador3, dias_added_cirugia, pipeline_phase, bono_75_dias FROM deals WHERE colaborador3 IS NOT NULL AND dias_added_cirugia IS NOT NULL
+      ${c456Unions}
+    )
+    SELECT agent,
+      count(*)::int AS total_deals,
+      count(*) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS exitosos,
+      count(*) FILTER (WHERE bono_75_dias)::int AS con_bono,
+      round(avg(dias)::numeric, 1) AS avg_dias,
+      round(avg(dias) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::numeric, 1) AS avg_dias_exitosos,
+      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY dias) FILTER (WHERE pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::numeric, 0)::int AS mediana_dias_exitosos,
+      count(*) FILTER (WHERE dias <= 30 AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS rapidos_30d,
+      count(*) FILTER (WHERE dias > 30 AND dias <= 75 AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS normales_31_75d,
+      count(*) FILTER (WHERE dias > 75 AND pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'))::int AS lentos_75d_plus
+    FROM agent_deals
+    GROUP BY agent
+    ORDER BY avg_dias_exitosos ASC NULLS LAST
   `);
   return rows;
 }
