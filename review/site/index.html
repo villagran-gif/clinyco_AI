@@ -1135,31 +1135,31 @@ function renderMonthlyDrilldown(year) {
 // KPI explanations (shown when you tap any number card)
 const KPI_HELP = {
   'Predicciones': { title: 'Predicciones de EugenIA', text: 'Cantidad de veces que EugenIA intento predecir que deberia hacer el agente humano. Es como un asistente que dice "yo haria esto" antes de que el agente responda.', example: '660 predicciones = EugenIA observo 660 turnos y sugirio una accion para cada uno.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge (NeurIPS)</a>' },
-  'Aciertos': { title: 'Aciertos', text: 'Cuantas veces EugenIA sugirio lo mismo que hizo el agente. Como cuando dos personas piensan igual sin ponerse de acuerdo.', example: '0 al inicio es normal — EugenIA esta aprendiendo. Con el tiempo este numero sube.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Similarity Index</a>' },
-  'Match Score': { title: 'Match Score', text: 'Termometro de 0 a 1. Mide que tan parecido penso EugenIA vs el agente. 0=nada parecido, 1=identico.', example: '0.000 es esperado al inicio. Meta: 0.4+ en 3 meses.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank">Text Similarity Metrics</a>' },
+  'Aciertos': { title: 'Aciertos', text: 'Cuantas veces EugenIA sugirio lo mismo que hizo el agente. Como cuando dos personas piensan igual sin ponerse de acuerdo.', example: '0 al inicio es normal — EugenIA esta aprendiendo. Con el tiempo este numero sube.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard (Wikipedia)</a>' },
+  'Match Score': { title: 'Match Score', text: 'Termometro de 0 a 1. Mide que tan parecido penso EugenIA vs el agente. 0=nada parecido, 1=identico.', example: '0.000 es esperado al inicio. Meta: 0.4+ en 3 meses.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/Similitud_coseno" target="_blank">Similitud Coseno (Wikipedia)</a>' },
   'Outcome': { title: 'Outcome', text: 'Nota de 0 a 100 del resultado final de los deals. 100=paciente operado, 0=perdido.', example: 'Requiere ejecutar sync-outcomes con Zendesk Sell.', tab: 'eugenia', ref: 'Score basado en fases de pipeline Zendesk Sell.' },
-  'Gold Samples': { title: 'Gold Samples', text: 'Los mejores "casos de estudio" para que EugenIA aprenda. Se marcan automaticamente como un profesor que selecciona los mejores trabajos.', example: '<b>Caso 1:</b> EugenIA acerto y deal exitoso (reforzar).<br><b>Caso 2:</b> Agente hizo diferente y funciono (aprender del humano).', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Active Learning Survey (2020)</a>' },
-  'Directivas': { title: 'Directivas', text: 'Correcciones directas de agentes a EugenIA. Como cuando un jefe dice "esto hazlo asi".', example: 'Agente escribe "CORREGIR: pipeline = bariatrica" → EugenIA aprende.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2203.02155" target="_blank">RLHF - Training with human feedback</a>' },
+  'Gold Samples': { title: 'Gold Samples', text: 'Los mejores "casos de estudio" para que EugenIA aprenda. Se marcan automaticamente como un profesor que selecciona los mejores trabajos.', example: '<b>Caso 1:</b> EugenIA acerto y deal exitoso (reforzar).<br><b>Caso 2:</b> Agente hizo diferente y funciono (aprender del humano).', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Encuesta de Aprendizaje Activo (2020)</a>' },
+  'Directivas': { title: 'Directivas', text: 'Correcciones directas de agentes a EugenIA. Como cuando un jefe dice "esto hazlo asi".', example: 'Agente escribe "CORREGIR: pipeline = bariatrica" → EugenIA aprende.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2203.02155" target="_blank">RLHF - Entrenamiento con retroalimentacion humana</a>' },
   'Conversaciones': { title: 'Conversaciones', text: 'Total de hilos de chat. Cada conversacion = un paciente que escribio.', example: '1757 conversaciones = 1757 pacientes que contactaron por WhatsApp.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
   'Mensajes': { title: 'Mensajes', text: 'Total de mensajes individuales (ida y vuelta) de pacientes y bot/agente.', example: 'Paciente saluda + bot responde + paciente pregunta = 3 mensajes.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
-  'Agentes': { title: 'Agentes Activos', text: 'Agentes con WhatsApp conectado al sistema de monitoreo WAHA.', example: '1 agente activo = solo un telefono conectado. Deben ser 5.', tab: 'agents', ref: '<a href="https://waha.devlike.pro/" target="_blank">WAHA Documentation</a>' },
+  'Agentes': { title: 'Agentes Activos', text: 'Agentes con WhatsApp conectado al sistema de monitoreo WAHA.', example: '1 agente activo = solo un telefono conectado. Deben ser 5.', tab: 'agents', ref: '<a href="https://waha.devlike.pro/" target="_blank">Documentacion WAHA</a>' },
   'Sent. texto': { title: 'Sentiment de Texto', text: 'Analisis del tono emocional de los mensajes buscando palabras positivas y negativas en espanol chileno. Va de -1 (muy negativo) a +1 (muy positivo).', example: '<b>0.567 = Positivo.</b> "gracias, excelente" → positivo. "es muy caro, me da miedo" → negativo.', tab: 'zendesk', ref: '<a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Novak et al. (2015) - PLOS ONE</a>' },
   'Sent. emoji': { title: 'Sentiment de Emojis', text: 'Cada emoji tiene un puntaje cientifico basado en un estudio de 751 emojis en 83 idiomas. ❤️=+0.746, 😊=+0.634, 😢=-0.593.', example: '<b>0.430 = Positivo.</b> Los pacientes usan mas emojis felices que tristes.', tab: 'zendesk', ref: 'Novak, P.K. et al. (2015). <a href="https://doi.org/10.1371/journal.pone.0144296" target="_blank">Sentiment of Emojis. PLOS ONE</a>. Dataset: <a href="http://hdl.handle.net/11356/1048" target="_blank">CLARIN.SI</a>' },
-  'Buying': { title: 'Buying Signals', text: 'Mensajes donde el paciente muestra que QUIERE comprar o agendar. Son las senales mas valiosas.', example: '<b>Frases:</b> "cuanto cuesta", "me interesa", "quiero agendar", "formas de pago"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Sales Signal Detection in Digital Communication</a>' },
-  'Objections': { title: 'Objection Signals', text: 'Mensajes donde el paciente tiene DUDAS o MIEDO. Detectarlas a tiempo permite que el agente las resuelva.', example: '<b>Frases:</b> "es muy caro", "lo voy a pensar", "me da miedo", "no estoy segura"', tab: 'zendesk', ref: '<a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: The End of Solution Sales</a>' },
-  'Commitments': { title: 'Commitment Signals', text: 'Mensajes donde el paciente CONFIRMA o se compromete. La senal mas fuerte de que el deal se va a cerrar.', example: '<b>Frases:</b> "dale, perfecto", "listo", "confirmo", "de acuerdo", "nos vemos"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1509/jm.15.0420" target="_blank">Journal of Marketing: Customer Engagement</a>' },
+  'Buying': { title: 'Buying Signals', text: 'Mensajes donde el paciente muestra que QUIERE comprar o agendar. Son las senales mas valiosas.', example: '<b>Frases:</b> "cuanto cuesta", "me interesa", "quiero agendar", "formas de pago"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Deteccion de Senales de Venta en Comunicacion Digital</a>' },
+  'Objections': { title: 'Objection Signals', text: 'Mensajes donde el paciente tiene DUDAS o MIEDO. Detectarlas a tiempo permite que el agente las resuelva.', example: '<b>Frases:</b> "es muy caro", "lo voy a pensar", "me da miedo", "no estoy segura"', tab: 'zendesk', ref: '<a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: El Fin de las Ventas Consultivas</a>' },
+  'Commitments': { title: 'Commitment Signals', text: 'Mensajes donde el paciente CONFIRMA o se compromete. La senal mas fuerte de que el deal se va a cerrar.', example: '<b>Frases:</b> "dale, perfecto", "listo", "confirmo", "de acuerdo", "nos vemos"', tab: 'zendesk', ref: '<a href="https://doi.org/10.1509/jm.15.0420" target="_blank">Journal of Marketing: Compromiso del Cliente</a>' },
   'Usuarios': { title: 'Usuarios Unicos', text: 'Personas diferentes que enviaron mensajes. Cada WhatsApp = un usuario.', example: '0 puede indicar que falta procesar la identificacion de autores.', tab: null, ref: 'Dato en tiempo real, base de datos Clinyco.' },
-  'Deals totales': { title: 'Deals Totales', text: 'Cantidad de tratos en Zendesk Sell. Un deal = un paciente desde el primer contacto hasta cirugia o perdida.', example: '4527 deals = 4527 pacientes que mostraron interes en una cirugia.', tab: 'deals', ref: '<a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell CRM</a>' },
+  'Deals totales': { title: 'Deals Totales', text: 'Cantidad de tratos en Zendesk Sell. Un deal = un paciente desde el primer contacto hasta cirugia o perdida.', example: '4527 deals = 4527 pacientes que mostraron interes en una cirugia.', tab: 'deals', ref: '<a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>' },
   'Exitosos': { title: 'Deals Exitosos', text: 'Deals que llegaron a CERRADO OPERADO, AGENDADO o INSTALADO. Son los que generan ingresos reales.', example: '1248 exitosos de 4527 = 27.6%. De cada 4 pacientes, 1 se opera.', tab: 'deals', ref: 'Fases definidas por Clinyco en Zendesk Sell.' },
-  'Tasa exito': { title: 'Tasa de Exito', text: 'Porcentaje de deals que llegan a cierre exitoso. LA metrica principal del equipo comercial.', example: '27.6% = de cada 100 pacientes, 28 terminan operandose.', tab: 'deals', ref: '<a href="https://www.salesforce.com/blog/sales-statistics/" target="_blank">Salesforce: Conversion Rate Benchmarks</a>' },
+  'Tasa exito': { title: 'Tasa de Exito', text: 'Porcentaje de deals que llegan a cierre exitoso. LA metrica principal del equipo comercial.', example: '27.6% = de cada 100 pacientes, 28 terminan operandose.', tab: 'deals', ref: '<a href="https://www.salesforce.com/blog/sales-statistics/" target="_blank">Salesforce: Estadisticas de Ventas</a>' },
   'Operados': { title: 'Cerrados Operados', text: 'Pacientes que completaron TODO el proceso y ya se operaron. El mejor resultado posible.', example: 'Captacion → examenes → preoperatorio → cirugia = CERRADO OPERADO.', tab: 'deals', ref: 'Fase terminal exitosa del pipeline Clinyco.' },
   'Agendados': { title: 'Cerrados Agendados', text: 'Pacientes con pabellon reservado y fecha de cirugia confirmada. A un paso del exito.', example: '72 agendados = 72 cirugias programadas pendientes.', tab: 'deals', ref: 'Fase pre-terminal del pipeline Clinyco.' },
   'Con bono 75d': { title: 'Bono 75 Dias', text: 'Cuando el paciente se opera en 75 dias o menos desde que entro, los agentes ganan comision EXTRA. Incentivo por rapidez.', example: 'Entra 1/ene, se opera 15/feb (45 dias) → agentes ganan BAR1+BAR4, BAR2+BAR5, BAR3+BAR6.', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
   'Comisiones base': { title: 'Comisiones Base (CLP)', text: 'Total en pesos chilenos pagado por participar en deals exitosos. 3 fases = 3 comisiones diferentes para 3 agentes (o el mismo).', example: '<b>Fase 1:</b> Colaborador1 gana BAR1 ($8.001)<br><b>Fase 2:</b> Colaborador2 gana BAR2 ($5.002)<br><b>Fase 3:</b> Colaborador3 gana BAR3 ($5.003)', tab: 'deals', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a>' },
   'Total comparadas': { title: 'Total Comparadas', text: 'Predicciones de EugenIA ya comparadas con la accion real del agente. Es el tamano de la muestra de aprendizaje.', example: '660 = EugenIA tiene 660 ejemplos para aprender. Mas ejemplos = mejor.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge</a>' },
-  'Parciales': { title: 'Parciales', text: 'Veces que EugenIA sugirio algo parecido pero no identico. Como sacar un "casi" en un examen.', example: 'EugenIA: "preguntar peso" → Agente: "cuanto pesas y mides?" = parcial.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Index</a>' },
+  'Parciales': { title: 'Parciales', text: 'Veces que EugenIA sugirio algo parecido pero no identico. Como sacar un "casi" en un examen.', example: 'EugenIA: "preguntar peso" → Agente: "cuanto pesas y mides?" = parcial.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard</a>' },
   'Diferentes': { title: 'Diferentes', text: 'Veces que el agente hizo algo completamente diferente. No es malo — el agente puede saber mas.', example: '100% al inicio es normal. Es un alumno nuevo. Con gold samples y directivas, baja.', tab: 'eugenia', ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge</a>' },
-  'Match promedio': { title: 'Match Promedio', text: 'Nota promedio de similitud EugenIA vs agentes. De 0 a 1. Con el tiempo debe subir.', example: '0.000 → 0.4+ en 3 meses. 0.6+ = EugenIA y agentes piensan parecido.', tab: 'eugenia', ref: '<a href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank">Text Similarity</a>' },
+  'Match promedio': { title: 'Match Promedio', text: 'Nota promedio de similitud EugenIA vs agentes. De 0 a 1. Con el tiempo debe subir.', example: '0.000 → 0.4+ en 3 meses. 0.6+ = EugenIA y agentes piensan parecido.', tab: 'eugenia', ref: '<a href="https://es.wikipedia.org/wiki/Similitud_coseno" target="_blank">Similitud de Texto</a>' },
   'Outcome promedio': { title: 'Outcome Promedio', text: 'Nota del resultado final de los deals vinculados a predicciones. De 0 (perdido) a 100 (operado).', example: 'Requiere ejecutar sync-outcomes.js para cruzar con Zendesk Sell.', tab: 'eugenia', ref: 'Outcome scoring, metodologia interna Clinyco.' },
   'col-f1': { title: 'Fase 1: Captacion (Colaborador1)', text: 'Deals donde este agente capto al paciente — el primer contacto.', example: 'Si Gabriela tiene 677, capto 677 pacientes nuevos. Es la fase mas importante.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
   'col-f2': { title: 'Fase 2: Seguimiento (Colaborador2)', text: 'Deals donde este agente hizo seguimiento: llamadas, WhatsApp, coordinar examenes.', example: 'Si Carolin tiene 183, hizo seguimiento a 183 pacientes captados en F1.', tab: 'agents', ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>' },
@@ -1174,13 +1174,13 @@ const HELP = {
     title: 'Precision semanal',
     text: 'Muestra semana a semana que tan bien predice EugenIA lo que el agente humano va a hacer. El "Match Score" va de 0 a 1: mas cerca de 1, mejor predice.',
     example: 'Si el Match Score es 0.6, significa que en el 60% de los casos EugenIA sugirio algo parecido a lo que el agente hizo.',
-    ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge (NeurIPS)</a> | <a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Similarity</a>'
+    ref: '<a href="https://arxiv.org/abs/2306.05685" target="_blank">Zheng et al. 2023 - LLM-as-a-Judge (NeurIPS)</a> | <a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard</a>'
   },
   'eug-donut': {
     title: 'Distribucion de match types',
     text: 'Cada vez que un agente responde, EugenIA compara su sugerencia con lo que el agente hizo. Hay 3 resultados posibles:',
     example: '<b>Same Intent (verde):</b> EugenIA y el agente pensaron igual.<br><b>Partial Match (amarillo):</b> Parecido pero no exacto.<br><b>Different Topic (rojo):</b> El agente hizo algo completamente diferente.',
-    ref: 'Clasificacion por umbral de similitud: ≥0.6=same, ≥0.3=partial, <0.3=different. <a href="https://en.wikipedia.org/wiki/Jaccard_index" target="_blank">Jaccard Index</a>'
+    ref: 'Clasificacion por umbral de similitud: ≥0.6=same, ≥0.3=partial, <0.3=different. <a href="https://es.wikipedia.org/wiki/%C3%8Dndice_de_Jaccard" target="_blank">Indice de Jaccard</a>'
   },
   'eug-actions': {
     title: 'Acciones sugeridas por outcome',
@@ -1192,19 +1192,19 @@ const HELP = {
     title: 'Gold Samples',
     text: 'Son los casos mas valiosos para que EugenIA aprenda. Se marcan automaticamente cuando hay algo interesante que estudiar.',
     example: '<b>high_match_good_outcome:</b> EugenIA acerto y el deal fue exitoso.<br><b>low_match_good_outcome:</b> El agente hizo diferente y funciono mejor.',
-    ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Active Learning Survey (2020)</a>'
+    ref: '<a href="https://arxiv.org/abs/2009.09868" target="_blank">Encuesta de Aprendizaje Activo (2020)</a>'
   },
   'wa-signals': {
     title: 'Senales de venta (WAHA)',
     text: 'Los mensajes de WhatsApp directo se analizan buscando palabras clave que indican la intencion del paciente.',
     example: '<b>Buying:</b> "cuanto cuesta", "me interesa"<br><b>Objection:</b> "es muy caro", "lo voy a pensar"<br><b>Commitment:</b> "listo", "dale", "perfecto"',
-    ref: 'Deteccion basada en keywords calibrada para espanol chileno. <a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Sales Signal Detection</a>'
+    ref: 'Deteccion basada en keywords calibrada para espanol chileno. <a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Deteccion de Senales de Venta</a>'
   },
   'zd-signals': {
     title: 'Senales de pacientes (Zendesk)',
     text: 'Analisis de lo que los pacientes escriben al bot Antonia o al agente via Zendesk. Detecta intenciones de compra, objeciones y compromisos.',
     example: '"cuanto sale la cirugia?" = Buying. "es muy caro" = Objection. "dale, perfecto" = Commitment.',
-    ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Sales Signal Detection</a> | <a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: Solution Sales</a>'
+    ref: '<a href="https://doi.org/10.1016/j.dss.2019.113090" target="_blank">Deteccion de Senales de Venta</a> | <a href="https://hbr.org/2012/07/the-end-of-solution-sales" target="_blank">HBR: Ventas Consultivas</a>'
   },
   'zd-sentiment': {
     title: 'Sentiment de pacientes',
@@ -1216,13 +1216,13 @@ const HELP = {
     title: 'Participacion por agente en deals',
     text: 'Cada deal tiene un camino de 3 fases antes de cerrarse. Un agente puede participar en una, dos o las tres fases:<br><br><b>Fase 1 — Captacion (Colaborador1):</b> Quien genero el primer contacto con el paciente.<br><b>Fase 2 — Seguimiento (Colaborador2):</b> Quien hizo seguimiento, coordino examenes, mantuvo al paciente activo.<br><b>Fase 3 — Cierre (Colaborador3):</b> Quien cerro la venta, confirmo pabellon, coordino la cirugia.<br><br>Un mismo agente puede estar en las 3 fases (hizo todo solo) o pueden ser 3 agentes distintos. El numero que ves es la suma de TODAS las participaciones del agente en cualquier fase.',
     example: 'Si Carolin aparece con 148 participaciones, significa que participo en 148 deals como Colaborador1, 2 o 3. No significa que "maneja" esos deals — significa que contribuyo al proceso en alguna etapa.',
-    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>'
+    ref: '<a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">Modelo INCENTIVOS_V2.1</a> | <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>'
   },
   'deals-phases': {
     title: 'Distribucion de fases',
     text: 'Muestra en que etapa estan todos los deals. Lo ideal es que la mayoria esten en fases verdes (cerrados exitosamente).',
     example: '<b>Verde = Exito:</b> CERRADO OPERADO, AGENDADO, INSTALADO.<br><b>Rojo = Perdido:</b> SIN RESPUESTA.<br><b>Gris = En proceso:</b> EXAMENES, CANDIDATO, etc.',
-    ref: 'Fases de pipeline definidas en <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>. Configuracion interna Clinyco.'
+    ref: 'Fases de pipeline definidas en <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>. Configuracion interna Clinyco.'
   },
   'commissions': {
     title: 'Comisiones por agente',
@@ -1234,7 +1234,7 @@ const HELP = {
     title: 'Deals por mes por agente',
     text: 'Cuantos deals nuevos entro cada agente cada mes. Permite ver tendencias de captacion y carga de trabajo.',
     example: 'Si Gabriela paso de 100 deals/mes a 50, puede indicar menos leads asignados o redistribucion de cargas.',
-    ref: 'Agrupacion por fecha "Agregado el" de <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a>.'
+    ref: 'Agrupacion por fecha "Agregado el" de <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a>.'
   },
   'agent-phases': {
     title: 'Participacion por fase',
@@ -1258,7 +1258,7 @@ const HELP = {
     title: 'Resumen del equipo',
     text: 'Tabla maestra con cada agente: deals totales, exitosos, tasa de exito, comisiones en CLP, y actividad en WhatsApp WAHA.',
     example: '"Tasa" = % de deals cerrados exitosamente. "Comision CLP" = total ganado como colaborador en deals exitosos (base + bono 75 dias).',
-    ref: 'Datos consolidados de <a href="https://www.zendesk.com/sell/" target="_blank">Zendesk Sell</a> + <a href="https://waha.devlike.pro/" target="_blank">WAHA</a> + <a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>'
+    ref: 'Datos consolidados de <a href="https://www.zendesk.es/sell/" target="_blank">Zendesk Sell</a> + <a href="https://waha.devlike.pro/" target="_blank">WAHA</a> + <a href="https://github.com/villagran-gif/INCENTIVOS_V2.1" target="_blank">INCENTIVOS_V2.1</a>'
   },
 };
 
