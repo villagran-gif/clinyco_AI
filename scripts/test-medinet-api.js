@@ -25,7 +25,7 @@ import {
   DEFAULT_BRANCH_ID,
 } from "../Antonia/medinet-api.js";
 
-const TEST_RUT = "12.345.678-5";
+const TEST_RUT = "6.469.664-5";
 const BRANCH_ID = DEFAULT_BRANCH_ID; // Antofagasta
 
 function log(label, data) {
@@ -55,8 +55,8 @@ async function safeCall(label, fn) {
 async function main() {
   console.log("╔══════════════════════════════════════════════════════════╗");
   console.log("║  TEST MEDINET API — Simulacion de agendamiento         ║");
-  console.log("║  Paciente: Maria Test Gonzalez                         ║");
-  console.log("║  RUT: 12.345.678-5                                     ║");
+  console.log("║  Paciente: prueba6 prueba6                              ║");
+  console.log("║  RUT: 6.469.664-5                                      ║");
   console.log("║  Branch: Antofagasta (ID: " + BRANCH_ID + ")                       ║");
   console.log("╚══════════════════════════════════════════════════════════╝");
 
