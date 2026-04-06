@@ -28,6 +28,18 @@ import {
 const TEST_RUT = "6.469.664-5";
 const BRANCH_ID = DEFAULT_BRANCH_ID; // Antofagasta
 
+const TEST_PATIENT = {
+  rut: "6.469.664-5",
+  nombres: "prueba6",
+  apPaterno: "prueba6",
+  apMaterno: "",
+  nacimiento: "08/09/1979",
+  email: "villagran@clinyco.cl",
+  fono: "+56912345678",
+  prevision: "BANMEDICA",
+  direccion: "zucovic, ALGARROBO",
+};
+
 function log(label, data) {
   console.log(`\n${"═".repeat(60)}`);
   console.log(`  ${label}`);
