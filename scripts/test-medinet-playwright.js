@@ -37,6 +37,19 @@ const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 // Paciente de prueba (existe en Medinet, no es real)
 const TEST_PATIENT_RUT = "6.469.664-5";
 
+// Datos del paciente en los pasos de booking
+const PATIENT = {
+  rut: "6.469.664-5",
+  nombres: "prueba7",
+  apPaterno: "prueba7",
+  apMaterno: "pruebaMaterno7",
+  nacimiento: "08/09/1979",
+  email: "villagran@clinyco.cl",
+  fono: "+56912345678",
+  prevision: "BANMEDICA",
+  direccion: "zucovic, ALGARROBO",
+};
+
 async function runStep(step, label, envOverrides, timeoutMs = 60000) {
   const env = {
     ...process.env,
@@ -155,7 +168,7 @@ async function main() {
   console.log("║  TEST MEDINET PLAYWRIGHT — Reproduce error del log                  ║");
   console.log("║  Caso: Barbara busca nutriologa Khaterine Araya en Antofagasta      ║");
   console.log("║  Error original: 404 Sin Acceso en openBookingStepOne               ║");
-  console.log("║  Paciente test: prueba6 | RUT: 6.469.664-5                          ║");
+  console.log("║  Paciente test: prueba7 prueba7 pruebaMaterno7 | RUT: 6.469.664-5    ║");
   console.log("╚══════════════════════════════════════════════════════════════════════╝");
 
   // ── PASO 1: Search "nutriologia" (reproduce el error exacto del log) ──
@@ -206,15 +219,15 @@ async function main() {
         MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
         MEDINET_SLOT_DATE: String(slot.dataDia || slot.date || ""),
         MEDINET_SLOT_TIME: String(slot.time || ""),
-        MEDINET_PATIENT_RUT: TEST_PATIENT_RUT,
-        MEDINET_PATIENT_NOMBRES: "prueba6",
-        MEDINET_PATIENT_AP_PATERNO: "prueba6",
-        MEDINET_PATIENT_AP_MATERNO: "",
-        MEDINET_PATIENT_PREVISION: "BANMEDICA",
-        MEDINET_PATIENT_NACIMIENTO: "08/09/1979",
-        MEDINET_PATIENT_EMAIL: "villagran@clinyco.cl",
-        MEDINET_PATIENT_FONO: "+56912345678",
-        MEDINET_PATIENT_DIRECCION: "zucovic, ALGARROBO",
+        MEDINET_PATIENT_RUT: PATIENT.rut,
+        MEDINET_PATIENT_NOMBRES: PATIENT.nombres,
+        MEDINET_PATIENT_AP_PATERNO: PATIENT.apPaterno,
+        MEDINET_PATIENT_AP_MATERNO: PATIENT.apMaterno,
+        MEDINET_PATIENT_PREVISION: PATIENT.prevision,
+        MEDINET_PATIENT_NACIMIENTO: PATIENT.nacimiento,
+        MEDINET_PATIENT_EMAIL: PATIENT.email,
+        MEDINET_PATIENT_FONO: PATIENT.fono,
+        MEDINET_PATIENT_DIRECCION: PATIENT.direccion,
       },
       180000
     );
