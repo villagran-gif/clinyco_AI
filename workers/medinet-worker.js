@@ -8,6 +8,8 @@ import {
   searchSlotsNoAuth,
   searchSlotsViaApi,
   bookAppointmentForPatient,
+  fetchProximosCuposAll,
+  fetchSpecialtiesByBranchNoAuth,
   formatRutWithDots,
   DEFAULT_BRANCH_ID,
 } from "../Antonia/medinet-api.js";
@@ -232,7 +234,271 @@ app.post("/medinet/run", authMiddleware, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+//  MELANIA — Booking con datos completos via session cookie
+// ═══════════════════════════════════════════════════════════════════
+
+const MEDINET_BASE = "https://clinyco.medinetapp.com";
+const MELANIA_USERNAME = process.env.MELANIA_USERNAME || process.env.MEDINET_JWT_USERNAME || "";
+const MELANIA_PASSWORD = process.env.MELANIA_PASSWORD || process.env.MEDINET_JWT_PASSWORD || "";
+
+// Session cookie cache
+let _melaniaSession = null;
+let _melaniaCsrf = null;
+let _melaniaSessionAt = 0;
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min
+
+async function melaniaLogin() {
+  // GET csrf token
+  const pageRes = await fetch(`${MEDINET_BASE}/api-auth/login/`);
+  const cookies1 = pageRes.headers.getSetCookie?.() || [];
+  const csrf1 = cookies1.find(c => c.startsWith("csrftoken="))?.split(";")[0]?.split("=")[1];
+  if (!csrf1) throw new Error("MelanIA login: no csrftoken from GET /api-auth/login/");
+
+  // POST login
+  const loginRes = await fetch(`${MEDINET_BASE}/api-auth/login/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-CSRFToken": csrf1,
+      "Cookie": `csrftoken=${csrf1}`,
+      "Referer": `${MEDINET_BASE}/api-auth/login/`,
+    },
+    body: new URLSearchParams({
+      username: MELANIA_USERNAME,
+      password: MELANIA_PASSWORD,
+      csrfmiddlewaretoken: csrf1,
+    }).toString(),
+    redirect: "manual",
+  });
+
+  const cookies2 = loginRes.headers.getSetCookie?.() || [];
+  const sessionid = cookies2.find(c => c.startsWith("sessionid="))?.split(";")[0]?.split("=")[1];
+  const csrftoken = cookies2.find(c => c.startsWith("csrftoken="))?.split(";")[0]?.split("=")[1];
+
+  if (!sessionid) throw new Error("MelanIA login failed: no sessionid");
+
+  _melaniaSession = sessionid;
+  _melaniaCsrf = csrftoken;
+  _melaniaSessionAt = Date.now();
+  console.log("[melania] Login OK, session:", sessionid.slice(0, 10) + "...");
+  return { sessionid, csrftoken };
+}
+
+async function getMelaniaSession() {
+  if (_melaniaSession && (Date.now() - _melaniaSessionAt) < SESSION_TTL_MS) {
+    return { sessionid: _melaniaSession, csrftoken: _melaniaCsrf };
+  }
+  return melaniaLogin();
+}
+
+async function melaniaBookWithSession(payload) {
+  const { sessionid, csrftoken } = await getMelaniaSession();
+
+  const res = await fetch(`${MEDINET_BASE}/api/agenda/citas/add/?format=json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json;charset=UTF-8",
+      "X-CSRFToken": csrftoken,
+      "Cookie": `csrftoken=${csrftoken}; sessionid=${sessionid}`,
+      "Referer": `${MEDINET_BASE}/agenda/`,
+      "Accept": "application/json, text/plain, */*",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+  // Session expired — retry once
+  if (res.status === 403 || res.status === 302) {
+    console.log("[melania] Session expired, re-logging in...");
+    _melaniaSession = null;
+    const fresh = await getMelaniaSession();
+    const retryRes = await fetch(`${MEDINET_BASE}/api/agenda/citas/add/?format=json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json;charset=UTF-8",
+        "X-CSRFToken": fresh.csrftoken,
+        "Cookie": `csrftoken=${fresh.csrftoken}; sessionid=${fresh.sessionid}`,
+        "Referer": `${MEDINET_BASE}/agenda/`,
+        "Accept": "application/json, text/plain, */*",
+      },
+      body: JSON.stringify(payload),
+    });
+    const retryText = await retryRes.text();
+    try { data = JSON.parse(retryText); } catch { data = { raw: retryText }; }
+    return { status: retryRes.status, data };
+  }
+
+  return { status: res.status, data };
+}
+
+/**
+ * MelanIA MVP: Search + Book con datos completos.
+ * POST /melania/book
+ * {
+ *   query: "villagran" | "nutriologia",
+ *   patientData: { rut, nombres, apPaterno, apMaterno, email, fono, nacimiento, prevision, direccion, comuna, sexo },
+ *   slotIndex: 0,          // cual slot elegir (0-5), default 0
+ *   branchId: 39,          // optional
+ * }
+ */
+app.post("/melania/book", authMiddleware, async (req, res) => {
+  const { query, patientData = {}, slotIndex = 0, branchId } = req.body || {};
+
+  if (!query) return res.status(400).json({ success: false, error: "query is required" });
+  if (!patientData.rut) return res.status(400).json({ success: false, error: "patientData.rut is required" });
+
+  const branch = Number(branchId || DEFAULT_BRANCH_ID);
+  const rut = formatRutWithDots(patientData.rut);
+
+  console.log(`[melania] book: query="${query}" rut=${rut} slotIndex=${slotIndex}`);
+
+  try {
+    // 1. Check cupos
+    const cupos = await checkCupos(branch, rut).catch(() => null);
+    if (cupos && cupos.puede_agendar === false) {
+      return res.json({
+        success: false,
+        source: "melania",
+        step: "check_cupos",
+        message: cupos.mensaje || "Paciente no puede agendar.",
+      });
+    }
+
+    // 2. Search slots
+    const search = await searchSlotsViaApi({ query, branchId: branch });
+    const slots = search.available_slots || [];
+    if (!slots.length) {
+      return res.json({
+        success: false,
+        source: "melania",
+        step: "search_slots",
+        message: "No hay horas disponibles.",
+        professional: search.professional,
+        specialty: search.specialty,
+      });
+    }
+
+    const slot = slots[slotIndex] || slots[0];
+
+    // 3. Build payload for /api/agenda/citas/add/
+    const bookPayload = {
+      run: rut,
+      nombre: patientData.nombres || "",
+      apellidos: `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim(),
+      fecha_nacimiento: patientData.nacimiento || "",
+      email: patientData.email || "",
+      telefono_fijo: patientData.fono || "",
+      telefono_movil: patientData.fono || "",
+      direccion: patientData.direccion || "",
+      comuna: Number(patientData.comuna) || "",
+      sexo: Number(patientData.sexo) || 3,
+      aseguradora: Number(patientData.aseguradoraId) || "",
+      prevision: Number(patientData.previsionId) || "",
+      profesional: String(slot.professionalId),
+      resource: String(slot.professionalId),
+      especialidad: Number(slot.specialtyId),
+      tipo: Number(slot.tipoCitaId),
+      ubicacion: branch,
+      fecha: slot.dataDia,
+      hora: slot.time,
+      duracion: Number(slot.duration || 20),
+      estado: 1,
+      tipoagenda: "1",
+      es_recurso: "0",
+      tienerut: true,
+      cargar: true,
+      enviar_correo: false,
+      enable_sms_notifications: true,
+      enable_wsp_notifications: true,
+    };
+
+    // 4. Book via session cookie
+    const result = await melaniaBookWithSession(bookPayload);
+
+    const isSuccess = result.status === 200 && (result.data?.status === true || result.data?.status === "agendado_correctamente" || result.data?.message === "agendado correctamente");
+
+    console.log(`[melania] book result: ${isSuccess ? "SUCCESS" : "FAILED"} id=${result.data?.id || "n/a"}`);
+
+    return res.json({
+      success: isSuccess,
+      source: "melania",
+      step: "book",
+      appointmentId: result.data?.id || null,
+      slot: { date: slot.dataDia, time: slot.time, professional: slot.professional, specialty: slot.specialty },
+      patient: { rut, nombres: patientData.nombres, apellidos: bookPayload.apellidos },
+      medinet: result.data,
+      patient_reply: isSuccess
+        ? `Tu hora quedo agendada para el ${slot.date || slot.dataDia} a las ${slot.time} con ${slot.professional}.`
+        : `No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/`,
+    });
+  } catch (error) {
+    console.error("[melania] book error:", error.message);
+    return res.status(500).json({
+      success: false,
+      source: "melania",
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * MelanIA: Search slots only (no booking).
+ * POST /melania/search
+ * { query, branchId? }
+ */
+app.post("/melania/search", authMiddleware, async (req, res) => {
+  const { query, branchId } = req.body || {};
+  if (!query) return res.status(400).json({ error: "query is required" });
+
+  try {
+    const branch = Number(branchId || DEFAULT_BRANCH_ID);
+    const search = await searchSlotsViaApi({ query, branchId: branch });
+    return res.json({ success: true, source: "melania", ...search });
+  } catch (error) {
+    console.error("[melania] search error:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * MelanIA: Get all available professionals with next slots.
+ * GET /melania/availability?branchId=39
+ */
+app.get("/melania/availability", authMiddleware, async (req, res) => {
+  try {
+    const branch = Number(req.query.branchId || DEFAULT_BRANCH_ID);
+    const [professionals, specialties] = await Promise.all([
+      fetchProximosCuposAll(branch),
+      fetchSpecialtiesByBranchNoAuth(branch),
+    ]);
+
+    // Simplify specialties to id+nombre
+    const specMap = (specialties || []).map(s => ({ id: s.id, nombre: s.nombre, es_activa: s.es_activa }));
+
+    return res.json({
+      success: true,
+      source: "melania",
+      branchId: branch,
+      professionals: professionals || [],
+      specialties: specMap,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[melania] availability error:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Medinet worker listening on port ${PORT}`);
   console.log(`Script: ${SCRIPT}`);
+  if (MELANIA_USERNAME) {
+    console.log(`MelanIA: enabled (user: ${MELANIA_USERNAME})`);
+  } else {
+    console.log(`MelanIA: disabled (no MELANIA_USERNAME configured)`);
+  }
 });
