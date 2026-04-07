@@ -5126,6 +5126,12 @@ app.post("/messages", async (req, res) => {
         const slotToBook = state.melania.chosenSlot;
 
         state.melania.active = false;
+        // Reset Antonia booking state so she doesn't continue collecting data
+        state.booking = {
+          pendingSlots: null, pendingProfessional: null, pendingSpecialty: null,
+          awaitingSlotChoice: false, awaitingPatientData: false, awaitingConfirmation: false,
+          chosenSlot: null, missingFields: null,
+        };
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
         const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
