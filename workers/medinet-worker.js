@@ -466,11 +466,11 @@ app.post("/melania/search", authMiddleware, async (req, res) => {
 
 /**
  * MelanIA: Get all available professionals with next slots.
- * GET /melania/availability?branchId=39
+ * POST /melania/availability { branchId? }
  */
-app.get("/melania/availability", authMiddleware, async (req, res) => {
+app.post("/melania/availability", authMiddleware, async (req, res) => {
   try {
-    const branch = Number(req.query.branchId || DEFAULT_BRANCH_ID);
+    const branch = Number(req.body?.branchId || req.query.branchId || DEFAULT_BRANCH_ID);
     const [professionals, specialties] = await Promise.all([
       fetchProximosCuposAll(branch),
       fetchSpecialtiesByBranchNoAuth(branch),
