@@ -5177,6 +5177,29 @@ app.post("/messages", async (req, res) => {
         const patientData = state.melania.collectedData;
         const slotToBook = state.melania.chosenSlot;
 
+        // Check if phone owner is different from patient being booked
+        const profileName = (state.identity?.sourceProfileName || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        const patientNombres = (patientData.nombres || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        const patientApPaterno = (patientData.apPaterno || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (profileName && patientNombres && patientApPaterno) {
+          const profileWords = profileName.split(/\s+/);
+          const patientWords = [patientNombres, patientApPaterno].join(" ").split(/\s+/);
+          const overlap = profileWords.filter(w => w.length > 2 && patientWords.some(pw => pw === w));
+          if (overlap.length === 0) {
+            console.log(`[melania] Phone owner mismatch: profile="${state.identity?.sourceProfileName}" patient="${patientData.nombres} ${patientData.apPaterno}" → redirecting to agendaweb`);
+            state.melania.active = false;
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+            const reply = `Detectamos que este telefono esta registrado a nombre de ${state.identity?.sourceProfileName || "otra persona"}, pero los datos ingresados son de ${patientData.nombres} ${patientData.apPaterno}.\n\nPara agendar a otra persona, puedes hacerlo directamente en nuestra agenda web:\nhttps://clinyco.medinetapp.com/agendaweb/planned/`;
+            addToHistory(conversationId, "user", userText);
+            return res.json(await sendManagedReply({
+              appId, conversationId, messageId, userText, reply,
+              kind: "melania_phone_mismatch",
+              state, info, channelLabel,
+              resolverDecision: { stage: "melania_exit", failReason: "phone_owner_mismatch" },
+            }));
+          }
+        }
+
         state.melania.active = false;
         state.melania.lastBookingAt = new Date().toISOString();
         state.melania.lastBookingSlot = slotToBook;

@@ -285,7 +285,29 @@ export function handleMelaniaMessage(melaniaState, userText) {
   if (s.step === "collecting_data") {
     if (text === "0") return goToMenu(s);
 
-    if (s.currentField && text) {
+    // Detect multi-line pasted data blocks (e.g. "RUT: 12.345.678-9\nNombre: Juan\n...")
+    if (text.includes("\n") && /(?:rut|nombre|apellido|correo|telefono|fecha|prevision|direccion|comuna)\s*:/i.test(text)) {
+      const lines = text.split("\n");
+      for (const line of lines) {
+        const match = line.match(/^\s*(.+?)\s*:\s*(.+)\s*$/);
+        if (match) {
+          const label = match[1].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const value = match[2].trim();
+          if (/rut/i.test(label) && !s.collectedData.rut) s.collectedData.rut = value;
+          else if (/nombre\s*completo|nombres/i.test(label) && !s.collectedData.nombres) s.collectedData.nombres = value;
+          else if (/apellido\s*paterno/i.test(label) && !s.collectedData.apPaterno) s.collectedData.apPaterno = value;
+          else if (/apellido\s*materno/i.test(label) && !s.collectedData.apMaterno) s.collectedData.apMaterno = value;
+          else if (/correo|email/i.test(label) && !s.collectedData.email) s.collectedData.email = value;
+          else if (/telefono|celular|fono/i.test(label) && !s.collectedData.fono) s.collectedData.fono = value;
+          else if (/fecha.*nacimiento|nacimiento/i.test(label) && !s.collectedData.nacimiento) s.collectedData.nacimiento = value;
+          else if (/prevision|aseguradora/i.test(label) && !s.collectedData.prevision) s.collectedData.prevision = value;
+          else if (/direccion/i.test(label) && !s.collectedData.direccion) s.collectedData.direccion = value;
+          else if (/comuna|ciudad/i.test(label) && !s.collectedData.comuna) s.collectedData.comuna = value;
+        }
+      }
+      s.retryCount = 0;
+      // Fall through to check missing fields below
+    } else if (s.currentField && text) {
       const currentFieldDef = REQUIRED_FIELDS.find(f => f.key === s.currentField);
       const parsed = currentFieldDef ? parseFieldAnswer(currentFieldDef, text) : text;
       if (parsed === null) {
