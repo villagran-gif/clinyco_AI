@@ -451,12 +451,42 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
-  // ── 1. Try REST API booking first (no browser needed, no token required) ──
+  // ── 0. Try MelanIA first (session cookie booking with full patient data) ──
+  if (useRemoteWorker()) {
+    try {
+      console.log("[medinet-booking] path=melania | starting:", slot.professionalId, slot.dataDia, slot.time);
+      const melaniaResult = await callMedinetWorkerPath("/melania/book", {
+        query: slot.professional || slot.professionalId,
+        slotIndex: 0,
+        patientData: {
+          ...patientData,
+          rut: patientData.rut || patientData.run || "",
+          aseguradoraId: patientData.aseguradoraId || "",
+          previsionId: patientData.previsionId || "",
+          comuna: patientData.comuna || "",
+          sexo: patientData.sexo || 3,
+        },
+      }, timeoutMs);
+
+      if (melaniaResult?.success) {
+        console.log("[medinet-booking] path=melania | SUCCESS id=", melaniaResult.appointmentId);
+        return melaniaResult;
+      }
+      if (melaniaResult) {
+        console.log("[medinet-booking] path=melania | FAILED:", melaniaResult.message || melaniaResult.step);
+        // If MelanIA says cupos blocked, don't retry other methods
+        if (melaniaResult.step === "check_cupos") return melaniaResult;
+      }
+    } catch (melaniaError) {
+      console.warn("[medinet-booking] path=melania ERROR, falling through:", melaniaError.message);
+    }
+  }
+
+  // ── 1. Try REST API booking (agendaweb-add, no patient data saved) ──
   try {
     console.log("[medinet-booking] path=api | starting:", slot.professionalId, slot.dataDia, slot.time);
-    // Check cupos to determine if patient exists (controls form field strategy)
     const rut = formatRutWithDots(patientData.rut || patientData.run || "");
-    let pacienteExiste = true; // default safe assumption
+    let pacienteExiste = true;
     if (rut) {
       const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
       if (cupos && !cupos.puede_agendar) {
