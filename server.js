@@ -2149,7 +2149,7 @@ function buildInitialConversationState() {
       chosenSlot: null,
       missingFields: null
     },
-    melania: { active: false, lastBookingAt: null, lastBookingReply: null },
+    melania: { active: false, lastBookingAt: null, lastBookingSlot: null, lastBookingPatient: null },
     system: {
       aiEnabled: true,
       humanTakenOver: false,
@@ -5071,21 +5071,56 @@ app.post("/messages", async (req, res) => {
     }
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
-    // --- MelanIA just booked: absorb the first post-booking message silently ---
+    // --- MelanIA just booked: Antonia confirms with patient details ---
     if (state.melania?.lastBookingAt && !state.melania?.active) {
       const msSinceBooking = Date.now() - new Date(state.melania.lastBookingAt).getTime();
       if (msSinceBooking < 5 * 60 * 1000) {
-        // Clear the flag so future messages go to Antonia normally
+        const slot = state.melania.lastBookingSlot || {};
+        const pat = state.melania.lastBookingPatient || {};
+        const cd = state.contactDraft || {};
+
+        const nombre = `${pat.nombres || cd.c_nombres || ""} ${pat.apPaterno || ""} ${pat.apMaterno || ""}`.trim();
+        const lines = [];
+        lines.push("Hola, Antonia nuevamente. 👋");
+        lines.push("");
+        lines.push("MelanIA agendo tu hora con exito 🤝");
+        lines.push("");
+        lines.push("📋 Datos del paciente:");
+        if (nombre) lines.push(`  Nombre: ${nombre}`);
+        if (pat.rut || cd.c_rut) lines.push(`  RUT: ${pat.rut || cd.c_rut}`);
+        if (pat.email || cd.c_email) lines.push(`  Correo: ${pat.email || cd.c_email}`);
+        if (pat.fono || cd.c_tel1) lines.push(`  Telefono: ${pat.fono || cd.c_tel1}`);
+        if (pat.prevision || cd.c_aseguradora) lines.push(`  Prevision: ${pat.prevision || cd.c_aseguradora}`);
+        lines.push("");
+        lines.push("📅 Hora agendada:");
+        const slotDate = slot.date || slot.dataDia || "";
+        if (slotDate) lines.push(`  Fecha: ${slotDate}`);
+        if (slot.time) lines.push(`  Hora: ${slot.time}`);
+        if (slot.professional) lines.push(`  Profesional: ${slot.professional}`);
+        if (slot.specialty) lines.push(`  Especialidad: ${slot.specialty}`);
+        lines.push("");
+        lines.push("Si necesitas algo mas, aqui estoy. 😊");
+
+        const reply = lines.join("\n");
+
+        // Clear flag so future messages go to Antonia normally
         state.melania.lastBookingAt = null;
-        state.melania.lastBookingReply = null;
+        state.melania.lastBookingSlot = null;
+        state.melania.lastBookingPatient = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
+
         addToHistory(conversationId, "user", userText);
-        // Don't reply — the booking confirmation was already sent
-        return res.json({ ok: true, absorbed: "post_melania_booking" });
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText, reply,
+          kind: "antonia_post_melania_booking",
+          state, info, channelLabel,
+          resolverDecision: { stage: "post_melania_handoff", nextAction: "booking_confirmed" },
+        }));
       }
       // Expired — clear flag and let Antonia handle normally
       state.melania.lastBookingAt = null;
-      state.melania.lastBookingReply = null;
+      state.melania.lastBookingSlot = null;
+      state.melania.lastBookingPatient = null;
     }
 
     // --- MelanIA flow interceptor ---
@@ -5144,7 +5179,8 @@ app.post("/messages", async (req, res) => {
 
         state.melania.active = false;
         state.melania.lastBookingAt = new Date().toISOString();
-        state.melania.lastBookingReply = null; // will be set after booking
+        state.melania.lastBookingSlot = slotToBook;
+        state.melania.lastBookingPatient = patientData;
         // Pass MelanIA collected data to Antonia's contactDraft
         if (patientData) {
           const cd = state.contactDraft;
@@ -5174,8 +5210,8 @@ app.post("/messages", async (req, res) => {
           ? bookingResult.patient_reply || "Tu hora fue agendada correctamente."
           : "No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/";
 
-        if (bookingResult?.success) {
-          state.melania.lastBookingReply = reply;
+        if (!bookingResult?.success) {
+          state.melania.lastBookingAt = null; // don't trigger handoff on failure
         }
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
