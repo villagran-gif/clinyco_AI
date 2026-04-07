@@ -5126,6 +5126,21 @@ app.post("/messages", async (req, res) => {
         const slotToBook = state.melania.chosenSlot;
 
         state.melania.active = false;
+        // Pass MelanIA collected data to Antonia's contactDraft
+        if (patientData) {
+          const cd = state.contactDraft;
+          if (patientData.rut) cd.c_rut = patientData.rut;
+          if (patientData.nombres) cd.c_nombres = patientData.nombres;
+          if (patientData.apPaterno || patientData.apMaterno) {
+            cd.c_apellidos = `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim();
+          }
+          if (patientData.email) cd.c_email = patientData.email;
+          if (patientData.fono) { cd.c_tel1 = patientData.fono; cd.c_tel2 = patientData.fono; }
+          if (patientData.nacimiento) cd.c_fecha = patientData.nacimiento;
+          if (patientData.prevision) cd.c_aseguradora = patientData.prevision;
+          if (patientData.direccion) cd.c_direccion = patientData.direccion;
+          if (patientData.comuna) cd.c_comuna = patientData.comuna;
+        }
         // Reset Antonia booking state so she doesn't continue collecting data
         state.booking = {
           pendingSlots: null, pendingProfessional: null, pendingSpecialty: null,
