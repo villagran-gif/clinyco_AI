@@ -2149,7 +2149,7 @@ function buildInitialConversationState() {
       chosenSlot: null,
       missingFields: null
     },
-    melania: { active: false },
+    melania: { active: false, lastBookingAt: null, lastBookingReply: null },
     system: {
       aiEnabled: true,
       humanTakenOver: false,
@@ -5071,6 +5071,23 @@ app.post("/messages", async (req, res) => {
     }
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
+    // --- MelanIA just booked: absorb the first post-booking message silently ---
+    if (state.melania?.lastBookingAt && !state.melania?.active) {
+      const msSinceBooking = Date.now() - new Date(state.melania.lastBookingAt).getTime();
+      if (msSinceBooking < 5 * 60 * 1000) {
+        // Clear the flag so future messages go to Antonia normally
+        state.melania.lastBookingAt = null;
+        state.melania.lastBookingReply = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        // Don't reply — the booking confirmation was already sent
+        return res.json({ ok: true, absorbed: "post_melania_booking" });
+      }
+      // Expired — clear flag and let Antonia handle normally
+      state.melania.lastBookingAt = null;
+      state.melania.lastBookingReply = null;
+    }
+
     // --- MelanIA flow interceptor ---
     if (state.melania?.active) {
       const result = handleMelaniaMessage(state.melania, userText);
@@ -5126,6 +5143,8 @@ app.post("/messages", async (req, res) => {
         const slotToBook = state.melania.chosenSlot;
 
         state.melania.active = false;
+        state.melania.lastBookingAt = new Date().toISOString();
+        state.melania.lastBookingReply = null; // will be set after booking
         // Pass MelanIA collected data to Antonia's contactDraft
         if (patientData) {
           const cd = state.contactDraft;
@@ -5154,6 +5173,11 @@ app.post("/messages", async (req, res) => {
         const reply = bookingResult?.success
           ? bookingResult.patient_reply || "Tu hora fue agendada correctamente."
           : "No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/";
+
+        if (bookingResult?.success) {
+          state.melania.lastBookingReply = reply;
+        }
+        await persistConversationSnapshot(conversationId, state, channelLabel);
 
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
