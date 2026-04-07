@@ -243,6 +243,120 @@ const MELANIA_USERNAME = process.env.MELANIA_USERNAME || process.env.MEDINET_JWT
 const MELANIA_PASSWORD = process.env.MELANIA_PASSWORD || process.env.MEDINET_JWT_PASSWORD || "";
 
 // ── Mapeo prevision texto → IDs Medinet ──
+// ── Comuna text → Medinet numeric ID ──
+const COMUNA_MAP = {
+  "algarrobo": 68, "alhué": 338, "alto biobío": 178, "alto del carmen": 27,
+  "alto hospicio": 6, "ancud": 254, "andacollo": 32, "angol": 221,
+  "antofagasta": 12, "antuco": 166, "antártica": 289, "arauco": 159,
+  "arica": 1, "aysén": 276, "buin": 334, "bulnes": 180,
+  "cabildo": 58, "cabo de hornos": 288, "cabrero": 167, "calama": 16,
+  "calbuco": 245, "caldera": 22, "calera": 63, "calera de tango": 335,
+  "calle larga": 54, "camarones": 2, "camiña": 8, "canela": 37,
+  "carahue": 201, "cartagena": 69, "casablanca": 46, "castro": 253,
+  "catemu": 74, "cauquenes": 126, "cañete": 160, "cerrillos": 296,
+  "cerro navia": 297, "chaitén": 270, "chanco": 127, "chañaral": 24,
+  "chiguayante": 148, "chile chico": 282, "chillán": 179, "chillán viejo": 184,
+  "chimbarongo": 108, "cholchol": 220, "chonchi": 255, "chépica": 107,
+  "cisnes": 277, "cobquecura": 181, "cochamó": 246, "cochrane": 279,
+  "codegua": 84, "coelemu": 182, "coihaique": 274, "coihueco": 183,
+  "coinco": 85, "colbún": 139, "colchane": 9, "colina": 330,
+  "collipulli": 222, "coltauco": 86, "combarbalá": 41, "concepción": 146,
+  "conchalí": 298, "concón": 47, "constitución": 117, "contulmo": 161,
+  "copiapó": 21, "coquimbo": 31, "coronel": 147, "corral": 233,
+  "cunco": 202, "curacautín": 223, "curacaví": 339, "curaco de vélez": 256,
+  "curanilahue": 162, "curarrehue": 203, "curepto": 118, "curicó": 129,
+  "dalcahue": 257, "diego de almagro": 25, "doñihue": 87,
+  "el bosque": 299, "el carmen": 185, "el monte": 343, "el quisco": 70,
+  "el tabo": 71, "empedrado": 119, "ercilla": 224, "estación central": 300,
+  "florida": 149, "freire": 204, "freirina": 28, "fresia": 247,
+  "frutillar": 248, "futaleufú": 271, "futrono": 241,
+  "galvarino": 205, "general lagos": 4, "gorbea": 206, "graneros": 88,
+  "guaitecas": 278, "hijuelas": 64, "hualaihué": 272, "hualañé": 130,
+  "hualpén": 157, "hualqui": 150, "huara": 10, "huasco": 29,
+  "huechuraba": 301, "illapel": 36, "independencia": 302, "iquique": 5,
+  "isla de maipo": 344, "isla de pascua": 52, "juan fernández": 48,
+  "la cisterna": 303, "la cruz": 65, "la estrella": 101, "la florida": 304,
+  "la granja": 305, "la higuera": 33, "la ligua": 57, "la pintana": 306,
+  "la reina": 307, "la serena": 30, "la unión": 240, "lago ranco": 242,
+  "lago verde": 275, "laguna blanca": 285, "laja": 168, "lampa": 331,
+  "lanco": 234, "las cabras": 89, "las condes": 308, "lautaro": 207,
+  "lebu": 158, "licantén": 131, "limache": 80, "linares": 138,
+  "litueche": 102, "llaillay": 75, "llanquihue": 250, "lo barnechea": 309,
+  "lo espejo": 310, "lo prado": 311, "lolol": 109, "loncoche": 208,
+  "longaví": 140, "lonquimay": 225, "los alamos": 163, "los andes": 53,
+  "los angeles": 165, "los lagos": 235, "los muermos": 249, "los sauces": 226,
+  "los vilos": 38, "lota": 151, "lumaco": 227, "machalí": 90,
+  "macul": 312, "maipú": 313, "malloa": 91, "marchihue": 103,
+  "mariquina": 237, "maría elena": 20, "maría pinto": 340, "maule": 120,
+  "maullín": 251, "mejillones": 13, "melipeuco": 209, "melipilla": 337,
+  "molina": 132, "monte patria": 42, "mostazal": 92, "mulchén": 169,
+  "máfil": 236, "nacimiento": 170, "nancagua": 110, "natales": 293,
+  "navidad": 104, "negrete": 171, "ninhue": 186, "nogales": 66,
+  "nueva imperial": 210, "o'higgins": 280, "olivar": 93, "ollagüe": 17,
+  "olmué": 81, "osorno": 263, "ovalle": 40, "padre hurtado": 345,
+  "padre las casas": 211, "paiguano": 34, "paillaco": 238, "paine": 336,
+  "palena": 273, "palmilla": 111, "panguipulli": 239, "panquehue": 76,
+  "papudo": 59, "paredones": 105, "parral": 141, "pedro aguirre cerda": 315,
+  "pelarco": 121, "pelluhue": 128, "pemuco": 188, "pencahue": 122,
+  "penco": 152, "peralillo": 112, "perquenco": 212, "petorca": 60,
+  "peumo": 94, "peñaflor": 346, "peñalolén": 316, "pica": 11,
+  "pichidegua": 95, "pichilemu": 100, "pinto": 189, "pirque": 328,
+  "pitrufquén": 213, "placilla": 113, "portezuelo": 190, "porvenir": 290,
+  "pozo almonte": 7, "primavera": 291, "providencia": 317, "puchuncaví": 49,
+  "pucón": 214, "pudahuel": 318, "puente alto": 327, "puerto montt": 244,
+  "puerto octay": 264, "puerto varas": 252, "pumanque": 114, "punitaqui": 43,
+  "punta arenas": 284, "puqueldón": 258, "purranque": 265, "purén": 228,
+  "putaendo": 77, "putre": 3, "puyehue": 266, "queilén": 259,
+  "quellón": 260, "quemchi": 261, "quilaco": 172, "quilicura": 319,
+  "quilleco": 173, "quillota": 62, "quillón": 191, "quilpué": 79,
+  "quinchao": 262, "quinta de tilcoco": 96, "quinta normal": 320,
+  "quintero": 50, "quirihue": 192, "rancagua": 83, "rauco": 133,
+  "recoleta": 321, "renaico": 229, "renca": 322, "rengo": 97,
+  "requínoa": 98, "retiro": 142, "reñaca": 348, "rinconada": 55,
+  "romeral": 134, "ránquil": 193, "río bueno": 243, "río claro": 123,
+  "río hurtado": 44, "río ibáñez": 283, "río negro": 267, "río verde": 286,
+  "saavedra": 215, "sagrada familia": 135, "salamanca": 39,
+  "san antonio": 67, "san bernardo": 333, "san carlos": 194,
+  "san clemente": 124, "san esteban": 56, "san fabián": 195,
+  "san felipe": 73, "san fernando": 106, "san gregorio": 287,
+  "san ignacio": 196, "san javier": 143, "san joaquín": 323,
+  "san josé de maipo": 329, "san juan de la costa": 268, "san miguel": 324,
+  "san nicolás": 197, "san pablo": 269, "san pedro": 341,
+  "san pedro de atacama": 18, "san pedro de la paz": 153, "san rafael": 125,
+  "san ramón": 325, "san rosendo": 174, "san vicente": 99,
+  "santa bárbara": 175, "santa cruz": 115, "santa juana": 154,
+  "santa maría": 78, "santiago": 295, "santo domingo": 72,
+  "sierra gorda": 14, "sin asignar": 347, "talagante": 342,
+  "talca": 116, "talcahuano": 155, "taltal": 15, "temuco": 200,
+  "teno": 136, "teodoro schmidt": 216, "tierra amarilla": 23, "tiltil": 332,
+  "timaukel": 292, "tirúa": 164, "tocopilla": 19, "toltén": 217,
+  "tomé": 156, "torres del paine": 294, "tortel": 281, "traiguén": 230,
+  "treguaco": 198, "tucapel": 176, "valdivia": 232, "vallenar": 26,
+  "valparaíso": 45, "vichuquén": 137, "victoria": 231, "vicuña": 35,
+  "vilcún": 218, "villa alegre": 144, "villa alemana": 82, "villarrica": 219,
+  "vitacura": 326, "viña del mar": 51, "yerbas buenas": 145, "yumbel": 177,
+  "yungay": 199, "zapallar": 61, "ñiquén": 187, "ñuñoa": 314,
+};
+
+function resolveComunaId(comunaText) {
+  if (!comunaText) return "";
+  const key = String(comunaText).toLowerCase().trim();
+  // Direct match
+  if (COMUNA_MAP[key] !== undefined) return COMUNA_MAP[key];
+  // Try without accents
+  const normalized = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  for (const [name, id] of Object.entries(COMUNA_MAP)) {
+    const normName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normName === normalized) return id;
+  }
+  // Partial match (starts with or contains)
+  for (const [name, id] of Object.entries(COMUNA_MAP)) {
+    const normName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (normName.startsWith(normalized) || normalized.startsWith(normName)) return id;
+  }
+  return "";
+}
+
 const PREVISION_MAP = {
   "fonasa tramo a": { aseguradoraId: 8, previsionId: 15 },
   "fonasa tramo b": { aseguradoraId: 8, previsionId: 16 },
@@ -420,7 +534,7 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       telefono_fijo: patientData.fono || "",
       telefono_movil: patientData.fono || "",
       direccion: patientData.direccion || "",
-      comuna: Number(patientData.comuna) || "",
+      comuna: resolveComunaId(patientData.comuna) || 12, // default: Antofagasta
       sexo: Number(patientData.sexo) || 3,
       aseguradora: aseguradoraId,
       prevision: previsionId,
