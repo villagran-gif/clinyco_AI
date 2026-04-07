@@ -1,16 +1,19 @@
 /**
- * melania/flow.js — MelanIA booking flow (stateless, no AI)
+ * melania/flow.js — MelanIA complete booking flow (no AI, numbers only)
  *
- * MelanIA is a classic bot. No AI, no text interpretation.
- * Asks one field at a time. Numbers only for choices.
- * Returns { reply, done, failReason? } on each step.
+ * MelanIA handles the ENTIRE booking flow:
+ * 1. Menu: especialidad / profesional / salir
+ * 2. Show options with numbers
+ * 3. Show slots with numbers
+ * 4. Collect missing patient data one by one
+ * 5. Confirm and book
  *
  * State lives in state.melania (managed by server.js).
+ * Cache (professionals/specialties) passed from server.js.
  */
 
 const AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 
-// Fields required for booking, in order
 const REQUIRED_FIELDS = [
   { key: "rut", label: "RUT", example: "Ej: 12.345.678-9" },
   { key: "nombres", label: "Nombre completo", example: "Ej: Pablo Enrique" },
@@ -23,232 +26,354 @@ const REQUIRED_FIELDS = [
   { key: "direccion", label: "Direccion", example: "Ej: Av. Zucovic 5440" },
 ];
 
-/**
- * Initialize MelanIA state on a conversation.
- * Called when Antonia hands off to MelanIA.
- *
- * @param {object} patientData - partial data from Antonia { rut, nombres, apPaterno, ... }
- * @returns {object} melania state to store in state.melania
- */
-export function initMelaniaState(patientData = {}) {
+function getMissingFields(data) {
+  return REQUIRED_FIELDS.filter(f => !(data[f.key] || "").trim());
+}
+
+function fail(melaniaState, reply, reason) {
   return {
+    reply: reply + `\n\nPuedes agendar en ${AGENDA_WEB_URL}`,
+    done: true,
+    melaniaState: { ...melaniaState, active: false },
+    failReason: reason,
+  };
+}
+
+/**
+ * Start MelanIA flow. Called when Antonia detects booking intent.
+ * @param {object} patientData - partial data from Antonia
+ * @param {Array} professionals - from fetchProximosCuposAll cache
+ * @param {Array} specialties - from fetchSpecialtiesByBranchNoAuth cache
+ */
+export function startMelaniaFlow(patientData = {}, professionals = [], specialties = []) {
+  const melaniaState = {
     active: true,
-    step: "collecting_data",
+    step: "menu",
     collectedData: { ...patientData },
-    currentField: null,
+    professionals,
+    specialties,
+    filteredProfessionals: null,
+    chosenSlot: null,
     retryCount: 0,
     maxRetries: 1,
     startedAt: new Date().toISOString(),
   };
+
+  const reply = "Soy MelanIA, bot de agenda Clinyco.\n\n" +
+    "1. Agendar por especialidad - Elige el area medica y te muestro profesionales disponibles\n" +
+    "2. Agendar por profesional - Si ya sabes con quien quieres atenderte\n" +
+    "3. Otro o salir\n\n" +
+    "Indica el numero.";
+
+  return { reply, melaniaState };
 }
 
 /**
- * Get list of missing fields.
- */
-function getMissingFields(collectedData) {
-  return REQUIRED_FIELDS.filter(f => {
-    const val = (collectedData[f.key] || "").trim();
-    return !val;
-  });
-}
-
-/**
- * Build the initial message showing what data we have and what we need.
- */
-function buildDataSummaryMessage(collectedData) {
-  const lines = REQUIRED_FIELDS.map(f => {
-    const val = (collectedData[f.key] || "").trim();
-    return `${f.label}: ${val || "(falta)"}`;
-  });
-
-  const missing = getMissingFields(collectedData);
-
-  if (missing.length === 0) {
-    return null; // all data complete
-  }
-
-  let msg = "Soy MelanIA, bot de agenda Clinyco.\n\nPara agendar necesito estos datos:\n\n";
-  msg += lines.join("\n");
-  msg += "\n\n";
-
-  if (missing.length === REQUIRED_FIELDS.length) {
-    msg += "Te preguntare uno por uno.";
-  } else {
-    msg += `Tengo ${REQUIRED_FIELDS.length - missing.length} datos. Faltan ${missing.length}.`;
-  }
-
-  return msg;
-}
-
-/**
- * Process a message from the patient during MelanIA flow.
- *
- * @param {object} melaniaState - state.melania
- * @param {string} userText - what the patient sent
- * @returns {{ reply: string, done: boolean, melaniaState: object, failReason?: string, bookingReady?: boolean }}
+ * Process patient message during MelanIA flow.
  */
 export function handleMelaniaMessage(melaniaState, userText) {
-  if (!melaniaState || !melaniaState.active) {
+  if (!melaniaState?.active) {
     return { reply: null, done: true, melaniaState, failReason: "melania_not_active" };
   }
 
   const text = (userText || "").trim();
-  const state = { ...melaniaState, collectedData: { ...melaniaState.collectedData } };
+  const s = { ...melaniaState, collectedData: { ...melaniaState.collectedData } };
 
-  // ── Step: collecting_data ──
-  if (state.step === "collecting_data") {
-    // If we're asking for a specific field, store the answer
-    if (state.currentField && text) {
-      state.collectedData[state.currentField] = text;
-      state.retryCount = 0;
-    }
-
-    // Find next missing field
-    const missing = getMissingFields(state.collectedData);
-
-    if (missing.length === 0) {
-      // All data collected — show summary and ask for confirmation
-      state.step = "confirming";
-      state.currentField = null;
-
-      const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${state.collectedData[f.key]}`);
-      const reply = "Datos completos. Confirma que estan correctos:\n\n" +
-        lines.join("\n") +
-        "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar";
-
-      return { reply, done: false, melaniaState: state };
-    }
-
-    // Ask for next missing field
-    const nextField = missing[0];
-    state.currentField = nextField.key;
-
-    const reply = `${nextField.label}?\n${nextField.example}`;
-    return { reply, done: false, melaniaState: state };
-  }
-
-  // ── Step: confirming ──
-  if (state.step === "confirming") {
+  // ════════════════════════════════════════════════
+  //  STEP: menu (1=especialidad, 2=profesional, 3=salir)
+  // ════════════════════════════════════════════════
+  if (s.step === "menu") {
     if (text === "1") {
-      // Confirmed — ready to book
-      state.step = "booking";
-      state.active = false;
+      // Group professionals by specialty
+      const specMap = {};
+      for (const p of s.professionals) {
+        const key = p.especialidad || "Otra";
+        if (!specMap[key]) specMap[key] = { name: key, id: p.especialidad_id, prox: p.cupos?.[0]?.fecha };
+        if (p.cupos?.[0]?.fecha < specMap[key].prox) specMap[key].prox = p.cupos[0].fecha;
+      }
+      const specList = Object.values(specMap).sort((a, b) => (a.prox || "z").localeCompare(b.prox || "z"));
+      s.filteredSpecialties = specList;
+      s.step = "choose_specialty";
+
+      const lines = specList.map((sp, i) => `${i + 1}. ${sp.name} (prox: ${sp.prox || "sin cupos"})`);
       return {
-        reply: "Agendando tu hora...",
-        done: true,
-        melaniaState: state,
-        bookingReady: true,
+        reply: "Especialidades con horas disponibles:\n\n" + lines.join("\n") + "\n\nIndica el numero.",
+        done: false, melaniaState: s,
       };
     }
 
     if (text === "2") {
-      // Correct a field — show numbered list
-      state.step = "correcting";
-      const lines = REQUIRED_FIELDS.map((f, i) => `${i + 1}. ${f.label}: ${state.collectedData[f.key]}`);
-      const reply = "Que dato quieres corregir?\n\n" + lines.join("\n") + "\n\nIndica el numero.";
-      return { reply, done: false, melaniaState: state };
+      s.step = "choose_professional";
+      const lines = s.professionals.map((p, i) =>
+        `${i + 1}. ${p.nombres} ${p.paterno} - ${p.especialidad} (${p.cupos?.[0]?.fecha || "sin cupos"})`
+      );
+      return {
+        reply: "Profesionales con horas disponibles:\n\n" + lines.join("\n") + "\n\nIndica el numero.",
+        done: false, melaniaState: s,
+      };
     }
 
     if (text === "3") {
-      // Cancel
-      state.active = false;
-      return {
-        reply: `Agendamiento cancelado. Puedes agendar en ${AGENDA_WEB_URL}`,
-        done: true,
-        melaniaState: state,
-        failReason: "paciente_cancelo",
-      };
-    }
-
-    // Invalid response
-    state.retryCount = (state.retryCount || 0) + 1;
-    if (state.retryCount > state.maxRetries) {
-      state.active = false;
-      return {
-        reply: `No pude procesar tu respuesta. Puedes agendar en ${AGENDA_WEB_URL}`,
-        done: true,
-        melaniaState: state,
-        failReason: "paciente_no_responde_confirmacion",
-      };
-    }
-
-    return {
-      reply: "Indica solo el numero:\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
-      done: false,
-      melaniaState: state,
-    };
-  }
-
-  // ── Step: correcting ──
-  if (state.step === "correcting") {
-    const num = parseInt(text, 10);
-    if (num >= 1 && num <= REQUIRED_FIELDS.length) {
-      const field = REQUIRED_FIELDS[num - 1];
-      state.collectedData[field.key] = ""; // clear the field
-      state.step = "collecting_data";
-      state.currentField = field.key;
-      state.retryCount = 0;
-
-      const reply = `${field.label}?\n${field.example}`;
-      return { reply, done: false, melaniaState: state };
+      return fail(s, "Agendamiento finalizado.", "paciente_eligio_salir");
     }
 
     // Invalid
-    state.retryCount = (state.retryCount || 0) + 1;
-    if (state.retryCount > state.maxRetries) {
-      state.step = "confirming";
-      state.retryCount = 0;
-      const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${state.collectedData[f.key]}`);
-      return {
-        reply: "Datos actuales:\n\n" + lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
-        done: false,
-        melaniaState: state,
-      };
+    s.retryCount = (s.retryCount || 0) + 1;
+    if (s.retryCount > s.maxRetries) {
+      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_menu");
     }
-
     return {
-      reply: `Indica el numero del dato a corregir (1-${REQUIRED_FIELDS.length}).`,
-      done: false,
-      melaniaState: state,
+      reply: "No entendi tu respuesta. Indica solo el numero:\n\n" +
+        "1. Agendar por especialidad\n2. Agendar por profesional\n3. Otro o salir",
+      done: false, melaniaState: s,
     };
   }
 
-  // Unknown step — reset
-  state.active = false;
-  return {
-    reply: `Error interno. Puedes agendar en ${AGENDA_WEB_URL}`,
-    done: true,
-    melaniaState: state,
-    failReason: "step_desconocido",
-  };
+  // ════════════════════════════════════════════════
+  //  STEP: choose_specialty
+  // ════════════════════════════════════════════════
+  if (s.step === "choose_specialty") {
+    const num = parseInt(text, 10);
+    if (num >= 1 && num <= (s.filteredSpecialties?.length || 0)) {
+      const chosen = s.filteredSpecialties[num - 1];
+      // Filter professionals by this specialty
+      const profs = s.professionals.filter(p => p.especialidad_id === chosen.id);
+      s.filteredProfessionals = profs;
+      s.step = "choose_professional";
+      s.retryCount = 0;
+
+      const lines = profs.map((p, i) =>
+        `${i + 1}. ${p.nombres} ${p.paterno} (${p.cupos?.[0]?.fecha || "sin cupos"})`
+      );
+      return {
+        reply: `${chosen.name}. Profesionales:\n\n` + lines.join("\n") + "\n\nIndica el numero.",
+        done: false, melaniaState: s,
+      };
+    }
+
+    s.retryCount = (s.retryCount || 0) + 1;
+    if (s.retryCount > s.maxRetries) {
+      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_especialidad");
+    }
+    return {
+      reply: `Indica un numero entre 1 y ${s.filteredSpecialties?.length || 0}.`,
+      done: false, melaniaState: s,
+    };
+  }
+
+  // ════════════════════════════════════════════════
+  //  STEP: choose_professional
+  // ════════════════════════════════════════════════
+  if (s.step === "choose_professional") {
+    const list = s.filteredProfessionals || s.professionals;
+    const num = parseInt(text, 10);
+    if (num >= 1 && num <= list.length) {
+      const chosen = list[num - 1];
+      s.chosenProfessional = chosen;
+      s.step = "awaiting_slots";
+      s.retryCount = 0;
+
+      // Signal to server.js that we need to search slots for this professional
+      return {
+        reply: `Buscando horas con ${chosen.nombres} ${chosen.paterno}...`,
+        done: false,
+        melaniaState: s,
+        searchQuery: `${chosen.nombres} ${chosen.paterno}`.trim(),
+        searchProfessionalId: chosen.id,
+      };
+    }
+
+    s.retryCount = (s.retryCount || 0) + 1;
+    if (s.retryCount > s.maxRetries) {
+      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_profesional");
+    }
+    return {
+      reply: `Indica un numero entre 1 y ${list.length}.`,
+      done: false, melaniaState: s,
+    };
+  }
+
+  // ════════════════════════════════════════════════
+  //  STEP: choose_slot (slots loaded by server.js)
+  // ════════════════════════════════════════════════
+  if (s.step === "choose_slot") {
+    const slots = s.availableSlots || [];
+    const num = parseInt(text, 10);
+
+    if (num >= 1 && num <= slots.length) {
+      const chosen = slots[num - 1];
+      s.chosenSlot = chosen;
+      s.step = "collecting_data";
+      s.retryCount = 0;
+
+      // Check what data we already have
+      const missing = getMissingFields(s.collectedData);
+      if (missing.length === 0) {
+        // All data ready — go to confirm
+        s.step = "confirming";
+        const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${s.collectedData[f.key]}`);
+        return {
+          reply: `Hora: ${chosen.date || chosen.dataDia} a las ${chosen.time}\n\nDatos:\n` +
+            lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+          done: false, melaniaState: s,
+        };
+      }
+
+      // Need data — show what we have and ask first missing
+      s.currentField = missing[0].key;
+      let msg = `Hora seleccionada: ${chosen.date || chosen.dataDia} a las ${chosen.time}\n\n`;
+      msg += "Para agendar necesito tus datos.\n\n";
+
+      const dataLines = REQUIRED_FIELDS.map(f => {
+        const val = (s.collectedData[f.key] || "").trim();
+        return `${f.label}: ${val || "(falta)"}`;
+      });
+      msg += dataLines.join("\n");
+      msg += `\n\n${missing[0].label}?\n${missing[0].example}`;
+
+      return { reply: msg, done: false, melaniaState: s };
+    }
+
+    // Exit option
+    if (num === (slots.length + 1)) {
+      return fail(s, "Agendamiento finalizado.", "paciente_eligio_salir_slots");
+    }
+
+    s.retryCount = (s.retryCount || 0) + 1;
+    if (s.retryCount > s.maxRetries) {
+      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_slot");
+    }
+    return {
+      reply: `Indica un numero entre 1 y ${slots.length} (o ${slots.length + 1} para salir).`,
+      done: false, melaniaState: s,
+    };
+  }
+
+  // ════════════════════════════════════════════════
+  //  STEP: collecting_data (one field at a time)
+  // ════════════════════════════════════════════════
+  if (s.step === "collecting_data") {
+    if (s.currentField && text) {
+      s.collectedData[s.currentField] = text;
+      s.retryCount = 0;
+    }
+
+    const missing = getMissingFields(s.collectedData);
+    if (missing.length === 0) {
+      s.step = "confirming";
+      s.currentField = null;
+      const slot = s.chosenSlot;
+      const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${s.collectedData[f.key]}`);
+      return {
+        reply: `Datos completos.\n\nHora: ${slot.date || slot.dataDia} a las ${slot.time}\nProfesional: ${slot.professional || s.chosenProfessional?.nombres + " " + s.chosenProfessional?.paterno}\n\n` +
+          lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+        done: false, melaniaState: s,
+      };
+    }
+
+    s.currentField = missing[0].key;
+    return {
+      reply: `${missing[0].label}?\n${missing[0].example}`,
+      done: false, melaniaState: s,
+    };
+  }
+
+  // ════════════════════════════════════════════════
+  //  STEP: confirming (1=book, 2=correct, 3=cancel)
+  // ════════════════════════════════════════════════
+  if (s.step === "confirming") {
+    if (text === "1") {
+      s.step = "booking";
+      s.active = false;
+      return {
+        reply: "Agendando tu hora...",
+        done: true, melaniaState: s,
+        bookingReady: true,
+      };
+    }
+    if (text === "2") {
+      s.step = "correcting";
+      const lines = REQUIRED_FIELDS.map((f, i) => `${i + 1}. ${f.label}: ${s.collectedData[f.key]}`);
+      return {
+        reply: "Que dato quieres corregir?\n\n" + lines.join("\n") + "\n\nIndica el numero.",
+        done: false, melaniaState: s,
+      };
+    }
+    if (text === "3") {
+      return fail(s, "Agendamiento cancelado.", "paciente_cancelo");
+    }
+
+    s.retryCount = (s.retryCount || 0) + 1;
+    if (s.retryCount > s.maxRetries) {
+      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_confirmacion");
+    }
+    return {
+      reply: "Indica solo el numero:\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+      done: false, melaniaState: s,
+    };
+  }
+
+  // ════════════════════════════════════════════════
+  //  STEP: correcting
+  // ════════════════════════════════════════════════
+  if (s.step === "correcting") {
+    const num = parseInt(text, 10);
+    if (num >= 1 && num <= REQUIRED_FIELDS.length) {
+      const field = REQUIRED_FIELDS[num - 1];
+      s.collectedData[field.key] = "";
+      s.step = "collecting_data";
+      s.currentField = field.key;
+      s.retryCount = 0;
+      return {
+        reply: `${field.label}?\n${field.example}`,
+        done: false, melaniaState: s,
+      };
+    }
+
+    s.retryCount = (s.retryCount || 0) + 1;
+    if (s.retryCount > s.maxRetries) {
+      s.step = "confirming";
+      s.retryCount = 0;
+      const slot = s.chosenSlot;
+      const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${s.collectedData[f.key]}`);
+      return {
+        reply: "Datos:\n\n" + lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+        done: false, melaniaState: s,
+      };
+    }
+    return {
+      reply: `Indica el numero del dato a corregir (1-${REQUIRED_FIELDS.length}).`,
+      done: false, melaniaState: s,
+    };
+  }
+
+  // Unknown step
+  return fail(s, "Error interno.", "step_desconocido");
 }
 
 /**
- * Build the first message MelanIA sends when taking over.
- *
- * @param {object} patientData - partial data from Antonia
- * @returns {{ reply: string, melaniaState: object }}
+ * Load slots into MelanIA state after server.js fetches them.
  */
-export function startMelaniaFlow(patientData = {}) {
-  const melaniaState = initMelaniaState(patientData);
-  const summary = buildDataSummaryMessage(melaniaState.collectedData);
+export function setMelaniaSlots(melaniaState, slots, professional, specialty) {
+  const s = { ...melaniaState };
+  s.availableSlots = slots;
+  s.step = "choose_slot";
+  s.retryCount = 0;
 
-  if (!summary) {
-    // All data already complete — go straight to confirmation
-    melaniaState.step = "confirming";
-    const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${melaniaState.collectedData[f.key]}`);
-    const reply = "Soy MelanIA, bot de agenda Clinyco.\n\nTengo todos tus datos:\n\n" +
-      lines.join("\n") +
-      "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar";
-
-    return { reply, melaniaState };
+  if (!slots || !slots.length) {
+    s.active = false;
+    return {
+      reply: `No hay horas disponibles con ${professional || "ese profesional"}. Puedes revisar en ${AGENDA_WEB_URL}`,
+      done: true, melaniaState: s, failReason: "sin_slots",
+    };
   }
 
-  // Find first missing field to ask
-  const missing = getMissingFields(melaniaState.collectedData);
-  melaniaState.currentField = missing[0].key;
+  const lines = slots.map((sl, i) => `${i + 1}. ${sl.date || sl.dataDia} a las ${sl.time}`);
+  lines.push(`${slots.length + 1}. Salir`);
 
-  const reply = summary + "\n\n" + `${missing[0].label}?\n${missing[0].example}`;
-
-  return { reply, melaniaState };
+  return {
+    reply: `Horas disponibles con ${professional || "profesional"} (${specialty || ""}):\n\n` +
+      lines.join("\n") + "\n\nIndica el numero.",
+    done: false, melaniaState: s,
+  };
 }
