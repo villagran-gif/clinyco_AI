@@ -44,7 +44,7 @@ import {
   onTakeover as onEugeniaTakeover,
   onTicketAuditsObserved as onEugeniaTicketAuditsObserved
 } from "./eugenia/index.js";
-import { startMelaniaFlow, handleMelaniaMessage } from "./melania/index.js";
+import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import reviewRouter from "./review/router.js";
 import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
 import {
@@ -5076,23 +5076,63 @@ app.post("/messages", async (req, res) => {
       const result = handleMelaniaMessage(state.melania, userText);
       state.melania = result.melaniaState;
 
-      if (result.bookingReady && state.booking?.chosenSlot) {
-        // MelanIA collected all data — execute booking via worker
+      // MelanIA needs slot search — fetch from worker and present
+      if (result.searchQuery && state.melania.step === "awaiting_slots") {
+        console.log("[melania] Searching slots for:", result.searchQuery);
+        try {
+          const searchResult = await runMedinetAntonia({
+            query: result.searchQuery,
+            patientPhone: info?.channelDisplayName || "",
+            patientMessage: "",
+            patientRut: state.contactDraft?.c_rut || "",
+          });
+          const slots = searchResult?.available_slots || [];
+          const slotsResult = setMelaniaSlots(
+            state.melania,
+            slots,
+            searchResult?.professional || result.searchQuery,
+            searchResult?.specialty || ""
+          );
+          state.melania = slotsResult.melaniaState;
+
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: slotsResult.reply,
+            kind: slotsResult.done ? "melania_exit" : "melania_slots",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_slots", slotsFound: slots.length },
+          }));
+        } catch (searchError) {
+          console.error("[melania] Slot search error:", searchError.message);
+          state.melania.active = false;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: "Error buscando horas. Puedes agendar en https://clinyco.medinetapp.com/agendaweb/planned/",
+            kind: "melania_exit",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_exit", failReason: "search_error" },
+          }));
+        }
+      }
+
+      // MelanIA collected all data — execute booking via worker
+      if (result.bookingReady) {
         console.log("[melania] Data complete, booking via worker...");
         const patientData = state.melania.collectedData;
-        const slotToBook = { ...state.booking.chosenSlot };
+        const slotToBook = state.melania.chosenSlot;
 
         state.melania.active = false;
-        state.booking.pendingSlots = null;
-        state.booking.awaitingSlotChoice = false;
-        state.booking.chosenSlot = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
         const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
 
         const reply = bookingResult?.success
           ? bookingResult.patient_reply || "Tu hora fue agendada correctamente."
-          : `No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/`;
+          : "No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/";
 
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -5103,12 +5143,11 @@ app.post("/messages", async (req, res) => {
         }));
       }
 
+      // MelanIA finished (cancelled or error) — return to Antonia
       if (result.done) {
-        // MelanIA finished (cancelled or error) — return to Antonia
         console.log("[melania] Flow ended:", result.failReason || "completed");
         state.melania.active = false;
         await persistConversationSnapshot(conversationId, state, channelLabel);
-
         if (result.reply) {
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
@@ -5119,9 +5158,8 @@ app.post("/messages", async (req, res) => {
             resolverDecision: { stage: "melania_exit", failReason: result.failReason },
           }));
         }
-        // No reply — fall through to Antonia
       } else {
-        // MelanIA needs more data — send reply and wait
+        // MelanIA needs more input — send reply and wait
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -5129,7 +5167,7 @@ app.post("/messages", async (req, res) => {
           reply: result.reply,
           kind: "melania_collecting",
           state, info, channelLabel,
-          resolverDecision: { stage: "melania_collecting", currentField: state.melania.currentField },
+          resolverDecision: { stage: "melania_collecting", step: state.melania.step },
         }));
       }
     }
@@ -5271,29 +5309,7 @@ app.post("/messages", async (req, res) => {
         state.booking.chosenSlot = choice.slot;
         state.booking.awaitingSlotChoice = false;
 
-        // ── Hand off to MelanIA for data collection ──
-        const partialData = buildPatientDataFromState(state);
-        const { reply: melaniaReply, melaniaState } = startMelaniaFlow(partialData);
-        state.melania = melaniaState;
-
-        console.log("[melania] Activated for slot:", choice.slot.time, choice.slot.date);
-        await persistConversationSnapshot(conversationId, state, channelLabel);
-
-        const slotInfo = `Seleccionaste la hora ${choice.slot.time} del ${choice.slot.date || choice.slot.dataDia}.\n\n`;
-        addToHistory(conversationId, "user", userText);
-        return res.json(await sendManagedReply({
-          appId, conversationId, messageId, userText,
-          reply: slotInfo + melaniaReply,
-          kind: "melania_start",
-          state, info, channelLabel,
-          resolverDecision: {
-            stage: "melania_collecting",
-            nextAction: "melania_start",
-            reason: "MelanIA activated to collect patient data for booking",
-          }
-        }));
-
-        // Legacy path (kept but unreachable — MelanIA handles data collection now)
+        // Always verify RUT as identity double-check before proceeding with booking
         const patientRut = state.contactDraft?.c_rut;
         if (patientRut) {
           state.booking.awaitingRutVerification = true;
@@ -5647,6 +5663,40 @@ app.post("/messages", async (req, res) => {
             reason: "User showed schedule intent with existing pending slots"
           }
         }));
+      }
+    }
+
+    // --- MelanIA activation: when Antonia detects booking intent ---
+    if (!state.melania?.active) {
+      const hasIntent = hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText);
+      if (hasIntent && !state.system.humanTakenOver && state.system.aiEnabled) {
+        console.log("[melania] Booking intent detected, activating MelanIA");
+        const partialData = buildPatientDataFromState(state);
+
+        // Fetch availability cache from worker
+        let professionals = [];
+        try {
+          const avail = await callMedinetWorkerPath("/melania/availability", {}, 15000);
+          professionals = avail?.professionals || [];
+        } catch (e) {
+          console.warn("[melania] Availability fetch failed:", e.message);
+        }
+
+        if (professionals.length > 0) {
+          const { reply: melaniaReply, melaniaState } = startMelaniaFlow(partialData, professionals);
+          state.melania = melaniaState;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: melaniaReply,
+            kind: "melania_start",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_start", reason: "MelanIA activated on booking intent" },
+          }));
+        }
+        // No professionals available — fall through to Antonia fast-path
+        console.log("[melania] No professionals available, falling through to Antonia");
       }
     }
 
