@@ -242,6 +242,27 @@ const MEDINET_BASE = "https://clinyco.medinetapp.com";
 const MELANIA_USERNAME = process.env.MELANIA_USERNAME || process.env.MEDINET_JWT_USERNAME || "";
 const MELANIA_PASSWORD = process.env.MELANIA_PASSWORD || process.env.MEDINET_JWT_PASSWORD || "";
 
+// ── Mapeo prevision texto → IDs Medinet ──
+const PREVISION_MAP = {
+  "fonasa tramo a": { aseguradoraId: 8, previsionId: 15 },
+  "fonasa tramo b": { aseguradoraId: 8, previsionId: 16 },
+  "fonasa tramo c": { aseguradoraId: 8, previsionId: 17 },
+  "fonasa tramo d": { aseguradoraId: 8, previsionId: 18 },
+  "fonasa": { aseguradoraId: 8, previsionId: 12 },
+  "banmedica": { aseguradoraId: 3, previsionId: 5 },
+  "consalud": { aseguradoraId: 5, previsionId: 10 },
+  "colmena": { aseguradoraId: 4, previsionId: 6 },
+  "cruz blanca": { aseguradoraId: 6, previsionId: 9 },
+  "cruz del norte": { aseguradoraId: 7, previsionId: 11 },
+  "particular": { aseguradoraId: 11, previsionId: 2 },
+};
+
+function resolvePrevisionIds(previsionText) {
+  if (!previsionText) return { aseguradoraId: "", previsionId: "" };
+  const key = String(previsionText).toLowerCase().trim();
+  return PREVISION_MAP[key] || { aseguradoraId: "", previsionId: "" };
+}
+
 // Session cookie cache
 let _melaniaSession = null;
 let _melaniaCsrf = null;
@@ -385,6 +406,11 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
     const slot = slots[slotIndex] || slots[0];
 
     // 3. Build payload for /api/agenda/citas/add/
+    // Resolve prevision text → numeric IDs
+    const prevIds = resolvePrevisionIds(patientData.prevision);
+    const aseguradoraId = Number(patientData.aseguradoraId) || prevIds.aseguradoraId || "";
+    const previsionId = Number(patientData.previsionId) || prevIds.previsionId || "";
+
     const bookPayload = {
       run: rut,
       nombre: patientData.nombres || "",
@@ -396,8 +422,8 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       direccion: patientData.direccion || "",
       comuna: Number(patientData.comuna) || "",
       sexo: Number(patientData.sexo) || 3,
-      aseguradora: Number(patientData.aseguradoraId) || "",
-      prevision: Number(patientData.previsionId) || "",
+      aseguradora: aseguradoraId,
+      prevision: previsionId,
       profesional: String(slot.professionalId),
       resource: String(slot.professionalId),
       especialidad: Number(slot.specialtyId),
@@ -416,12 +442,14 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       enable_wsp_notifications: true,
     };
 
+    console.log("[melania] bookPayload:", JSON.stringify({ run: rut, nombre: bookPayload.nombre, apellidos: bookPayload.apellidos, aseguradora: aseguradoraId, prevision: previsionId, comuna: bookPayload.comuna, profesional: bookPayload.profesional, fecha: bookPayload.fecha, hora: bookPayload.hora }));
+
     // 4. Book via session cookie
     const result = await melaniaBookWithSession(bookPayload);
 
     const isSuccess = result.status === 200 && (result.data?.status === true || result.data?.status === "agendado_correctamente" || result.data?.message === "agendado correctamente");
 
-    console.log(`[melania] book result: ${isSuccess ? "SUCCESS" : "FAILED"} id=${result.data?.id || "n/a"}`);
+    console.log(`[melania] book result: ${isSuccess ? "SUCCESS" : "FAILED"} id=${result.data?.id || "n/a"} status=${result.status} data=${JSON.stringify(result.data).slice(0, 200)}`);
 
     return res.json({
       success: isSuccess,

@@ -27,6 +27,7 @@ const REQUIRED_FIELDS = [
     "Banmedica", "Consalud", "Colmena", "Cruz Blanca", "Cruz del Norte", "Particular"
   ] },
   { key: "direccion", label: "Direccion", example: "Ej: Av. Zucovic 5440" },
+  { key: "comuna", label: "Comuna", example: "Ej: Antofagasta, Santiago, Calama" },
 ];
 
 function getMissingFields(data) {
@@ -128,7 +129,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.step = "choose_specialty";
       s.retryCount = 0;
 
-      const lines = specList.map((sp, i) => `${i + 1}. ${sp.name} (prox: ${sp.prox || "sin cupos"})`);
+      const lines = specList.map((sp, i) => `${i + 1}. ${sp.name}`);
       lines.push("0. Volver al menu");
       return {
         reply: "Especialidades con horas disponibles:\n\n" + lines.join("\n") + "\n\nIndica el numero.",
