@@ -8,8 +8,8 @@
  * 4. Collect missing patient data one by one
  * 5. Confirm and book
  *
+ * Every menu has "0. Volver" to go back to previous step.
  * State lives in state.melania (managed by server.js).
- * Cache (professionals/specialties) passed from server.js.
  */
 
 const AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
@@ -39,11 +39,14 @@ function fail(melaniaState, reply, reason) {
   };
 }
 
+const MENU_TEXT = "Soy MelanIA, bot de agenda Clinyco.\n\n" +
+  "1. Agendar por especialidad - Elige el area medica y te muestro profesionales disponibles\n" +
+  "2. Agendar por profesional - Si ya sabes con quien quieres atenderte\n" +
+  "3. Otro o salir\n\n" +
+  "Indica el numero.";
+
 /**
- * Start MelanIA flow. Called when Antonia detects booking intent.
- * @param {object} patientData - partial data from Antonia
- * @param {Array} professionals - from fetchProximosCuposAll cache
- * @param {Array} specialties - from fetchSpecialtiesByBranchNoAuth cache
+ * Start MelanIA flow.
  */
 export function startMelaniaFlow(patientData = {}, professionals = [], specialties = []) {
   const melaniaState = {
@@ -53,19 +56,27 @@ export function startMelaniaFlow(patientData = {}, professionals = [], specialti
     professionals,
     specialties,
     filteredProfessionals: null,
+    filteredSpecialties: null,
+    availableSlots: null,
     chosenSlot: null,
+    chosenProfessional: null,
     retryCount: 0,
-    maxRetries: 1,
+    maxRetries: 2,
     startedAt: new Date().toISOString(),
   };
 
-  const reply = "Soy MelanIA, bot de agenda Clinyco.\n\n" +
-    "1. Agendar por especialidad - Elige el area medica y te muestro profesionales disponibles\n" +
-    "2. Agendar por profesional - Si ya sabes con quien quieres atenderte\n" +
-    "3. Otro o salir\n\n" +
-    "Indica el numero.";
+  return { reply: MENU_TEXT, melaniaState };
+}
 
-  return { reply, melaniaState };
+function goToMenu(s) {
+  s.step = "menu";
+  s.retryCount = 0;
+  s.filteredProfessionals = null;
+  s.filteredSpecialties = null;
+  s.availableSlots = null;
+  s.chosenSlot = null;
+  s.chosenProfessional = null;
+  return { reply: MENU_TEXT, done: false, melaniaState: s };
 }
 
 /**
@@ -84,7 +95,6 @@ export function handleMelaniaMessage(melaniaState, userText) {
   // ════════════════════════════════════════════════
   if (s.step === "menu") {
     if (text === "1") {
-      // Group professionals by specialty
       const specMap = {};
       for (const p of s.professionals) {
         const key = p.especialidad || "Otra";
@@ -94,8 +104,10 @@ export function handleMelaniaMessage(melaniaState, userText) {
       const specList = Object.values(specMap).sort((a, b) => (a.prox || "z").localeCompare(b.prox || "z"));
       s.filteredSpecialties = specList;
       s.step = "choose_specialty";
+      s.retryCount = 0;
 
       const lines = specList.map((sp, i) => `${i + 1}. ${sp.name} (prox: ${sp.prox || "sin cupos"})`);
+      lines.push("0. Volver al menu");
       return {
         reply: "Especialidades con horas disponibles:\n\n" + lines.join("\n") + "\n\nIndica el numero.",
         done: false, melaniaState: s,
@@ -104,9 +116,11 @@ export function handleMelaniaMessage(melaniaState, userText) {
 
     if (text === "2") {
       s.step = "choose_professional";
+      s.retryCount = 0;
       const lines = s.professionals.map((p, i) =>
         `${i + 1}. ${p.nombres} ${p.paterno} - ${p.especialidad} (${p.cupos?.[0]?.fecha || "sin cupos"})`
       );
+      lines.push("0. Volver al menu");
       return {
         reply: "Profesionales con horas disponibles:\n\n" + lines.join("\n") + "\n\nIndica el numero.",
         done: false, melaniaState: s,
@@ -117,7 +131,6 @@ export function handleMelaniaMessage(melaniaState, userText) {
       return fail(s, "Agendamiento finalizado.", "paciente_eligio_salir");
     }
 
-    // Invalid
     s.retryCount = (s.retryCount || 0) + 1;
     if (s.retryCount > s.maxRetries) {
       return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_menu");
@@ -133,10 +146,11 @@ export function handleMelaniaMessage(melaniaState, userText) {
   //  STEP: choose_specialty
   // ════════════════════════════════════════════════
   if (s.step === "choose_specialty") {
+    if (text === "0") return goToMenu(s);
+
     const num = parseInt(text, 10);
     if (num >= 1 && num <= (s.filteredSpecialties?.length || 0)) {
       const chosen = s.filteredSpecialties[num - 1];
-      // Filter professionals by this specialty
       const profs = s.professionals.filter(p => p.especialidad_id === chosen.id);
       s.filteredProfessionals = profs;
       s.step = "choose_professional";
@@ -145,6 +159,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       const lines = profs.map((p, i) =>
         `${i + 1}. ${p.nombres} ${p.paterno} (${p.cupos?.[0]?.fecha || "sin cupos"})`
       );
+      lines.push("0. Volver a especialidades");
       return {
         reply: `${chosen.name}. Profesionales:\n\n` + lines.join("\n") + "\n\nIndica el numero.",
         done: false, melaniaState: s,
@@ -152,11 +167,9 @@ export function handleMelaniaMessage(melaniaState, userText) {
     }
 
     s.retryCount = (s.retryCount || 0) + 1;
-    if (s.retryCount > s.maxRetries) {
-      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_especialidad");
-    }
+    if (s.retryCount > s.maxRetries) return goToMenu(s);
     return {
-      reply: `Indica un numero entre 1 y ${s.filteredSpecialties?.length || 0}.`,
+      reply: `Indica un numero entre 1 y ${s.filteredSpecialties?.length || 0}, o 0 para volver.`,
       done: false, melaniaState: s,
     };
   }
@@ -165,6 +178,8 @@ export function handleMelaniaMessage(melaniaState, userText) {
   //  STEP: choose_professional
   // ════════════════════════════════════════════════
   if (s.step === "choose_professional") {
+    if (text === "0") return goToMenu(s);
+
     const list = s.filteredProfessionals || s.professionals;
     const num = parseInt(text, 10);
     if (num >= 1 && num <= list.length) {
@@ -173,7 +188,6 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.step = "awaiting_slots";
       s.retryCount = 0;
 
-      // Signal to server.js that we need to search slots for this professional
       return {
         reply: `Buscando horas con ${chosen.nombres} ${chosen.paterno}...`,
         done: false,
@@ -184,19 +198,19 @@ export function handleMelaniaMessage(melaniaState, userText) {
     }
 
     s.retryCount = (s.retryCount || 0) + 1;
-    if (s.retryCount > s.maxRetries) {
-      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_profesional");
-    }
+    if (s.retryCount > s.maxRetries) return goToMenu(s);
     return {
-      reply: `Indica un numero entre 1 y ${list.length}.`,
+      reply: `Indica un numero entre 1 y ${list.length}, o 0 para volver.`,
       done: false, melaniaState: s,
     };
   }
 
   // ════════════════════════════════════════════════
-  //  STEP: choose_slot (slots loaded by server.js)
+  //  STEP: choose_slot
   // ════════════════════════════════════════════════
   if (s.step === "choose_slot") {
+    if (text === "0") return goToMenu(s);
+
     const slots = s.availableSlots || [];
     const num = parseInt(text, 10);
 
@@ -206,53 +220,48 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.step = "collecting_data";
       s.retryCount = 0;
 
-      // Check what data we already have
       const missing = getMissingFields(s.collectedData);
       if (missing.length === 0) {
-        // All data ready — go to confirm
         s.step = "confirming";
         const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${s.collectedData[f.key]}`);
         return {
           reply: `Hora: ${chosen.date || chosen.dataDia} a las ${chosen.time}\n\nDatos:\n` +
-            lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+            lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar\n0. Volver al menu",
           done: false, melaniaState: s,
         };
       }
 
-      // Need data — show what we have and ask first missing
       s.currentField = missing[0].key;
       let msg = `Hora seleccionada: ${chosen.date || chosen.dataDia} a las ${chosen.time}\n\n`;
       msg += "Para agendar necesito tus datos.\n\n";
-
       const dataLines = REQUIRED_FIELDS.map(f => {
         const val = (s.collectedData[f.key] || "").trim();
         return `${f.label}: ${val || "(falta)"}`;
       });
       msg += dataLines.join("\n");
       msg += `\n\n${missing[0].label}?\n${missing[0].example}`;
-
       return { reply: msg, done: false, melaniaState: s };
     }
 
-    // Exit option
+    // Salir option (last number + 1)
     if (num === (slots.length + 1)) {
-      return fail(s, "Agendamiento finalizado.", "paciente_eligio_salir_slots");
+      return goToMenu(s);
     }
 
     s.retryCount = (s.retryCount || 0) + 1;
-    if (s.retryCount > s.maxRetries) {
-      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_slot");
-    }
+    if (s.retryCount > s.maxRetries) return goToMenu(s);
     return {
-      reply: `Indica un numero entre 1 y ${slots.length} (o ${slots.length + 1} para salir).`,
+      reply: `Indica un numero entre 1 y ${slots.length}, ${slots.length + 1} para otra busqueda, o 0 para volver al menu.`,
       done: false, melaniaState: s,
     };
   }
 
   // ════════════════════════════════════════════════
-  //  STEP: collecting_data (one field at a time)
+  //  STEP: collecting_data
   // ════════════════════════════════════════════════
   if (s.step === "collecting_data") {
+    if (text === "0") return goToMenu(s);
+
     if (s.currentField && text) {
       s.collectedData[s.currentField] = text;
       s.retryCount = 0;
@@ -263,37 +272,38 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.step = "confirming";
       s.currentField = null;
       const slot = s.chosenSlot;
+      const profName = slot?.professional || `${s.chosenProfessional?.nombres || ""} ${s.chosenProfessional?.paterno || ""}`.trim();
       const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${s.collectedData[f.key]}`);
       return {
-        reply: `Datos completos.\n\nHora: ${slot.date || slot.dataDia} a las ${slot.time}\nProfesional: ${slot.professional || s.chosenProfessional?.nombres + " " + s.chosenProfessional?.paterno}\n\n` +
-          lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+        reply: `Datos completos.\n\nHora: ${slot.date || slot.dataDia} a las ${slot.time}\nProfesional: ${profName}\n\n` +
+          lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar\n0. Volver al menu",
         done: false, melaniaState: s,
       };
     }
 
     s.currentField = missing[0].key;
     return {
-      reply: `${missing[0].label}?\n${missing[0].example}`,
+      reply: `${missing[0].label}?\n${missing[0].example}\n\n(0 para volver al menu)`,
       done: false, melaniaState: s,
     };
   }
 
   // ════════════════════════════════════════════════
-  //  STEP: confirming (1=book, 2=correct, 3=cancel)
+  //  STEP: confirming
   // ════════════════════════════════════════════════
   if (s.step === "confirming") {
+    if (text === "0") return goToMenu(s);
+
     if (text === "1") {
       s.step = "booking";
       s.active = false;
-      return {
-        reply: "Agendando tu hora...",
-        done: true, melaniaState: s,
-        bookingReady: true,
-      };
+      return { reply: "Agendando tu hora...", done: true, melaniaState: s, bookingReady: true };
     }
     if (text === "2") {
       s.step = "correcting";
+      s.retryCount = 0;
       const lines = REQUIRED_FIELDS.map((f, i) => `${i + 1}. ${f.label}: ${s.collectedData[f.key]}`);
+      lines.push("0. Volver al menu");
       return {
         reply: "Que dato quieres corregir?\n\n" + lines.join("\n") + "\n\nIndica el numero.",
         done: false, melaniaState: s,
@@ -304,11 +314,9 @@ export function handleMelaniaMessage(melaniaState, userText) {
     }
 
     s.retryCount = (s.retryCount || 0) + 1;
-    if (s.retryCount > s.maxRetries) {
-      return fail(s, "No pude procesar tu respuesta.", "paciente_no_responde_confirmacion");
-    }
+    if (s.retryCount > s.maxRetries) return goToMenu(s);
     return {
-      reply: "Indica solo el numero:\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+      reply: "Indica solo el numero:\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar\n0. Volver al menu",
       done: false, melaniaState: s,
     };
   }
@@ -317,6 +325,8 @@ export function handleMelaniaMessage(melaniaState, userText) {
   //  STEP: correcting
   // ════════════════════════════════════════════════
   if (s.step === "correcting") {
+    if (text === "0") return goToMenu(s);
+
     const num = parseInt(text, 10);
     if (num >= 1 && num <= REQUIRED_FIELDS.length) {
       const field = REQUIRED_FIELDS[num - 1];
@@ -325,7 +335,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.currentField = field.key;
       s.retryCount = 0;
       return {
-        reply: `${field.label}?\n${field.example}`,
+        reply: `${field.label}?\n${field.example}\n\n(0 para volver al menu)`,
         done: false, melaniaState: s,
       };
     }
@@ -337,17 +347,16 @@ export function handleMelaniaMessage(melaniaState, userText) {
       const slot = s.chosenSlot;
       const lines = REQUIRED_FIELDS.map(f => `${f.label}: ${s.collectedData[f.key]}`);
       return {
-        reply: "Datos:\n\n" + lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar",
+        reply: "Datos:\n\n" + lines.join("\n") + "\n\n1. Confirmar y agendar\n2. Corregir un dato\n3. Cancelar\n0. Volver al menu",
         done: false, melaniaState: s,
       };
     }
     return {
-      reply: `Indica el numero del dato a corregir (1-${REQUIRED_FIELDS.length}).`,
+      reply: `Indica el numero del dato a corregir (1-${REQUIRED_FIELDS.length}), o 0 para volver.`,
       done: false, melaniaState: s,
     };
   }
 
-  // Unknown step
   return fail(s, "Error interno.", "step_desconocido");
 }
 
@@ -361,15 +370,17 @@ export function setMelaniaSlots(melaniaState, slots, professional, specialty) {
   s.retryCount = 0;
 
   if (!slots || !slots.length) {
-    s.active = false;
+    // No slots — go back to menu instead of exiting
+    s.step = "menu";
     return {
-      reply: `No hay horas disponibles con ${professional || "ese profesional"}. Puedes revisar en ${AGENDA_WEB_URL}`,
-      done: true, melaniaState: s, failReason: "sin_slots",
+      reply: `No hay horas disponibles con ${professional || "ese profesional"}.\n\n` + MENU_TEXT,
+      done: false, melaniaState: s,
     };
   }
 
   const lines = slots.map((sl, i) => `${i + 1}. ${sl.date || sl.dataDia} a las ${sl.time}`);
-  lines.push(`${slots.length + 1}. Salir`);
+  lines.push(`${slots.length + 1}. Otra busqueda`);
+  lines.push("0. Volver al menu");
 
   return {
     reply: `Horas disponibles con ${professional || "profesional"} (${specialty || ""}):\n\n` +
