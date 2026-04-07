@@ -239,8 +239,9 @@ app.post("/medinet/run", authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 
 const MEDINET_BASE = "https://clinyco.medinetapp.com";
-const MELANIA_USERNAME = process.env.MEDINET_JWT_USERNAME || process.env.MELANIA_USERNAME || "";
-const MELANIA_PASSWORD = process.env.MEDINET_JWT_PASSWORD || process.env.MELANIA_PASSWORD || "";
+// Usa MEDINET_JWT (rvillagran) — las credenciales que funcionan con /api/agenda/citas/add/
+const MELANIA_USERNAME = process.env.MEDINET_JWT_USERNAME || "";
+const MELANIA_PASSWORD = process.env.MEDINET_JWT_PASSWORD || "";
 
 // ── Mapeo prevision texto → IDs Medinet ──
 // ── Comuna text → Medinet numeric ID ──
