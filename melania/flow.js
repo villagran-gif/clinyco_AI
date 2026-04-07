@@ -22,12 +22,34 @@ const REQUIRED_FIELDS = [
   { key: "email", label: "Correo electronico", example: "Ej: correo@gmail.com" },
   { key: "fono", label: "Telefono celular", example: "Ej: 912345678" },
   { key: "nacimiento", label: "Fecha de nacimiento", example: "Formato: DD/MM/AAAA" },
-  { key: "prevision", label: "Prevision de salud", example: "Ej: Fonasa, Banmedica, Consalud, Cruz Blanca, Particular" },
+  { key: "prevision", label: "Prevision de salud", example: "LISTA", isList: true, options: [
+    "Fonasa Tramo A", "Fonasa Tramo B", "Fonasa Tramo C", "Fonasa Tramo D",
+    "Banmedica", "Consalud", "Colmena", "Cruz Blanca", "Cruz del Norte", "Particular"
+  ] },
   { key: "direccion", label: "Direccion", example: "Ej: Av. Zucovic 5440" },
 ];
 
 function getMissingFields(data) {
   return REQUIRED_FIELDS.filter(f => !(data[f.key] || "").trim());
+}
+
+function buildFieldPrompt(field, suffix = "") {
+  if (field.isList && field.options) {
+    const lines = field.options.map((opt, i) => `${i + 1}. ${opt}`);
+    return `${field.label}?\n\n` + lines.join("\n") + "\n\nIndica el numero." + suffix;
+  }
+  return `${field.label}?\n${field.example}` + suffix;
+}
+
+function parseFieldAnswer(field, text) {
+  if (field.isList && field.options) {
+    const num = parseInt(text, 10);
+    if (num >= 1 && num <= field.options.length) {
+      return field.options[num - 1];
+    }
+    return null; // invalid number
+  }
+  return text;
 }
 
 function fail(melaniaState, reply, reason) {
@@ -118,7 +140,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.step = "choose_professional";
       s.retryCount = 0;
       const lines = s.professionals.map((p, i) =>
-        `${i + 1}. ${p.nombres} ${p.paterno} - ${p.especialidad} (${p.cupos?.[0]?.fecha || "sin cupos"})`
+        `${i + 1}. ${p.nombres} ${p.paterno} - ${p.especialidad}`
       );
       lines.push("0. Volver al menu");
       return {
@@ -157,7 +179,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.retryCount = 0;
 
       const lines = profs.map((p, i) =>
-        `${i + 1}. ${p.nombres} ${p.paterno} (${p.cupos?.[0]?.fecha || "sin cupos"})`
+        `${i + 1}. ${p.nombres} ${p.paterno}`
       );
       lines.push("0. Volver a especialidades");
       return {
@@ -239,7 +261,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
         return `${f.label}: ${val || "(falta)"}`;
       });
       msg += dataLines.join("\n");
-      msg += `\n\n${missing[0].label}?\n${missing[0].example}`;
+      msg += "\n\n" + buildFieldPrompt(missing[0]);
       return { reply: msg, done: false, melaniaState: s };
     }
 
@@ -263,7 +285,18 @@ export function handleMelaniaMessage(melaniaState, userText) {
     if (text === "0") return goToMenu(s);
 
     if (s.currentField && text) {
-      s.collectedData[s.currentField] = text;
+      const currentFieldDef = REQUIRED_FIELDS.find(f => f.key === s.currentField);
+      const parsed = currentFieldDef ? parseFieldAnswer(currentFieldDef, text) : text;
+      if (parsed === null) {
+        // Invalid answer for list field
+        s.retryCount = (s.retryCount || 0) + 1;
+        if (s.retryCount > s.maxRetries) return goToMenu(s);
+        return {
+          reply: buildFieldPrompt(currentFieldDef, "\n\n(0 para volver al menu)"),
+          done: false, melaniaState: s,
+        };
+      }
+      s.collectedData[s.currentField] = parsed;
       s.retryCount = 0;
     }
 
@@ -283,7 +316,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
 
     s.currentField = missing[0].key;
     return {
-      reply: `${missing[0].label}?\n${missing[0].example}\n\n(0 para volver al menu)`,
+      reply: buildFieldPrompt(missing[0], "\n\n(0 para volver al menu)"),
       done: false, melaniaState: s,
     };
   }
@@ -335,7 +368,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.currentField = field.key;
       s.retryCount = 0;
       return {
-        reply: `${field.label}?\n${field.example}\n\n(0 para volver al menu)`,
+        reply: buildFieldPrompt(field, "\n\n(0 para volver al menu)"),
         done: false, melaniaState: s,
       };
     }
