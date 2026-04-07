@@ -1,116 +1,123 @@
 /**
- * test-medinet-agendaweb-add.js — Prueba bookAgendaweb CON datos personales
+ * test-medinet-agendaweb-add.js — Prueba bookAgendaweb con IDs numericos
  *
- * Paciente: prueba7 prueba7 pruebaMaterno7
- * RUT: 6.469.664-5
+ * Paciente: Felipe Emiliano Villagran Van Steenderen
+ * RUT: 25.203.895-7
  *
- * Usage: cd ~/clinyco_AI && source .env && node scripts/test-medinet-agendaweb-add.js
+ * Hipotesis: Medinet ignora datos personales porque aseguradora/prevision
+ * van como texto en vez de IDs numericos como hace la UI.
+ *
+ * Usage: cd ~/clinyco_AI && node scripts/test-medinet-agendaweb-add.js
  */
+import "dotenv/config";
 import {
   checkCupos,
   bookAgendaweb,
-  searchSlotsNoAuth,
+  searchSlotsViaApi,
   formatRutWithDots,
   DEFAULT_BRANCH_ID,
 } from "../Antonia/medinet-api.js";
 
 const PATIENT = {
-  rut: "6.469.664-5",
-  nombres: "prueba7",
-  apPaterno: "prueba7",
-  apMaterno: "pruebaMaterno7",
-  nacimiento: "08/09/1979",
+  rut: "25.203.895-7",
+  nombres: "Felipe Emiliano",
+  apPaterno: "Villagran",
+  apMaterno: "Van Steenderen",
+  nacimiento: "12/11/2015",
   email: "villagran@clinyco.cl",
   fono: "+56912345678",
-  prevision: "BANMEDICA",
+  // IDs numericos como la UI:
+  aseguradora: "3",       // BANMEDICA (ID)
+  prevision: "5",         // Banmedica (ID)
+  comuna: "68",           // ALGARROBO (ID)
+  sexo: "3",              // Indeterminado (ID)
   direccion: "zucovic",
-  comuna: "ALGARROBO",
 };
 
 const BRANCH_ID = DEFAULT_BRANCH_ID;
 
 async function main() {
   console.log("╔══════════════════════════════════════════════════════════════════════╗");
-  console.log("║  TEST bookAgendaweb() CON datos personales                         ║");
-  console.log("║  Paciente: prueba7 prueba7 pruebaMaterno7                           ║");
-  console.log("║  RUT: 6.469.664-5                                                  ║");
+  console.log("║  TEST bookAgendaweb con IDs numericos (como la UI)                 ║");
+  console.log("║  Paciente: Felipe Emiliano Villagran Van Steenderen                 ║");
+  console.log("║  RUT: 25.203.895-7                                                 ║");
   console.log("╚══════════════════════════════════════════════════════════════════════╝");
+
+  const rut = formatRutWithDots(PATIENT.rut);
 
   // ── PASO 1: checkCupos ──
   console.log("\n══ PASO 1: checkCupos ══");
-  const rut = formatRutWithDots(PATIENT.rut);
-  console.log(`  RUT formateado: ${rut}`);
+  console.log(`  RUT: ${rut}`);
   try {
     const cupos = await checkCupos(BRANCH_ID, rut);
-    console.log("  Resultado:", JSON.stringify(cupos, null, 2));
-    if (cupos && cupos.puede_agendar === false) {
-      console.log("  ❌ Paciente NO puede agendar:", cupos.mensaje);
-      return;
-    }
+    console.log("  Resultado:", JSON.stringify(cupos));
   } catch (err) {
-    console.log("  ⚠️ checkCupos error:", err.message);
+    console.log("  Error:", err.message);
   }
 
-  // ── PASO 2: Buscar slot disponible ──
-  console.log("\n══ PASO 2: Buscar slot disponible ══");
+  // ── PASO 2: Buscar slot ──
+  console.log("\n══ PASO 2: searchSlotsViaApi villagran ══");
   let slot;
   try {
-    const search = await searchSlotsNoAuth({ query: "nutriologia", branchId: BRANCH_ID });
-    console.log(`  Slots encontrados: ${search?.available_slots?.length || 0}`);
-    if (search?.available_slots?.length > 0) {
-      slot = search.available_slots[0];
-      console.log(`  Usando slot: ${slot.date} ${slot.time} con ${slot.professional}`);
-    } else {
-      console.log("  ❌ No hay slots disponibles. Abortando.");
-      return;
-    }
+    const search = await searchSlotsViaApi({ query: "villagran", branchId: BRANCH_ID });
+    slot = search.available_slots?.[0];
+    if (!slot) { console.log("  No hay slots"); return; }
+    console.log(`  Slot: ${slot.dataDia} ${slot.time} con ${slot.professional}`);
   } catch (err) {
-    console.log("  ❌ Error buscando slot:", err.message);
+    console.log("  Error:", err.message);
     return;
   }
 
-  // ── PASO 3: bookAgendaweb CON datos personales ──
-  console.log("\n══ PASO 3: bookAgendaweb CON datos personales ══");
+  // ── PASO 3: bookAgendaweb con IDs numericos ──
+  console.log("\n══ PASO 3: bookAgendaweb con IDs numericos ══");
 
   const payload = {
     run: rut,
     fecha: slot.dataDia,
     hora: slot.time,
     profesional: Number(slot.professionalId),
-    especialidad: Number(slot.specialtyId || 6),
-    tipo: Number(slot.tipoCitaId || 1),
-    duracion: Number(slot.duration || 30),
+    especialidad: Number(slot.specialtyId),
+    tipo: Number(slot.tipoCitaId),
+    duracion: Number(slot.duration || 20),
     ubicacion: BRANCH_ID,
-    email: PATIENT.email,
-    telefono: PATIENT.fono,
+    // Datos como la UI los envia:
     nombre: PATIENT.nombres,
     apellidos: `${PATIENT.apPaterno} ${PATIENT.apMaterno}`.trim(),
     direccion: PATIENT.direccion,
-    sexo: "",
+    sexo: PATIENT.sexo,
     fecha_nacimiento: PATIENT.nacimiento,
-    aseguradora: PATIENT.prevision,
+    aseguradora: PATIENT.aseguradora,
+    // Campos adicionales que la UI envia:
+    email: PATIENT.email,
+    telefono: PATIENT.fono,
+    telefono_fijo: PATIENT.fono,
+    telefono_movil: PATIENT.fono,
+    prevision: PATIENT.prevision,
+    comuna: PATIENT.comuna,
+    tienerut: "true",
+    enable_sms_notifications: "true",
+    enable_wsp_notifications: "true",
+    resource: String(slot.professionalId),
+    tipoagenda: "1",
+    es_recurso: "0",
+    estado: "1",
   };
 
-  console.log("  Payload enviado a agendaweb-add:");
-  console.log(JSON.stringify(payload, null, 2));
+  console.log("  Payload:");
+  for (const [k, v] of Object.entries(payload)) {
+    console.log(`    ${k}: ${v}`);
+  }
 
   try {
     const result = await bookAgendaweb(payload);
-    console.log("  ✅ Respuesta de Medinet:");
-    console.log(JSON.stringify(result, null, 2));
-
+    console.log("\n  Respuesta:", JSON.stringify(result, null, 2));
     if (result?.status === "agendado_correctamente") {
-      console.log("\n  ✅ CITA CREADA CON DATOS PERSONALES — Verificar en Medinet que nombre aparezca");
+      console.log("\n  ✅ CITA AGENDADA — Verificar en Medinet si nombre y prevision aparecen");
     }
   } catch (err) {
-    console.log("  ❌ Error:", err.message);
-    if (err.httpStatus) console.log("  HTTP Status:", err.httpStatus);
-    if (err.responseBody) console.log("  Response body:", JSON.stringify(err.responseBody, null, 2));
-
-    if (err.httpStatus === 500) {
-      console.log("\n  ⚠️ CONFIRMADO: Medinet devuelve 500 cuando se envian datos personales.");
-      console.log("  El comentario en el codigo es correcto: los campos deben ir vacios.");
-    }
+    console.log("\n  ❌ Error:", err.message);
+    if (err.httpStatus) console.log("  HTTP:", err.httpStatus);
+    if (err.responseBody) console.log("  Body:", JSON.stringify(err.responseBody));
   }
 
   console.log("\n" + "═".repeat(70));
