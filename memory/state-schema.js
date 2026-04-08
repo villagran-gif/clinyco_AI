@@ -130,6 +130,24 @@ export function buildInitialConversationState() {
       category: "frío",
       reasons: [],
       calculatedAt: null
+    },
+    eugenia: {
+      lastInternalNoteKey: null,
+      lastInternalNoteAt: null,
+      lastInternalNoteTicketId: null,
+      lastPredictedAction: null,
+      lastPredictedConfidence: null,
+      lastPredictedReason: null,
+      lastPredictedAt: null,
+      lastInternalNotePreview: null
+    },
+    shadow: {
+      lastHumanActualAction: null,
+      lastHumanActualActionAt: null,
+      lastHumanActualText: null,
+      lastComparedPrediction: null,
+      lastComparisonAligned: null,
+      lastComparisonAt: null
     }
   };
 }
@@ -146,6 +164,8 @@ export function mergeConversationState(baseState, persistedState = {}) {
     openHelp: { ...baseState.openHelp, ...(persistedState.openHelp || {}) },
     booking: { ...baseState.booking, ...(persistedState.booking || {}) },
     system: { ...baseState.system, ...(persistedState.system || {}) },
-    leadScore: { ...baseState.leadScore, ...(persistedState.leadScore || {}) }
+    leadScore: { ...baseState.leadScore, ...(persistedState.leadScore || {}) },
+    eugenia: { ...baseState.eugenia, ...(persistedState.eugenia || {}) },
+    shadow: { ...baseState.shadow, ...(persistedState.shadow || {}) }
   };
 }
