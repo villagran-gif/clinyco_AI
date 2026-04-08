@@ -359,17 +359,32 @@ function resolveComunaId(comunaText) {
 }
 
 const PREVISION_MAP = {
+  // Fonasa
   "fonasa tramo a": { aseguradoraId: 8, previsionId: 15 },
   "fonasa tramo b": { aseguradoraId: 8, previsionId: 16 },
   "fonasa tramo c": { aseguradoraId: 8, previsionId: 17 },
   "fonasa tramo d": { aseguradoraId: 8, previsionId: 18 },
   "fonasa": { aseguradoraId: 8, previsionId: 12 },
+  // Isapres
   "banmedica": { aseguradoraId: 3, previsionId: 5 },
-  "consalud": { aseguradoraId: 5, previsionId: 10 },
   "colmena": { aseguradoraId: 4, previsionId: 6 },
+  "consalud": { aseguradoraId: 5, previsionId: 10 },
   "cruz blanca": { aseguradoraId: 6, previsionId: 9 },
   "cruz del norte": { aseguradoraId: 7, previsionId: 11 },
+  "nueva mas vida": { aseguradoraId: 10, previsionId: 7 },
+  "vida tres": { aseguradoraId: 12, previsionId: 8 },
+  "i salud - ex chuquicamata": { aseguradoraId: 9, previsionId: 13 },
+  "i salud": { aseguradoraId: 9, previsionId: 13 },
+  "medimel-banmedica": { aseguradoraId: 14, previsionId: 14 },
+  "medimel": { aseguradoraId: 14, previsionId: 14 },
+  // Otras
   "particular": { aseguradoraId: 11, previsionId: 2 },
+  "pad fonasa pad": { aseguradoraId: 13, previsionId: 12 },
+  "fundacion": { aseguradoraId: 15, previsionId: 20 },
+  "esencial": { aseguradoraId: 16, previsionId: 2 },
+  "jeafosale": { aseguradoraId: 17, previsionId: 2 },
+  "dipreca": { aseguradoraId: 18, previsionId: 19 },
+  "otra de fuerzas armadas": { aseguradoraId: 19, previsionId: 21 },
 };
 
 function resolvePrevisionIds(previsionText) {

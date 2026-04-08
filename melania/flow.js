@@ -24,7 +24,10 @@ const REQUIRED_FIELDS = [
   { key: "nacimiento", label: "Fecha de nacimiento", example: "Formato: DD/MM/AAAA" },
   { key: "prevision", label: "Prevision de salud", example: "LISTA", isList: true, options: [
     "Fonasa Tramo A", "Fonasa Tramo B", "Fonasa Tramo C", "Fonasa Tramo D",
-    "Banmedica", "Consalud", "Colmena", "Cruz Blanca", "Cruz del Norte", "Particular"
+    "Banmedica", "Colmena", "Consalud", "Cruz Blanca", "Cruz del Norte",
+    "Dipreca", "Esencial", "Fundacion", "I Salud - Ex Chuquicamata",
+    "Jeafosale", "Medimel-Banmedica", "Nueva Mas Vida",
+    "Otra de Fuerzas Armadas", "PAD Fonasa PAD", "Particular", "Vida Tres"
   ] },
   { key: "direccion", label: "Direccion", example: "Ej: Av. Zucovic 5440" },
   { key: "comuna", label: "Comuna", example: "Ej: Antofagasta, Santiago, Calama" },
