@@ -578,7 +578,7 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       step: "book",
       appointmentId: result.data?.id || null,
       slot: { date: slot.dataDia, time: slot.time, professional: slot.professional, specialty: slot.specialty },
-      patient: { rut, nombres: patientData.nombres, apellidos: bookPayload.apellidos },
+      patient: { rut, nombres: patientData.nombres, apellidos: `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim() },
       medinet: result.data,
       patient_reply: isSuccess
         ? `Tu hora quedo agendada para el ${slot.date || slot.dataDia} a las ${slot.time} con ${slot.professional}.`
