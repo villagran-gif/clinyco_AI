@@ -1,8 +1,8 @@
 services:
-  # ── Gabriela Heck (puerto 3000) ──
-  waha-gabriela:
+  # ── Carolin Cornejo (puerto 3000) ──
+  waha-carolin:
     image: devlikeapro/waha:latest
-    container_name: clinyco-waha-gabriela
+    container_name: clinyco-waha-carolin
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -10,10 +10,10 @@ services:
       - WAHA_DASHBOARD_ENABLED=true
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
       - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
-      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook/39403066594317
+      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook/30229490880397
       - WHATSAPP_HOOK_EVENTS=message,message.any,session.status
     volumes:
-      - waha_gabriela:/app/.sessions
+      - waha_carolin:/app/.sessions
     networks:
       - clinyco-dev
     restart: unless-stopped
@@ -37,10 +37,10 @@ services:
       - clinyco-dev
     restart: unless-stopped
 
-  # ── Carolin Cornejo (puerto 3004) ──
-  waha-carolin:
+  # ── Gabriela Heck (puerto 3004) ──
+  waha-gabriela:
     image: devlikeapro/waha:latest
-    container_name: clinyco-waha-carolin
+    container_name: clinyco-waha-gabriela
     ports:
       - "127.0.0.1:3004:3000"
     environment:
@@ -48,10 +48,10 @@ services:
       - WAHA_DASHBOARD_ENABLED=true
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
       - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
-      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook/30229490880397
+      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook/39403066594317
       - WHATSAPP_HOOK_EVENTS=message,message.any,session.status
     volumes:
-      - waha_carolin:/app/.sessions
+      - waha_gabriela:/app/.sessions
     networks:
       - clinyco-dev
     restart: unless-stopped
