@@ -8,8 +8,14 @@ const app = express();
 app.use(express.json({ limit: "5mb" }));
 
 const PORT = process.env.PORT || 3001;
-const DEFAULT_SESSION = process.env.DEFAULT_SESSION_NAME || "piloto-agente-1";
-const DEFAULT_AGENT = process.env.DEFAULT_AGENT_NAME || "Agente Piloto";
+
+// Agent registry: Zendesk ID → agent name
+const AGENTS = {
+  "39403066594317": "Gabriela Heck",
+  "29866913338893": "Allison Contreras",
+  "30229490880397": "Carolin Cornejo",
+  "30229583958797": "Camila Alcayaga",
+};
 
 // ── Health check ──
 app.get("/", async (_req, res) => {
@@ -19,6 +25,7 @@ app.get("/", async (_req, res) => {
       service: "clinyco-agent-observer",
       status: "ok",
       uptime: process.uptime(),
+      agents: AGENTS,
       stats,
     });
   } catch (err) {
@@ -36,28 +43,30 @@ app.get("/conversations", async (_req, res) => {
   }
 });
 
-// ── WAHA Webhook ──
-app.post("/waha-webhook", async (req, res) => {
+// ── WAHA Webhook (per-agent route) ──
+app.post("/waha-webhook/:agentId", async (req, res) => {
+  const { agentId } = req.params;
+  const agentName = AGENTS[agentId] || `Agente ${agentId}`;
+  const sessionName = agentId; // Use Zendesk ID as session name
+
   const event = req.body.event;
   const payload = req.body.payload || req.body;
-  const sessionName = req.body.session || payload.session || DEFAULT_SESSION;
 
   // Session status events: log and return
   if (event === "session.status") {
     const status = payload.status || "unknown";
-    console.log(`[webhook] Session ${sessionName} status: ${status}`);
+    console.log(`[webhook] [${agentName}] Session status: ${status}`);
     return res.json({ ok: true, event: "session.status" });
   }
 
   // Only process message events (message = received, message.any = sent + received)
   if (event !== "message" && event !== "message.any") {
-    console.log(`[webhook] Ignoring event: ${event}`);
     return res.json({ ok: true, event, ignored: true });
   }
 
   try {
-    // Ensure the WAHA session is registered
-    await db.ensureSession(sessionName, DEFAULT_AGENT, null);
+    // Ensure the WAHA session is registered with agent's Zendesk ID
+    await db.ensureSession(sessionName, agentName, null);
 
     // Determine direction
     const fromMe = payload.fromMe ?? payload._data?.id?.fromMe ?? false;
@@ -69,13 +78,12 @@ app.post("/waha-webhook", async (req, res) => {
       : (payload.from || payload.chatId);
 
     if (!chatId) {
-      console.warn("[webhook] No chatId found in payload, skipping");
+      console.warn(`[webhook] [${agentName}] No chatId found, skipping`);
       return res.status(400).json({ ok: false, error: "no chatId" });
     }
 
     // Skip group messages
     if (chatId.includes("@g.us")) {
-      console.log(`[webhook] Skipping group message: ${chatId}`);
       return res.json({ ok: true, skipped: "group" });
     }
 
@@ -95,20 +103,26 @@ app.post("/waha-webhook", async (req, res) => {
     await trackBehavior(conversation.id, message, direction);
 
     console.log(
-      `[webhook] ${direction} | conv=#${conversation.id} | msg=#${message.id} | ` +
+      `[webhook] [${agentName}] ${direction} | conv=#${conversation.id} | msg=#${message.id} | ` +
       `phone=${conversation.client_phone} | emojis=${message.emoji_count}`
     );
 
     res.json({ ok: true, messageId: message.id, conversationId: conversation.id });
   } catch (err) {
-    console.error("[webhook] Error processing message:", err);
+    console.error(`[webhook] [${agentName}] Error:`, err);
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+// ── Legacy route (backward compat) ──
+app.post("/waha-webhook", async (req, res) => {
+  console.log("[webhook] Legacy route hit — use /waha-webhook/:agentId instead");
+  return res.json({ ok: true, ignored: true, message: "use /waha-webhook/:agentId" });
 });
 
 // ── Start server ──
 app.listen(PORT, () => {
   console.log(`[agent-observer] Listening on port ${PORT}`);
-  console.log(`[agent-observer] Default session: ${DEFAULT_SESSION}`);
+  console.log(`[agent-observer] Agents: ${Object.values(AGENTS).join(", ")}`);
   console.log(`[agent-observer] DB: ${process.env.DATABASE_URL ? "configured" : "NOT SET"}`);
 });
