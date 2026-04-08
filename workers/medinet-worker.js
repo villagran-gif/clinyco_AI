@@ -520,55 +520,47 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
 
     const slot = slots[slotIndex] || slots[0];
 
-    // 3. Build payload for /api/agenda/citas/add/
-    // Resolve prevision text → numeric IDs
-    const prevIds = resolvePrevisionIds(patientData.prevision);
-    const aseguradoraId = Number(patientData.aseguradoraId) || prevIds.aseguradoraId || "";
-    const previsionId = Number(patientData.previsionId) || prevIds.previsionId || "";
+    // 3. Build agendaweb-add payload (form-urlencoded, no auth, no overwrite)
+    const pacienteExiste = cupos?.paciente_existe !== false;
 
-    const bookPayload = {
-      run: rut,
-      nombre: patientData.nombres || "",
-      apellidos: `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim(),
-      fecha_nacimiento: patientData.nacimiento || "",
-      email: patientData.email || "",
-      telefono_fijo: patientData.fono || "",
-      telefono_movil: patientData.fono || "",
-      direccion: patientData.direccion || "",
-      comuna: resolveComunaId(patientData.comuna) || 12, // default: Antofagasta
-      sexo: Number(patientData.sexo) || 3,
-      aseguradora: aseguradoraId,
-      prevision: previsionId,
-      profesional: String(slot.professionalId),
-      resource: String(slot.professionalId),
-      especialidad: Number(slot.specialtyId),
-      tipo: Number(slot.tipoCitaId),
-      ubicacion: branch,
+    const formData = new URLSearchParams({
+      es_recurso: "false",
+      estado: "1",
       fecha: slot.dataDia,
+      tipo: String(slot.tipoCitaId),
+      duracion: String(slot.duration || 20),
+      especialidad: String(slot.specialtyId),
       hora: slot.time,
-      duracion: Number(slot.duration || 20),
-      estado: 1,
-      tipoagenda: "1",
-      es_recurso: "0",
-      tienerut: true,
-      cargar: true,
-      enviar_correo: false,
-      enable_sms_notifications: true,
-      enable_wsp_notifications: true,
-      scheduled_from: 3,
-    };
+      profesional: String(slot.professionalId),
+      sesion_id: "",
+      tipoagenda: "",
+      observacion: "Agendado via MelanIA Bot.",
+      // For existing patients: personal fields empty (Medinet uses stored data)
+      // For new patients: all fields populated
+      nombre: pacienteExiste ? "" : (patientData.nombres || ""),
+      apellidos: pacienteExiste ? "" : `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim(),
+      telefono_fijo: patientData.fono || "",
+      direccion: pacienteExiste ? "" : (patientData.direccion || ""),
+      sexo: pacienteExiste ? "" : String(Number(patientData.sexo) || 3),
+      email: patientData.email || "",
+      fecha_nacimiento: pacienteExiste ? "" : (patientData.nacimiento || ""),
+      aseguradora: pacienteExiste ? "" : String(Number(patientData.aseguradoraId) || resolvePrevisionIds(patientData.prevision).aseguradoraId || ""),
+      run: rut,
+      ubicacion: String(branch),
+      desde_agendaweb: "true",
+      is_patient_created_from_two_factor: "false",
+    });
 
-    console.log("[melania] bookPayload:", JSON.stringify({ run: rut, nombre: bookPayload.nombre, apellidos: bookPayload.apellidos, aseguradora: aseguradoraId, prevision: previsionId, comuna: bookPayload.comuna, profesional: bookPayload.profesional, fecha: bookPayload.fecha, hora: bookPayload.hora }));
+    console.log("[melania] agendaweb-add:", JSON.stringify({ run: rut, fecha: slot.dataDia, hora: slot.time, profesional: slot.professionalId, pacienteExiste }));
 
-    // 4. Book via chatbot endpoint (Token auth, not admin session)
-    const MEDINET_TOKEN = process.env.MEDINET_API_TOKEN || "";
-    const bookRes = await fetch(`${MEDINET_BASE}/api/agenda/citas/add-chatbot/`, {
+    // 4. Book via agendaweb-add (public, form-urlencoded, no admin session)
+    const bookRes = await fetch(`${MEDINET_BASE}/api/agenda/citas/agendaweb-add/`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Token ${MEDINET_TOKEN}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
       },
-      body: JSON.stringify(bookPayload),
+      body: formData.toString(),
     });
 
     const bookText = await bookRes.text();
@@ -576,7 +568,7 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
     try { bookData = JSON.parse(bookText); } catch { bookData = { raw: bookText }; }
     const result = { status: bookRes.status, data: bookData };
 
-    const isSuccess = result.status === 200 && (result.data?.status === true || result.data?.status === "agendado_correctamente" || result.data?.message === "agendado correctamente");
+    const isSuccess = result.status === 200 && (result.data?.status === true || result.data?.status === "agendado_correctamente" || result.data?.message === "agendado correctamente" || result.data?.message === "agendado_correctamente");
 
     console.log(`[melania] book result: ${isSuccess ? "SUCCESS" : "FAILED"} id=${result.data?.id || "n/a"} status=${result.status} data=${JSON.stringify(result.data).slice(0, 200)}`);
 
