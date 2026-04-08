@@ -75,7 +75,26 @@ services:
       - clinyco-dev
     restart: unless-stopped
 
-  # ── Observer (único, recibe webhooks de las 4) ──
+  # ── Giselle Santander (puerto 3008) ──
+  waha-giselle:
+    image: devlikeapro/waha:latest
+    container_name: clinyco-waha-giselle
+    ports:
+      - "127.0.0.1:3008:3000"
+    environment:
+      - WHATSAPP_API_KEY=${WAHA_API_KEY}
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
+      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook/44364717188109
+      - WHATSAPP_HOOK_EVENTS=message,message.any,session.status
+    volumes:
+      - waha_giselle:/app/.sessions
+    networks:
+      - clinyco-dev
+    restart: unless-stopped
+
+  # ── Observer (único, recibe webhooks de las 5) ──
   observer:
     build: ./observer
     container_name: clinyco-agent-observer
@@ -92,6 +111,7 @@ services:
       - waha-allison
       - waha-carolin
       - waha-camila
+      - waha-giselle
     restart: unless-stopped
 
 volumes:
@@ -99,6 +119,7 @@ volumes:
   waha_allison:
   waha_carolin:
   waha_camila:
+  waha_giselle:
 
 networks:
   clinyco-dev:
