@@ -555,6 +555,7 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       enviar_correo: false,
       enable_sms_notifications: true,
       enable_wsp_notifications: true,
+      scheduled_from: 3,
     };
 
     console.log("[melania] bookPayload:", JSON.stringify({ run: rut, nombre: bookPayload.nombre, apellidos: bookPayload.apellidos, aseguradora: aseguradoraId, prevision: previsionId, comuna: bookPayload.comuna, profesional: bookPayload.profesional, fecha: bookPayload.fecha, hora: bookPayload.hora }));
