@@ -559,8 +559,21 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
 
     console.log("[melania] bookPayload:", JSON.stringify({ run: rut, nombre: bookPayload.nombre, apellidos: bookPayload.apellidos, aseguradora: aseguradoraId, prevision: previsionId, comuna: bookPayload.comuna, profesional: bookPayload.profesional, fecha: bookPayload.fecha, hora: bookPayload.hora }));
 
-    // 4. Book via session cookie
-    const result = await melaniaBookWithSession(bookPayload);
+    // 4. Book via chatbot endpoint (Token auth, not admin session)
+    const MEDINET_TOKEN = process.env.MEDINET_API_TOKEN || "";
+    const bookRes = await fetch(`${MEDINET_BASE}/api/agenda/citas/add-chatbot/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Token ${MEDINET_TOKEN}`,
+      },
+      body: JSON.stringify(bookPayload),
+    });
+
+    const bookText = await bookRes.text();
+    let bookData;
+    try { bookData = JSON.parse(bookText); } catch { bookData = { raw: bookText }; }
+    const result = { status: bookRes.status, data: bookData };
 
     const isSuccess = result.status === 200 && (result.data?.status === true || result.data?.status === "agendado_correctamente" || result.data?.message === "agendado correctamente");
 
