@@ -49,9 +49,16 @@ const SINCE_MS = Date.now() - DAYS_BACK * 24 * 60 * 60 * 1000;
 
 // ── WAHA API helpers ──────────────────────────────────────────────────
 
-async function wahaFetch(host, path) {
+async function wahaFetch(host, path, { timeoutMs = 30_000 } = {}) {
   const url = `http://${host}:3000${path}`;
-  const res = await fetch(url, { headers: { "X-Api-Key": API_KEY } });
+  // whatsapp-web.js sometimes hangs forever on /api/messages when its
+  // internal chat state is bad. Without a timeout the entire backfill
+  // stalls on that one chat. 30s is generous — healthy responses come
+  // back in tens of milliseconds.
+  const res = await fetch(url, {
+    headers: { "X-Api-Key": API_KEY },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`WAHA ${url} → ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
