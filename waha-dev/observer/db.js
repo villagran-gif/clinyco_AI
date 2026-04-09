@@ -94,6 +94,20 @@ export async function findCustomerByPhone(phone) {
   return channelRows[0] || null;
 }
 
+export async function findCustomerByRut(rutNormalized) {
+  // rutNormalized is in canonical form: "XXXXXXXX-X" (no dots, uppercase DV).
+  // customers.rut is stored in the same canonical form, so direct equality
+  // works. See extraction/identity-normalizers.js :: normalizeRut.
+  const { rows } = await pool.query(
+    `SELECT id, whatsapp_phone, nombres, apellidos, rut
+     FROM customers
+     WHERE rut = $1
+     LIMIT 1`,
+    [rutNormalized]
+  );
+  return rows[0] || null;
+}
+
 // ── Agent Direct Messages ──
 
 export async function insertMessage({

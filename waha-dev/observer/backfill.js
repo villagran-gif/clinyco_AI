@@ -22,7 +22,7 @@
 import * as db from "./db.js";
 import {
   findOrCreateConversation,
-  extractPhoneFromChatId,
+  parseClientId,
 } from "./customer-matcher.js";
 import { save as saveMessage } from "./message-store.js";
 import { onMessage as trackBehavior } from "./behavior-tracker.js";
@@ -95,6 +95,20 @@ function getChatId(chat) {
   return "";
 }
 
+// Contact label as saved on the agent's phone — e.g. "gabriela 26.507.289-5".
+// Used as the pushName for LID chats so we can parse the RUT and match
+// against the customers table.
+function getChatPushName(chat) {
+  if (!chat) return null;
+  return (
+    chat.name ||
+    chat.pushName ||
+    chat.lastMessage?.pushName ||
+    chat.lastMessage?._data?.notifyName ||
+    null
+  );
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -128,33 +142,31 @@ async function backfillAgent(agentId, { name, wahaHost }) {
     return { agent: name, error: "invalid chats response" };
   }
 
-  // 4. Keep only 1:1 private chats with a valid phone, and drop:
-  //    - groups / broadcasts / LID (non-@c.us suffix)
-  //    - WhatsApp LID addresses disguised as phones (phone > 13 digits → null)
-  //    - agent-to-agent chats (the "client" is actually another of our agents)
-  let skippedNonCus = 0;
-  let skippedBadPhone = 0;
+  // 4. Keep only direct 1:1 chats (@c.us or @lid). Drop groups, broadcasts,
+  //    malformed ids, and agent-to-agent chats.
+  let skippedInvalid = 0;
   let skippedAgentPeer = 0;
+  let countPhone = 0;
+  let countLid = 0;
   const privateChats = chats.filter((c) => {
     const id = getChatId(c);
-    if (!id.endsWith("@c.us")) {
-      skippedNonCus++;
+    const parsed = parseClientId(id);
+    if (!parsed) {
+      skippedInvalid++;
       return false;
     }
-    const phone = extractPhoneFromChatId(id);
-    if (!phone) {
-      skippedBadPhone++;
-      return false;
-    }
-    if (isAgentPhone(phone)) {
+    if (parsed.kind === "phone" && isAgentPhone(parsed.value)) {
       skippedAgentPeer++;
       return false;
     }
+    if (parsed.kind === "phone") countPhone++;
+    else countLid++;
     return true;
   });
   console.log(
-    `  Found ${privateChats.length} private chats (of ${chats.length} total; ` +
-    `skipped ${skippedNonCus} non-@c.us, ${skippedBadPhone} bad-phone, ${skippedAgentPeer} agent-peer)`
+    `  Found ${privateChats.length} direct chats of ${chats.length} total ` +
+    `(${countPhone} @c.us, ${countLid} @lid; ` +
+    `skipped ${skippedInvalid} invalid, ${skippedAgentPeer} agent-peer)`
   );
 
   let chatsProcessed = 0;
@@ -192,8 +204,11 @@ async function backfillAgent(agentId, { name, wahaHost }) {
 
     if (recentMessages.length === 0) continue;
 
-    // Resolve conversation once per chat
-    const conversation = await findOrCreateConversation(agentId, chatId);
+    // Resolve conversation once per chat. pushName carries the agent's
+    // saved label for the contact (e.g. "gabriela 26.507.289-5"), used
+    // by the matcher to parse the RUT on LID chats.
+    const pushName = getChatPushName(chat);
+    const conversation = await findOrCreateConversation(agentId, chatId, { pushName });
     if (!conversation) continue;
 
     // Insert messages in chronological order

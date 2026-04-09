@@ -3,8 +3,11 @@
 -- deployed.
 --
 -- DELETES two classes of garbage:
---   1. Conversations whose client_phone has more than 13 digits (WhatsApp LID
---      addresses disguised as phones).
+--   1. Conversations whose client_phone is in "+<digits>" format but has
+--      more than 13 digits — these are WhatsApp LID addresses that were
+--      incorrectly stored as phone numbers by the old normalizePhone.
+--      NOTE: We only match rows whose client_phone starts with '+' so the
+--      new-format rows ("lid:123456789") are preserved.
 --   2. Conversations whose client_phone is actually one of our own agents
 --      (agent-to-agent chats).
 --
@@ -21,14 +24,15 @@
 BEGIN;
 
 \echo ''
-\echo '=== 1. Long phones (likely WhatsApp LID addresses, >13 digits) ==='
+\echo '=== 1. Long "phone"-format ids (LIDs stored incorrectly as phones, >13 digits) ==='
 SELECT id,
        session_name,
        client_phone,
        length(regexp_replace(client_phone, '\D', '', 'g')) AS digit_count,
        message_count
 FROM agent_direct_conversations
-WHERE length(regexp_replace(client_phone, '\D', '', 'g')) > 13
+WHERE client_phone LIKE '+%'
+  AND length(regexp_replace(client_phone, '\D', '', 'g')) > 13
 ORDER BY digit_count DESC, id;
 
 \echo ''
@@ -48,12 +52,17 @@ WHERE adc.client_phone IN (
 ORDER BY adc.id;
 
 -- Build the set of bad conversation IDs once, into a temp table.
+-- IMPORTANT: the first condition is guarded by `client_phone LIKE '+%'`
+-- so new rows with "lid:..." identifiers are NOT deleted by accident.
 CREATE TEMP TABLE bad_convs ON COMMIT DROP AS
 SELECT id FROM agent_direct_conversations
-WHERE length(regexp_replace(client_phone, '\D', '', 'g')) > 13
+WHERE (
+        client_phone LIKE '+%'
+        AND length(regexp_replace(client_phone, '\D', '', 'g')) > 13
+      )
    OR client_phone IN (
-     SELECT agent_phone FROM agent_waha_sessions WHERE agent_phone IS NOT NULL
-   );
+        SELECT agent_phone FROM agent_waha_sessions WHERE agent_phone IS NOT NULL
+      );
 
 \echo ''
 \echo '=== Summary ==='

@@ -84,17 +84,21 @@ app.post("/waha-webhook/:agentId", async (req, res) => {
       return res.status(400).json({ ok: false, error: "no chatId" });
     }
 
-    // Only accept 1:1 chats (@c.us). Reject groups (@g.us), LIDs (@lid),
-    // broadcasts (@broadcast), newsletters (@newsletter), etc.
-    if (!chatId.endsWith("@c.us")) {
+    // Accept 1:1 chats (@c.us for phones, @lid for privacy-masked contacts).
+    // Reject groups (@g.us), broadcasts (@broadcast), newsletters, etc.
+    if (!chatId.endsWith("@c.us") && !chatId.endsWith("@lid")) {
       return res.json({ ok: true, skipped: "not-direct-chat", chatId });
     }
 
-    // Find or create conversation (with auto-match, agent-to-agent filter,
-    // and LID phone validation — all inside findOrCreateConversation).
-    const conversation = await findOrCreateConversation(sessionName, chatId);
+    // pushName carries the contact label as saved on the agent's phone —
+    // Clinyco agents tag clients as "Name RUT" so we parse it to auto-match
+    // LID contacts to customers.
+    const pushName = payload.pushName || payload._data?.notifyName || null;
+
+    // Find or create conversation (auto-match + agent-to-agent filter +
+    // LID/phone validation all handled inside findOrCreateConversation).
+    const conversation = await findOrCreateConversation(sessionName, chatId, { pushName });
     if (!conversation) {
-      // Silently ignored: invalid phone, LID, or agent-to-agent chat.
       return res.json({ ok: true, skipped: "filtered" });
     }
 
