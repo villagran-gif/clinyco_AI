@@ -37,12 +37,12 @@ SELECT
   apellidos,
   rut,
   whatsapp_phone,
-  phone,
+  telefono_principal,
   email,
   created_at
 FROM customers
-WHERE whatsapp_phone = :phone
-   OR phone          = :phone
+WHERE whatsapp_phone     = :phone
+   OR telefono_principal = :phone
 ORDER BY id;
 
 -- ── 2. customer_channels: todos los canales del mismo customer ────────────
@@ -60,7 +60,7 @@ SELECT
   cc.created_at
 FROM customer_channels cc
 WHERE cc.customer_id IN (
-  SELECT id FROM customers WHERE whatsapp_phone = :phone OR phone = :phone
+  SELECT id FROM customers WHERE whatsapp_phone = :phone OR telefono_principal = :phone
 )
 ORDER BY cc.channel_type, cc.created_at;
 
@@ -77,7 +77,7 @@ SELECT
   c.created_at
 FROM conversations c
 WHERE c.customer_id IN (
-  SELECT id FROM customers WHERE whatsapp_phone = :phone OR phone = :phone
+  SELECT id FROM customers WHERE whatsapp_phone = :phone OR telefono_principal = :phone
 )
    OR c.whatsapp_phone = :phone
    OR c.channel_external_id LIKE replace(:phone, '+', '') || '%'
@@ -145,7 +145,7 @@ FROM agent_direct_conversations adc
 LEFT JOIN agent_waha_sessions aws ON aws.session_name = adc.session_name
 WHERE adc.client_phone LIKE 'lid:%'
   AND adc.customer_id IN (
-    SELECT id FROM customers WHERE whatsapp_phone = :phone OR phone = :phone
+    SELECT id FROM customers WHERE whatsapp_phone = :phone OR telefono_principal = :phone
   )
 ORDER BY adc.last_message_at DESC NULLS LAST;
 
@@ -157,7 +157,7 @@ WITH observer_lids AS (
   FROM agent_direct_conversations
   WHERE client_phone LIKE 'lid:%'
     AND customer_id IN (
-      SELECT id FROM customers WHERE whatsapp_phone = :phone OR phone = :phone
+      SELECT id FROM customers WHERE whatsapp_phone = :phone OR telefono_principal = :phone
     )
 )
 SELECT
