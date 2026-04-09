@@ -1,9 +1,19 @@
 import * as db from "./db.js";
+import { isAgentPhone } from "./agent-phones.js";
 
 /**
- * Normalize phone: remove @c.us/@s.whatsapp.net suffixes,
- * keep only digits, add +56 prefix for Chilean numbers.
- * Copied from extraction/identity-normalizers.js
+ * Normalize a raw phone / chatId prefix.
+ *
+ * Strict validation to reject:
+ *   • WhatsApp LID addresses disguised as phones (>13 digits)
+ *   • Malformed Chilean numbers (56 not followed by the mobile 9 prefix
+ *     and wrong length)
+ *   • Anything shorter than 9 digits
+ *
+ * Chilean mobile format: +569XXXXXXXX (11 digits total including country
+ * code). International E.164 max is 15 digits, but real-world phones rarely
+ * exceed 13. Anything over 13 digits in WAHA chatIds is almost always a
+ * WhatsApp LID address, not a real phone number.
  */
 function normalizePhone(raw) {
   const value = String(raw || "").trim();
@@ -12,36 +22,58 @@ function normalizePhone(raw) {
   const digits = value.replace(/\D/g, "");
   if (!digits) return null;
 
-  if (digits.startsWith("56") && digits.length >= 11) return `+${digits}`;
+  // Chilean mobile with country code: 569 + 8 digits = 11 digits
+  if (digits.startsWith("569") && digits.length === 11) return `+${digits}`;
+
+  // Chilean mobile without country code: 9 + 8 digits = 9 digits
   if (digits.startsWith("9") && digits.length === 9) return `+56${digits}`;
-  if (digits.length >= 8 && digits.length <= 15) return value.startsWith("+") ? value : `+${digits}`;
+
+  // International E.164: between 10 and 13 digits.
+  // We reject anything outside this window — longer values in WAHA chatIds
+  // are WhatsApp LID addresses, not real phone numbers.
+  if (digits.length >= 10 && digits.length <= 13) return `+${digits}`;
+
   return null;
 }
 
 /**
  * Extract the client phone from a WAHA chatId.
- * chatId format: "56912345678@c.us" or "56912345678@s.whatsapp.net"
+ * Only accepts @c.us chatIds (1:1 private chats). Everything else
+ * (@g.us groups, @lid, @broadcast, @newsletter, etc.) is rejected.
  */
 function extractPhoneFromChatId(chatId) {
   if (!chatId) return null;
+  if (!chatId.endsWith("@c.us")) return null;
   const raw = chatId.split("@")[0];
   return normalizePhone(raw);
 }
 
 /**
- * Find or create an agent_direct_conversation for a session + client phone.
+ * Find or create an agent_direct_conversation for a session + client chatId.
  * Auto-matches the client to an existing customer if possible.
+ *
+ * Returns `null` (silently skipping the message) when:
+ *   • The chatId is not a valid @c.us 1:1 chat
+ *   • The phone is not parseable (likely a LID address)
+ *   • The "client" phone is actually one of our own agents (agent-to-agent)
  */
 export async function findOrCreateConversation(sessionName, chatId) {
   const clientPhone = extractPhoneFromChatId(chatId);
   if (!clientPhone) {
-    console.warn("[customer-matcher] Could not extract phone from chatId:", chatId);
+    return null;
+  }
+
+  // Skip agent-to-agent conversations (one agent messaging another agent's
+  // corporate phone shows up as a "client chat" otherwise).
+  if (isAgentPhone(clientPhone)) {
+    console.log(
+      `[customer-matcher] Skipping agent-to-agent chat: ${sessionName} ↔ ${clientPhone}`
+    );
     return null;
   }
 
   const conversationKey = `${sessionName}:${clientPhone}`;
 
-  // Check if conversation already exists
   const existing = await db.findConversation(conversationKey);
   if (existing) return existing;
 
@@ -60,7 +92,6 @@ export async function findOrCreateConversation(sessionName, chatId) {
     console.log(`[customer-matcher] No customer match for ${clientPhone}`);
   }
 
-  // Create new conversation
   const conversation = await db.createConversation({
     conversationKey,
     sessionName,

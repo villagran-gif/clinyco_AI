@@ -3,6 +3,7 @@ import * as db from "./db.js";
 import { findOrCreateConversation } from "./customer-matcher.js";
 import { save as saveMessage } from "./message-store.js";
 import { onMessage as trackBehavior } from "./behavior-tracker.js";
+import { refreshAgentPhones, startAgentPhoneRefresh } from "./agent-phones.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -83,15 +84,18 @@ app.post("/waha-webhook/:agentId", async (req, res) => {
       return res.status(400).json({ ok: false, error: "no chatId" });
     }
 
-    // Skip group messages
-    if (chatId.includes("@g.us")) {
-      return res.json({ ok: true, skipped: "group" });
+    // Only accept 1:1 chats (@c.us). Reject groups (@g.us), LIDs (@lid),
+    // broadcasts (@broadcast), newsletters (@newsletter), etc.
+    if (!chatId.endsWith("@c.us")) {
+      return res.json({ ok: true, skipped: "not-direct-chat", chatId });
     }
 
-    // Find or create conversation (with auto-match)
+    // Find or create conversation (with auto-match, agent-to-agent filter,
+    // and LID phone validation — all inside findOrCreateConversation).
     const conversation = await findOrCreateConversation(sessionName, chatId);
     if (!conversation) {
-      return res.status(400).json({ ok: false, error: "could not resolve conversation" });
+      // Silently ignored: invalid phone, LID, or agent-to-agent chat.
+      return res.json({ ok: true, skipped: "filtered" });
     }
 
     // Store message with per-message analysis
@@ -122,8 +126,22 @@ app.post("/waha-webhook", async (req, res) => {
 });
 
 // ── Start server ──
-app.listen(PORT, () => {
-  console.log(`[agent-observer] Listening on port ${PORT}`);
-  console.log(`[agent-observer] Agents: ${Object.values(AGENTS).join(", ")}`);
-  console.log(`[agent-observer] DB: ${process.env.DATABASE_URL ? "configured" : "NOT SET"}`);
-});
+async function start() {
+  // Discover agent "me" phones from each WAHA instance and populate the
+  // in-memory blocklist used to filter agent-to-agent chats. Done before
+  // we start accepting webhooks so the first message doesn't leak through.
+  try {
+    await refreshAgentPhones();
+    startAgentPhoneRefresh();
+  } catch (err) {
+    console.error("[agent-observer] agent-phones init failed:", err.message);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[agent-observer] Listening on port ${PORT}`);
+    console.log(`[agent-observer] Agents: ${Object.values(AGENTS).join(", ")}`);
+    console.log(`[agent-observer] DB: ${process.env.DATABASE_URL ? "configured" : "NOT SET"}`);
+  });
+}
+
+start();

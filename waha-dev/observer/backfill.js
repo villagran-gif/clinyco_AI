@@ -20,9 +20,13 @@
 //   BACKFILL_AGENT     — run only for this Zendesk ID (optional)
 
 import * as db from "./db.js";
-import { findOrCreateConversation } from "./customer-matcher.js";
+import {
+  findOrCreateConversation,
+  extractPhoneFromChatId,
+} from "./customer-matcher.js";
 import { save as saveMessage } from "./message-store.js";
 import { onMessage as trackBehavior } from "./behavior-tracker.js";
+import { refreshAgentPhones, isAgentPhone } from "./agent-phones.js";
 
 // Agent registry: Zendesk ID → { name, wahaHost }
 // wahaHost is the docker-network hostname of the WAHA container for that agent.
@@ -124,12 +128,34 @@ async function backfillAgent(agentId, { name, wahaHost }) {
     return { agent: name, error: "invalid chats response" };
   }
 
-  // 4. Keep only 1:1 private chats (skip groups, broadcasts, LID)
+  // 4. Keep only 1:1 private chats with a valid phone, and drop:
+  //    - groups / broadcasts / LID (non-@c.us suffix)
+  //    - WhatsApp LID addresses disguised as phones (phone > 13 digits → null)
+  //    - agent-to-agent chats (the "client" is actually another of our agents)
+  let skippedNonCus = 0;
+  let skippedBadPhone = 0;
+  let skippedAgentPeer = 0;
   const privateChats = chats.filter((c) => {
     const id = getChatId(c);
-    return id.endsWith("@c.us");
+    if (!id.endsWith("@c.us")) {
+      skippedNonCus++;
+      return false;
+    }
+    const phone = extractPhoneFromChatId(id);
+    if (!phone) {
+      skippedBadPhone++;
+      return false;
+    }
+    if (isAgentPhone(phone)) {
+      skippedAgentPeer++;
+      return false;
+    }
+    return true;
   });
-  console.log(`  Found ${privateChats.length} private chats (of ${chats.length} total)`);
+  console.log(
+    `  Found ${privateChats.length} private chats (of ${chats.length} total; ` +
+    `skipped ${skippedNonCus} non-@c.us, ${skippedBadPhone} bad-phone, ${skippedAgentPeer} agent-peer)`
+  );
 
   let chatsProcessed = 0;
   let totalSaved = 0;
@@ -225,6 +251,11 @@ async function main() {
     console.error("[backfill] WAHA_API_KEY is not set; aborting");
     process.exit(1);
   }
+
+  // Discover agent phones from every WAHA instance so agent-to-agent
+  // chats are filtered out as we ingest historical messages.
+  console.log("[backfill] Discovering agent phones from WAHA...");
+  await refreshAgentPhones();
 
   const targetAgentId = process.env.BACKFILL_AGENT || null;
   if (targetAgentId && !AGENTS[targetAgentId]) {
