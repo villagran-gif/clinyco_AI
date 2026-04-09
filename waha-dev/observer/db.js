@@ -43,10 +43,14 @@ export async function findConversation(conversationKey) {
 }
 
 export async function createConversation({ conversationKey, sessionName, clientPhone, customerId, matchStatus }) {
+  // Idempotent upsert: if a concurrent webhook already created this row,
+  // just return the existing one without overwriting customer_id/match_status.
   const { rows } = await pool.query(
     `INSERT INTO agent_direct_conversations
        (conversation_key, session_name, client_phone, customer_id, match_status)
      VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (conversation_key) DO UPDATE SET
+       updated_at = now()
      RETURNING *`,
     [conversationKey, sessionName, clientPhone, customerId, matchStatus]
   );
