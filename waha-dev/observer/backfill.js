@@ -12,7 +12,11 @@
 //
 // Env vars:
 //   BACKFILL_DAYS      — window in days (default 90)
-//   BACKFILL_MSG_LIMIT — max messages per chat to request from WAHA (default 1000)
+//   BACKFILL_MSG_LIMIT — max messages per chat to request from WAHA (default 50)
+//                        NOTE: WAHA Core 2026.3.x's WEBJS engine (whatsapp-web.js)
+//                        keeps only ~50 messages per chat in memory. Requests with
+//                        limit>=75 consistently fail with the "waitForChatLoading"
+//                        bug. So 50 is the practical ceiling for historical fetches.
 //   BACKFILL_AGENT     — run only for this Zendesk ID (optional)
 
 import * as db from "./db.js";
@@ -33,7 +37,9 @@ const AGENTS = {
 const SESSION_NAME = "default";
 const API_KEY = process.env.WAHA_API_KEY || "";
 const DAYS_BACK = parseInt(process.env.BACKFILL_DAYS || "90", 10);
-const MSG_LIMIT_PER_CHAT = parseInt(process.env.BACKFILL_MSG_LIMIT || "1000", 10);
+// Capped at 50: WAHA Core 2026.3.x WEBJS engine only keeps ~50 msgs per chat
+// in memory; higher limits trigger the whatsapp-web.js waitForChatLoading bug.
+const MSG_LIMIT_PER_CHAT = Math.min(parseInt(process.env.BACKFILL_MSG_LIMIT || "50", 10), 50);
 const SINCE_MS = Date.now() - DAYS_BACK * 24 * 60 * 60 * 1000;
 
 // ── WAHA API helpers ──────────────────────────────────────────────────
