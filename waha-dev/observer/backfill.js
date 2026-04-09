@@ -64,12 +64,16 @@ async function getChats(host) {
 }
 
 async function getMessages(host, chatId) {
+  // Use the legacy /api/messages endpoint because the newer
+  // /api/{session}/chats/{chatId}/messages endpoint triggers a
+  // "waitForChatLoading" bug in whatsapp-web.js on WAHA Core 2026.3.x.
   const qs = new URLSearchParams({
+    session: SESSION_NAME,
+    chatId,
     limit: String(MSG_LIMIT_PER_CHAT),
     downloadMedia: "false",
   });
-  const encodedId = encodeURIComponent(chatId);
-  return wahaFetch(host, `/api/${SESSION_NAME}/chats/${encodedId}/messages?${qs}`);
+  return wahaFetch(host, `/api/messages?${qs}`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
