@@ -384,22 +384,23 @@ function extractMedinetQuery(text = "") {
   return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
 }
 
-async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut }) {
+async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut, branchId }) {
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
   const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
+  const effectiveBranchId = Number(branchId || DEFAULT_BRANCH_ID);
 
   // ── 1. Try remote API-only worker (VPS Chile) ──
   if (useRemoteWorker()) {
-    console.log("[medinet-search] path=remote api worker | query:", safeQuery);
+    console.log("[medinet-search] path=remote api worker | query:", safeQuery, "| branch:", effectiveBranchId);
 
     const result = await callMedinetWorkerApiSearch({
       query: safeQuery,
       patientRut: rut || "",
       patientPhone: String(patientPhone || ""),
       patientMessage: String(patientMessage || ""),
-      branchId: DEFAULT_BRANCH_ID
+      branchId: effectiveBranchId,
     }, timeoutMs);
 
     if (result !== null) {
@@ -455,10 +456,12 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
   // ── 0. Try MelanIA first (session cookie booking with full patient data) ──
   if (useRemoteWorker()) {
     try {
-      console.log("[medinet-booking] path=melania | starting:", slot.professionalId, slot.dataDia, slot.time);
+      const melaniaBranchId = slot.branchId || null;
+      console.log("[medinet-booking] path=melania | starting:", slot.professionalId, slot.dataDia, slot.time, "| branch:", melaniaBranchId || "default");
       const melaniaResult = await callMedinetWorkerPath("/melania/book", {
         query: slot.professional || slot.professionalId,
         slotIndex: 0,
+        branchId: melaniaBranchId,
         patientData: {
           ...patientData,
           rut: patientData.rut || patientData.run || "",
@@ -5130,13 +5133,15 @@ app.post("/messages", async (req, res) => {
 
       // MelanIA needs slot search — fetch from worker and present
       if (result.searchQuery && state.melania.step === "awaiting_slots") {
-        console.log("[melania] Searching slots for:", result.searchQuery);
+        const branchIdForSearch = result.searchBranchId || state.melania.chosenProfessional?.branchId || null;
+        console.log("[melania] Searching slots for:", result.searchQuery, "branchId:", branchIdForSearch || "default");
         try {
           const searchResult = await runMedinetAntonia({
             query: result.searchQuery,
             patientPhone: info?.channelDisplayName || "",
             patientMessage: "",
             patientRut: state.contactDraft?.c_rut || "",
+            branchId: branchIdForSearch,
           });
           const slots = searchResult?.available_slots || [];
           const slotsResult = setMelaniaSlots(

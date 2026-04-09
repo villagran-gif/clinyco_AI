@@ -143,9 +143,10 @@ export function handleMelaniaMessage(melaniaState, userText) {
     if (text === "2") {
       s.step = "choose_professional";
       s.retryCount = 0;
-      const lines = s.professionals.map((p, i) =>
-        `${i + 1}. ${p.nombres} ${p.paterno} - ${p.especialidad}`
-      );
+      const lines = s.professionals.map((p, i) => {
+        const branch = p.branchName ? ` - ${p.branchName}` : "";
+        return `${i + 1}. ${p.nombres} ${p.paterno} - ${p.especialidad}${branch}`;
+      });
       lines.push("0. Volver al menu");
       return {
         reply: "Profesionales con horas disponibles:\n\n" + lines.join("\n") + "\n\nIndica el numero.",
@@ -182,9 +183,10 @@ export function handleMelaniaMessage(melaniaState, userText) {
       s.step = "choose_professional";
       s.retryCount = 0;
 
-      const lines = profs.map((p, i) =>
-        `${i + 1}. ${p.nombres} ${p.paterno}`
-      );
+      const lines = profs.map((p, i) => {
+        const branch = p.branchName ? ` - ${p.branchName}` : "";
+        return `${i + 1}. ${p.nombres} ${p.paterno}${branch}`;
+      });
       lines.push("0. Volver a especialidades");
       return {
         reply: `${chosen.name}. Profesionales:\n\n` + lines.join("\n") + "\n\nIndica el numero.",
@@ -242,7 +244,11 @@ export function handleMelaniaMessage(melaniaState, userText) {
     const num = parseInt(text, 10);
 
     if (num >= 1 && num <= slots.length) {
-      const chosen = slots[num - 1];
+      const chosen = { ...slots[num - 1] };
+      // Inject the branchId from the selected professional so booking uses the right branch
+      if (!chosen.branchId && s.chosenProfessional?.branchId) {
+        chosen.branchId = s.chosenProfessional.branchId;
+      }
       s.chosenSlot = chosen;
       s.step = "collecting_data";
       s.retryCount = 0;
