@@ -11,7 +11,9 @@
 import * as db from "./db.js";
 
 // Same registry as backfill.js / server.js — Zendesk ID → WAHA docker host.
-const AGENT_WAHA_HOSTS = {
+// Exported so the LID resolver (and any other module that needs to reach
+// the per-agent WAHA instance) can reuse it without duplicating the mapping.
+export const AGENT_WAHA_HOSTS = {
   "39403066594317": "waha-gabriela",
   "29866913338893": "waha-allison",
   "30229490880397": "waha-carolin",
@@ -27,7 +29,10 @@ const KNOWN_AGENT_PHONES = [
 ];
 
 const API_KEY = process.env.WAHA_API_KEY || "";
-const SESSION_NAME = "default";
+// WAHA session name — same for every agent, since each WAHA instance
+// only has the single "default" session bound to its corporate phone.
+export const WAHA_SESSION_NAME = "default";
+const SESSION_NAME = WAHA_SESSION_NAME;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 let cache = new Set(KNOWN_AGENT_PHONES);

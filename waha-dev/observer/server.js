@@ -4,6 +4,7 @@ import { findOrCreateConversation } from "./customer-matcher.js";
 import { save as saveMessage } from "./message-store.js";
 import { onMessage as trackBehavior } from "./behavior-tracker.js";
 import { refreshAgentPhones, startAgentPhoneRefresh } from "./agent-phones.js";
+import { refreshAllLidCaches } from "./lid-resolver.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -139,6 +140,16 @@ async function start() {
     startAgentPhoneRefresh();
   } catch (err) {
     console.error("[agent-observer] agent-phones init failed:", err.message);
+  }
+
+  // Bulk-preload the WAHA Lids API cache for every agent so incoming @lid
+  // webhooks can be resolved to real phone numbers without a round-trip
+  // per message. Unlike agent-phones this is best-effort: failing to
+  // preload just means the resolver will miss cache on the first hit.
+  try {
+    await refreshAllLidCaches();
+  } catch (err) {
+    console.error("[agent-observer] lid-resolver preload failed:", err.message);
   }
 
   app.listen(PORT, () => {

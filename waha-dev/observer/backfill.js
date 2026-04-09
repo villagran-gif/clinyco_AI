@@ -27,6 +27,7 @@ import {
 import { save as saveMessage } from "./message-store.js";
 import { onMessage as trackBehavior } from "./behavior-tracker.js";
 import { refreshAgentPhones, isAgentPhone } from "./agent-phones.js";
+import { refreshAllLidCaches } from "./lid-resolver.js";
 
 // Agent registry: Zendesk ID → { name, wahaHost }
 // wahaHost is the docker-network hostname of the WAHA container for that agent.
@@ -271,6 +272,11 @@ async function main() {
   // chats are filtered out as we ingest historical messages.
   console.log("[backfill] Discovering agent phones from WAHA...");
   await refreshAgentPhones();
+
+  // Preload the LID → phone mapping cache from each WAHA instance so the
+  // matcher can resolve @lid chats to real numbers during ingestion.
+  console.log("[backfill] Preloading WAHA Lids API cache...");
+  await refreshAllLidCaches();
 
   const targetAgentId = process.env.BACKFILL_AGENT || null;
   if (targetAgentId && !AGENTS[targetAgentId]) {
