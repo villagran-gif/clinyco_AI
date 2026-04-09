@@ -19,6 +19,9 @@ export const AGENT_WAHA_HOSTS = {
   "30229490880397": "waha-carolin",
   "30229583958797": "waha-camila",
   "13578942560141": "waha-giselle",
+  // Sandbox: NOWEB engine on a test phone. Isolated from production
+  // by session_name; remove once the NOWEB migration decision is made.
+  "test-noweb": "waha-test",
 };
 
 // Hardcoded fallback — used if WAHA discovery fails for an instance.

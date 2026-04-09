@@ -18,6 +18,8 @@ const AGENTS = {
   "30229490880397": "Carolin Cornejo",
   "30229583958797": "Camila Alcayaga",
   "13578942560141": "Giselle Santander",
+  // Sandbox: test phone running NOWEB engine for history sync validation.
+  "test-noweb": "Test Phone (NOWEB)",
 };
 
 // ── Health check ──

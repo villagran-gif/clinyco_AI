@@ -94,7 +94,30 @@ services:
       - clinyco-dev
     restart: unless-stopped
 
-  # ── Observer (único, recibe webhooks de las 5) ──
+  # ── Test Phone (puerto 3010) — NOWEB engine sandbox ──
+  # Validates (1) Baileys NOWEB works on WAHA Core, (2) history sync is
+  # delivered via webhooks, (3) how deep the sync goes for a macOS-identified
+  # linked device. Isolated from production: own volume, own session name.
+  waha-test:
+    image: devlikeapro/waha:latest
+    container_name: clinyco-waha-test
+    ports:
+      - "127.0.0.1:3010:3000"
+    environment:
+      - WHATSAPP_API_KEY=${WAHA_API_KEY}
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
+      - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook/test-noweb
+      - WHATSAPP_HOOK_EVENTS=message,message.any,session.status
+    volumes:
+      - waha_test:/app/.sessions
+    networks:
+      - clinyco-dev
+    restart: unless-stopped
+
+  # ── Observer (único, recibe webhooks de las 5 + test) ──
   observer:
     build: ./observer
     container_name: clinyco-agent-observer
@@ -112,6 +135,7 @@ services:
       - waha-carolin
       - waha-camila
       - waha-giselle
+      - waha-test
     restart: unless-stopped
 
 volumes:
@@ -120,6 +144,7 @@ volumes:
   waha_carolin:
   waha_camila:
   waha_giselle:
+  waha_test:
 
 networks:
   clinyco-dev:
