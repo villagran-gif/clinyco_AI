@@ -628,26 +628,50 @@ app.post("/melania/search", authMiddleware, async (req, res) => {
   }
 });
 
+// MelanIA: all clinic branches
+const MELANIA_BRANCHES = [
+  { id: 39, name: "Antofagasta Mall Arauco" },
+  { id: 38, name: "Unidad de Endoscopia Clinyco/Hospital Militar ANF" },
+  { id: 2, name: "Telemedicina Clinyco1" },
+  { id: 3, name: "Telemedicina Clinyco2" },
+];
+
 /**
- * MelanIA: Get all available professionals with next slots.
- * POST /melania/availability { branchId? }
+ * MelanIA: Get all available professionals with next slots across ALL branches.
+ * POST /melania/availability
  */
 app.post("/melania/availability", authMiddleware, async (req, res) => {
   try {
-    const branch = Number(req.body?.branchId || req.query.branchId || DEFAULT_BRANCH_ID);
-    const [professionals, specialties] = await Promise.all([
-      fetchProximosCuposAll(branch),
-      fetchSpecialtiesByBranchNoAuth(branch),
-    ]);
+    // Fetch professionals from all branches in parallel
+    const results = await Promise.all(
+      MELANIA_BRANCHES.map(async (b) => {
+        try {
+          const profs = await fetchProximosCuposAll(b.id);
+          return (profs || []).map(p => ({ ...p, branchId: b.id, branchName: b.name }));
+        } catch (e) {
+          console.warn(`[melania] availability branch ${b.id} failed:`, e.message);
+          return [];
+        }
+      })
+    );
 
-    // Simplify specialties to id+nombre
+    // Merge and dedupe: a professional may appear in multiple branches with different dates
+    // Keep them as separate entries so the slot search uses the right branchId
+    const allProfessionals = results.flat();
+
+    // Fetch specialties from main branch (39) as reference
+    let specialties = [];
+    try {
+      specialties = await fetchSpecialtiesByBranchNoAuth(39);
+    } catch { /* ignore */ }
+
     const specMap = (specialties || []).map(s => ({ id: s.id, nombre: s.nombre, es_activa: s.es_activa }));
 
     return res.json({
       success: true,
       source: "melania",
-      branchId: branch,
-      professionals: professionals || [],
+      branches: MELANIA_BRANCHES,
+      professionals: allProfessionals,
       specialties: specMap,
       timestamp: new Date().toISOString(),
     });

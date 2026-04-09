@@ -220,6 +220,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
         melaniaState: s,
         searchQuery: `${chosen.nombres} ${chosen.paterno}`.trim(),
         searchProfessionalId: chosen.id,
+        searchBranchId: chosen.branchId || null,
       };
     }
 
