@@ -53,7 +53,9 @@ import {
   getCompras,
   getVentas,
   comprasResumen,
+  comprasResumenPorTipo,
   ventasResumen,
+  ventasResumenPorTipo,
   getApiConnections,
 } from "./db.js";
 
@@ -458,8 +460,16 @@ router.get("/sii/compras-resumen", wrap(async (req, res) => {
   res.json(await comprasResumen(req.query.year || null));
 }));
 
+router.get("/sii/compras-por-tipo", wrap(async (req, res) => {
+  res.json(await comprasResumenPorTipo(req.query.periodo || null));
+}));
+
 router.get("/sii/ventas-resumen", wrap(async (req, res) => {
   res.json(await ventasResumen(req.query.year || null));
+}));
+
+router.get("/sii/ventas-por-tipo", wrap(async (req, res) => {
+  res.json(await ventasResumenPorTipo(req.query.periodo || null));
 }));
 
 router.get("/api-connections", wrap(async (_req, res) => {

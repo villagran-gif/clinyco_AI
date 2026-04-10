@@ -1327,11 +1327,30 @@ export async function comprasResumen(year = null) {
   const { rows } = await getPool().query(
     `SELECT date_trunc('month', fecha_docto)::date::text AS month,
             count(*)::int AS total_docs,
-            sum(monto_neto)::bigint AS total_neto,
-            sum(monto_iva_recuperable)::bigint AS total_iva,
-            sum(monto_total)::bigint AS total_total
+            sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+            sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+            sum(COALESCE(monto_iva_recuperable,0))::bigint AS total_iva_rec,
+            sum(COALESCE(monto_iva_no_recuperable,0))::bigint AS total_iva_no_rec,
+            sum(COALESCE(monto_total,0))::bigint AS total_total
      FROM sii_compras ${filter}
      GROUP BY 1 ORDER BY 1 DESC`
+  );
+  return rows;
+}
+
+export async function comprasResumenPorTipo(periodo = null) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT tipo_doc,
+            count(*)::int AS total_docs,
+            sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+            sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+            sum(COALESCE(monto_iva_recuperable,0))::bigint AS total_iva_rec,
+            sum(COALESCE(monto_iva_no_recuperable,0))::bigint AS total_iva_no_rec,
+            sum(COALESCE(iva_uso_comun,0))::bigint AS total_iva_uso_comun,
+            sum(COALESCE(monto_total,0))::bigint AS total_total
+     FROM sii_compras ${filter}
+     GROUP BY tipo_doc ORDER BY total_total DESC`
   );
   return rows;
 }
@@ -1341,11 +1360,27 @@ export async function ventasResumen(year = null) {
   const { rows } = await getPool().query(
     `SELECT date_trunc('month', fecha_docto)::date::text AS month,
             count(*)::int AS total_docs,
-            sum(monto_neto)::bigint AS total_neto,
-            sum(monto_iva)::bigint AS total_iva,
-            sum(monto_total)::bigint AS total_total
+            sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+            sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+            sum(COALESCE(monto_iva,0))::bigint AS total_iva,
+            sum(COALESCE(monto_total,0))::bigint AS total_total
      FROM sii_ventas ${filter}
      GROUP BY 1 ORDER BY 1 DESC`
+  );
+  return rows;
+}
+
+export async function ventasResumenPorTipo(periodo = null) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT tipo_doc,
+            count(*)::int AS total_docs,
+            sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+            sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+            sum(COALESCE(monto_iva,0))::bigint AS total_iva,
+            sum(COALESCE(monto_total,0))::bigint AS total_total
+     FROM sii_ventas ${filter}
+     GROUP BY tipo_doc ORDER BY total_total DESC`
   );
   return rows;
 }
