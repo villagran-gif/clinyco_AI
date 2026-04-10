@@ -1192,3 +1192,167 @@ export async function marketingKPIs(year = null) {
   );
   return rows;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  SII COMPRAS / VENTAS (CSV upload)
+// ═══════════════════════════════════════════════════════════════════
+
+const COMPRAS_COLS = [
+  'nro','tipo_doc','tipo_compra','rut_proveedor','razon_social','folio',
+  'fecha_docto','fecha_recepcion','fecha_acuse','monto_exento','monto_neto',
+  'monto_iva_recuperable','monto_iva_no_recuperable','codigo_iva_no_rec',
+  'monto_total','monto_neto_activo_fijo','iva_activo_fijo','iva_uso_comun',
+  'impto_sin_derecho_credito','iva_no_retenido','tabacos_puros',
+  'tabacos_cigarrillos','tabacos_elaborados','nce_nde_sobre_fact_compra',
+  'codigo_otro_impuesto','valor_otro_impuesto','tasa_otro_impuesto'
+];
+
+const VENTAS_COLS = [
+  'nro','tipo_doc','tipo_venta','rut_cliente','razon_social','folio',
+  'fecha_docto','fecha_recepcion','fecha_acuse_recibo','fecha_reclamo',
+  'monto_exento','monto_neto','monto_iva','monto_total',
+  'iva_retenido_total','iva_retenido_parcial','iva_no_retenido',
+  'iva_propio','iva_terceros','rut_emisor_liquid_factura',
+  'neto_comision_liquid_factura','exento_comision_liquid_factura',
+  'iva_comision_liquid_factura','iva_fuera_de_plazo',
+  'tipo_docto_referencia','folio_docto_referencia',
+  'num_ident_receptor_extranjero','nacionalidad_receptor_extranjero',
+  'credito_empresa_constructora','impto_zona_franca',
+  'garantia_dep_envases','indicador_venta_sin_costo',
+  'indicador_servicio_periodico','monto_no_facturable',
+  'total_monto_periodo','venta_pasajes_nacional',
+  'venta_pasajes_internacional','numero_interno','codigo_sucursal',
+  'nce_nde_sobre_fact_compra','codigo_otro_imp','valor_otro_imp','tasa_otro_imp'
+];
+
+function parseDate(s) {
+  if (!s) return null;
+  const cleaned = String(s).trim();
+  if (!cleaned || cleaned === '0' || cleaned === '-') return null;
+  // Try DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD
+  const dmy = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+  const iso = cleaned.match(/^\d{4}-\d{2}-\d{2}/);
+  if (iso) return iso[0];
+  return null;
+}
+
+function parseInt0(s) {
+  if (!s) return 0;
+  const n = parseInt(String(s).replace(/[.$\s]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function parseFloat0(s) {
+  if (!s) return 0;
+  const n = parseFloat(String(s).replace(/[$\s]/g, '').replace(',','.'));
+  return isNaN(n) ? 0 : n;
+}
+
+export async function insertCompras(rows, periodo, batchId) {
+  const pool = getPool();
+  let inserted = 0, skipped = 0;
+  for (const r of rows) {
+    try {
+      await pool.query(
+        `INSERT INTO sii_compras (${COMPRAS_COLS.join(',')}, periodo, upload_batch_id)
+         VALUES (${COMPRAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${COMPRAS_COLS.length+1}, $${COMPRAS_COLS.length+2})
+         ON CONFLICT (folio, tipo_doc, rut_proveedor, fecha_docto) DO NOTHING`,
+        [
+          parseInt0(r[0]), r[1]||'', r[2]||'', r[3]||'', r[4]||'', r[5]||'',
+          parseDate(r[6]), parseDate(r[7]), parseDate(r[8]),
+          parseInt0(r[9]), parseInt0(r[10]), parseInt0(r[11]), parseInt0(r[12]),
+          r[13]||'', parseInt0(r[14]), parseInt0(r[15]), parseInt0(r[16]),
+          parseInt0(r[17]), parseInt0(r[18]), parseInt0(r[19]),
+          parseInt0(r[20]), parseInt0(r[21]), parseInt0(r[22]),
+          parseInt0(r[23]), r[24]||'', parseInt0(r[25]), parseFloat0(r[26]),
+          periodo, batchId
+        ]
+      );
+      inserted++;
+    } catch (e) { skipped++; }
+  }
+  return { inserted, skipped, total: rows.length };
+}
+
+export async function insertVentas(rows, periodo, batchId) {
+  const pool = getPool();
+  let inserted = 0, skipped = 0;
+  for (const r of rows) {
+    try {
+      await pool.query(
+        `INSERT INTO sii_ventas (${VENTAS_COLS.join(',')}, periodo, upload_batch_id)
+         VALUES (${VENTAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${VENTAS_COLS.length+1}, $${VENTAS_COLS.length+2})
+         ON CONFLICT (folio, tipo_doc, rut_cliente, fecha_docto) DO NOTHING`,
+        [
+          parseInt0(r[0]), r[1]||'', r[2]||'', r[3]||'', r[4]||'', r[5]||'',
+          parseDate(r[6]), parseDate(r[7]), parseDate(r[8]), parseDate(r[9]),
+          parseInt0(r[10]), parseInt0(r[11]), parseInt0(r[12]), parseInt0(r[13]),
+          parseInt0(r[14]), parseInt0(r[15]), parseInt0(r[16]),
+          parseInt0(r[17]), parseInt0(r[18]), r[19]||'',
+          parseInt0(r[20]), parseInt0(r[21]), parseInt0(r[22]),
+          parseInt0(r[23]), r[24]||'', r[25]||'',
+          r[26]||'', r[27]||'', parseInt0(r[28]), parseInt0(r[29]),
+          parseInt0(r[30]), r[31]||'', r[32]||'',
+          parseInt0(r[33]), parseInt0(r[34]), parseInt0(r[35]),
+          parseInt0(r[36]), r[37]||'', r[38]||'',
+          parseInt0(r[39]), r[40]||'', parseInt0(r[41]), parseFloat0(r[42]),
+          periodo, batchId
+        ]
+      );
+      inserted++;
+    } catch (e) { skipped++; }
+  }
+  return { inserted, skipped, total: rows.length };
+}
+
+export async function getCompras(periodo = null, limit = 500) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT * FROM sii_compras ${filter} ORDER BY fecha_docto DESC NULLS LAST LIMIT $1`, [limit]
+  );
+  return rows;
+}
+
+export async function getVentas(periodo = null, limit = 500) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT * FROM sii_ventas ${filter} ORDER BY fecha_docto DESC NULLS LAST LIMIT $1`, [limit]
+  );
+  return rows;
+}
+
+export async function comprasResumen(year = null) {
+  const filter = year ? `WHERE EXTRACT(YEAR FROM fecha_docto) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT date_trunc('month', fecha_docto)::date::text AS month,
+            count(*)::int AS total_docs,
+            sum(monto_neto)::bigint AS total_neto,
+            sum(monto_iva_recuperable)::bigint AS total_iva,
+            sum(monto_total)::bigint AS total_total
+     FROM sii_compras ${filter}
+     GROUP BY 1 ORDER BY 1 DESC`
+  );
+  return rows;
+}
+
+export async function ventasResumen(year = null) {
+  const filter = year ? `WHERE EXTRACT(YEAR FROM fecha_docto) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT date_trunc('month', fecha_docto)::date::text AS month,
+            count(*)::int AS total_docs,
+            sum(monto_neto)::bigint AS total_neto,
+            sum(monto_iva)::bigint AS total_iva,
+            sum(monto_total)::bigint AS total_total
+     FROM sii_ventas ${filter}
+     GROUP BY 1 ORDER BY 1 DESC`
+  );
+  return rows;
+}
+
+export async function getApiConnections() {
+  const { rows } = await getPool().query(
+    `SELECT provider, config, is_active, last_sync_at FROM api_connections ORDER BY provider`
+  );
+  return rows;
+}

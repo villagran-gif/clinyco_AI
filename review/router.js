@@ -48,6 +48,13 @@ import {
   getBusinessParams,
   updateBusinessParam,
   marketingKPIs,
+  insertCompras,
+  insertVentas,
+  getCompras,
+  getVentas,
+  comprasResumen,
+  ventasResumen,
+  getApiConnections,
 } from "./db.js";
 
 const router = Router();
@@ -400,6 +407,63 @@ router.put("/marketing/params/:key", wrap(async (req, res) => {
   const result = await updateBusinessParam(req.params.key, value);
   if (!result) return res.status(404).json({ error: "param not found" });
   res.json(result);
+}));
+
+// ═══════════ SII COMPRAS / VENTAS (CSV) ═══════════
+
+function parseCSVRows(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const sep = lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : ',';
+  const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = lines.slice(1).map(l => l.split(sep).map(c => c.trim().replace(/^"|"$/g, '')));
+  return { headers, rows };
+}
+
+function detectCSVType(headers) {
+  const h = headers.map(x => x.toLowerCase());
+  if (h.includes('tipo compra') || h.includes('rut proveedor') || h.includes('monto iva recuperable')) return 'compras';
+  if (h.includes('tipo venta') || h.includes('rut cliente') || h.includes('monto iva')) return 'ventas';
+  return null;
+}
+
+router.post("/sii/upload", wrap(async (req, res) => {
+  const { csv, periodo } = req.body;
+  if (!csv) return res.status(400).json({ error: "csv text required" });
+  const { headers, rows } = parseCSVRows(csv);
+  if (rows.length === 0) return res.status(400).json({ error: "CSV vacio o sin filas de datos" });
+  const type = detectCSVType(headers);
+  if (!type) return res.status(400).json({ error: "No se pudo detectar formato. Headers esperados: 'Tipo Compra'/'RUT Proveedor' (compras) o 'Tipo Venta'/'Rut cliente' (ventas)", headers });
+  const batchId = `upload-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const per = periodo || new Date().toISOString().substring(0,7);
+  const result = type === 'compras'
+    ? await insertCompras(rows, per, batchId)
+    : await insertVentas(rows, per, batchId);
+  res.json({ type, ...result, batchId, periodo: per });
+}));
+
+router.get("/sii/compras", wrap(async (req, res) => {
+  const periodo = req.query.periodo || null;
+  const limit = Math.min(parseInt(req.query.limit) || 500, 2000);
+  res.json(await getCompras(periodo, limit));
+}));
+
+router.get("/sii/ventas", wrap(async (req, res) => {
+  const periodo = req.query.periodo || null;
+  const limit = Math.min(parseInt(req.query.limit) || 500, 2000);
+  res.json(await getVentas(periodo, limit));
+}));
+
+router.get("/sii/compras-resumen", wrap(async (req, res) => {
+  res.json(await comprasResumen(req.query.year || null));
+}));
+
+router.get("/sii/ventas-resumen", wrap(async (req, res) => {
+  res.json(await ventasResumen(req.query.year || null));
+}));
+
+router.get("/api-connections", wrap(async (_req, res) => {
+  res.json(await getApiConnections());
 }));
 
 export default router;

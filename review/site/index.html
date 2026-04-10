@@ -672,6 +672,61 @@
           <table id="table-mkt-kpis" role="grid" style="font-size:.75rem">
             <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="num">Costo Total</th><th class="sortable" data-col="2" data-type="num">Deals</th><th class="sortable" data-col="3" data-type="num">Operados</th><th class="sortable" data-col="4" data-type="num">CAC</th><th class="sortable" data-col="5" data-type="num">LTV</th><th class="sortable" data-col="6" data-type="num">LTV:CAC</th><th class="sortable" data-col="7" data-type="num">Payback</th><th class="sortable" data-col="8" data-type="num">Conv%</th></tr></thead>
             <tbody></tbody></table></div></div>
+
+      <!-- CSV Upload -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Subir CSV — Libro de Compras o Ventas (SII)</h3>
+        <p style="font-size:.8rem;color:#64748b;margin-bottom:.8rem">Arrastra o pega el CSV exportado desde <a href="#instrucciones-sii" onclick="showTab('kpis')">mipyme.sii.cl</a>. Se detecta automaticamente si es Compras o Ventas.</p>
+        <div id="csv-drop-zone" style="border:2px dashed #cbd5e1;border-radius:12px;padding:2rem;text-align:center;cursor:pointer;transition:border-color .2s;margin-bottom:1rem" ondragover="event.preventDefault();this.style.borderColor='#2563eb'" ondragleave="this.style.borderColor='#cbd5e1'" ondrop="handleCSVDrop(event)">
+          <div style="font-size:2rem;opacity:.3">CSV</div>
+          <p style="color:#64748b;font-size:.85rem;margin:.5rem 0">Arrastra archivo CSV aqui o</p>
+          <input type="file" id="csv-file-input" accept=".csv,.tsv,.txt" onchange="handleCSVFile(this.files[0])" style="display:none">
+          <button onclick="document.getElementById('csv-file-input').click()" style="padding:.5rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Seleccionar archivo</button>
+        </div>
+        <div style="margin-bottom:.5rem">
+          <label style="font-size:.7rem;color:#64748b">Periodo (opcional, se detecta del CSV):</label>
+          <input type="month" id="csv-periodo" style="padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem">
+        </div>
+        <div id="csv-upload-status" style="font-size:.8rem;color:#64748b"></div>
+      </div>
+
+      <!-- Resumen Compras -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Resumen Compras (SII)</h3>
+        <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+          <table id="table-compras-resumen" role="grid" style="font-size:.75rem">
+            <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="num">Docs</th><th class="sortable" data-col="2" data-type="num">Neto</th><th class="sortable" data-col="3" data-type="num">IVA</th><th class="sortable" data-col="4" data-type="num">Total</th></tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- Resumen Ventas -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Resumen Ventas (SII)</h3>
+        <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+          <table id="table-ventas-resumen" role="grid" style="font-size:.75rem">
+            <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="num">Docs</th><th class="sortable" data-col="2" data-type="num">Neto</th><th class="sortable" data-col="3" data-type="num">IVA</th><th class="sortable" data-col="4" data-type="num">Total</th></tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- Raw Compras -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Compras (SII)</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-compras-raw" role="grid" style="font-size:.7rem">
+            <thead><tr><th>Nro</th><th>Tipo</th><th>RUT</th><th>Razon Social</th><th>Folio</th><th>Fecha</th><th>Neto</th><th>IVA</th><th>Total</th><th>Periodo</th></tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- Raw Ventas -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Ventas (SII)</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-ventas-raw" role="grid" style="font-size:.7rem">
+            <thead><tr><th>Nro</th><th>Tipo</th><th>RUT</th><th>Razon Social</th><th>Folio</th><th>Fecha</th><th>Neto</th><th>IVA</th><th>Total</th><th>Periodo</th></tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- API Connections (future) -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Conexiones API (futuro)</h3>
+        <div id="api-connections-container" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.85rem"></div>
+      </div>
     </div>
   </div>
 
@@ -682,7 +737,8 @@
       <p style="color:#64748b;font-size:.8rem">Click en cualquier KPI para ir a su definicion. Cada formula incluye ejemplo con datos reales de Clinyco.</p>
       <nav style="background:#f1f5f9;padding:1rem;border-radius:8px;margin-bottom:2rem">
         <strong>Indice rapido:</strong><br>
-        <a href="#kpi-cac">CAC</a> · <a href="#kpi-ltv">LTV</a> · <a href="#kpi-ltv-cac">LTV:CAC</a> · <a href="#kpi-payback">Payback Period</a> · <a href="#kpi-churn">Churn Rate</a> · <a href="#kpi-conversion">Conversion %</a> · <a href="#kpi-mrr">MRR / ARR</a> · <a href="#kpi-quick-ratio">Quick Ratio</a> · <a href="#kpi-ndr">NDR</a> · <a href="#kpi-rule40">Rule of 40</a> · <a href="#kpi-runway">Runway</a>
+        <a href="#kpi-cac">CAC</a> · <a href="#kpi-ltv">LTV</a> · <a href="#kpi-ltv-cac">LTV:CAC</a> · <a href="#kpi-payback">Payback Period</a> · <a href="#kpi-churn">Churn Rate</a> · <a href="#kpi-conversion">Conversion %</a> · <a href="#kpi-mrr">MRR / ARR</a> · <a href="#kpi-quick-ratio">Quick Ratio</a> · <a href="#kpi-ndr">NDR</a> · <a href="#kpi-rule40">Rule of 40</a> · <a href="#kpi-runway">Runway</a><br>
+        <strong style="color:#d97706">Instrucciones CSV:</strong> <a href="#instrucciones-sii">SII</a> · <a href="#instrucciones-sii">Google Ads</a> · <a href="#instrucciones-sii">Meta Ads</a> · <a href="#instrucciones-sii">Agencia / Sueldos</a>
       </nav>
 
       <div id="kpi-cac" style="margin-bottom:2.5rem;scroll-margin-top:80px">
@@ -897,6 +953,59 @@
             <li><span class="badge badge-red">Urgente</span> — < 6 meses</li>
           </ul>
           <p><strong>Fuente:</strong> AgentSpore/saascalc engine.py</p>
+        </div>
+      </div>
+
+      <div id="instrucciones-sii" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#1e293b;border-bottom:2px solid #d97706;padding-bottom:.3rem">Instrucciones — Como descargar los CSV</h3>
+
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+          <h4 style="color:#dc2626;margin-top:0">SII — Libro de Compras y Ventas</h4>
+          <ol style="font-size:.85rem">
+            <li>Ingresar a <a href="https://mipyme.sii.cl" target="_blank"><strong>mipyme.sii.cl</strong></a> con tu RUT y clave tributaria</li>
+            <li>Ir a <strong>Facturacion Electronica → Registros de compras y ventas</strong></li>
+            <li>Seleccionar el <strong>periodo</strong> (mes/ano)</li>
+            <li>Para <strong>COMPRAS</strong>: click en "Registro de compras" → <strong>"Descargar CSV"</strong></li>
+            <li>Para <strong>VENTAS</strong>: click en "Registro de ventas" → <strong>"Descargar CSV"</strong></li>
+            <li>Subir el archivo en la pestana <strong>Marketing $</strong> → seccion "Subir CSV"</li>
+          </ol>
+          <p style="font-size:.8rem;color:#64748b"><strong>Formato:</strong> El CSV tiene separador TAB o punto y coma. Se detecta automaticamente. Las columnas siguen el estandar SII (27 columnas compras, 43 columnas ventas).</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+          <h4 style="color:#4285F4;margin-top:0">Google Ads — Reporte de costos</h4>
+          <ol style="font-size:.85rem">
+            <li>Ingresar a <a href="https://ads.google.com" target="_blank"><strong>ads.google.com</strong></a></li>
+            <li>Ir a <strong>Informes → Informes predefinidos → Basicos → Campanas</strong></li>
+            <li>Configurar rango de fechas (mes completo)</li>
+            <li>Columnas minimas: <strong>Campana, Costo, Impresiones, Clics, Conversiones</strong></li>
+            <li>Click en <strong>Descargar → CSV</strong></li>
+            <li>El total de "Costo" es lo que se ingresa como <strong>Google Ads</strong> en el formulario de costos</li>
+          </ol>
+          <p style="font-size:.8rem;color:#64748b"><strong>Futuro:</strong> Conexion directa via Google Ads API (requiere Developer Token + OAuth2).</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+          <h4 style="color:#1877F2;margin-top:0">Meta / Facebook Ads — Reporte de costos</h4>
+          <ol style="font-size:.85rem">
+            <li>Ingresar a <a href="https://business.facebook.com/adsmanager" target="_blank"><strong>business.facebook.com/adsmanager</strong></a></li>
+            <li>Seleccionar el <strong>rango de fechas</strong> (mes completo)</li>
+            <li>Click en <strong>Informes → Exportar datos de tabla</strong></li>
+            <li>Formato: <strong>CSV</strong></li>
+            <li>La columna "Importe gastado" es el costo mensual total</li>
+            <li>Ingresar ese total como <strong>Meta Ads</strong> en el formulario de costos</li>
+          </ol>
+          <p style="font-size:.8rem;color:#64748b"><strong>Futuro:</strong> Conexion directa via Meta Marketing API (requiere access token + ad account ID).</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <h4 style="color:#d97706;margin-top:0">Agencia de Redes Sociales y Sueldos</h4>
+          <p style="font-size:.85rem">Estos costos se ingresan <strong>manualmente</strong> desde el formulario en la pestana Marketing $:</p>
+          <ul style="font-size:.85rem">
+            <li><strong>Agencia:</strong> Monto mensual del fee de la agencia de redes sociales</li>
+            <li><strong>Sueldos:</strong> Sueldos del equipo comercial (ingresar uno por colaborador con descripcion: "Sueldo Gabriela", "Sueldo Camila", etc.)</li>
+            <li><strong>Otro:</strong> Cualquier gasto adicional (herramientas, software, eventos)</li>
+          </ul>
         </div>
       </div>
 
@@ -1910,6 +2019,7 @@ async function loadMarketing() {
     renderMarketingTables(allCosts, kpis, ltv, dealsMonthly, params);
     renderBusinessParams(params);
     setupCostForm();
+    loadSIIData();
     window._marketingLoaded = true;
   } catch (err) {
     document.getElementById('mkt-loading').innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
@@ -2038,6 +2148,92 @@ function filterMarketingYear(year) {
   const allCosts = window._mktAllCosts.filter(c=>c.month?.startsWith(y));
   renderMarketingCharts(costsByMonth, kpis, dealsMonthly);
   renderMarketingTables(allCosts, kpis, window._mktLtv, dealsMonthly, window._mktParams);
+}
+
+// ═══════════ CSV UPLOAD + SII DATA ═══════════
+function handleCSVDrop(e) {
+  e.preventDefault();
+  e.target.style.borderColor = '#cbd5e1';
+  const file = e.dataTransfer.files[0];
+  if (file) handleCSVFile(file);
+}
+
+function handleCSVFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const csv = e.target.result;
+    const periodo = document.getElementById('csv-periodo').value || null;
+    const status = document.getElementById('csv-upload-status');
+    status.innerHTML = '<span style="color:#d97706">Subiendo...</span>';
+    try {
+      const res = await fetch(API_BASE + '/sii/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv, periodo })
+      });
+      const data = await res.json();
+      if (data.error) {
+        status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`;
+        return;
+      }
+      status.innerHTML = `<span style="color:#16a34a">Tipo: <strong>${data.type}</strong> | Insertados: ${data.inserted} | Duplicados: ${data.skipped} | Total: ${data.total}</span>`;
+      loadSIIData();
+    } catch (err) {
+      status.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+async function loadSIIData() {
+  const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
+  try {
+    const [comprasRes, ventasRes, compras, ventas, conns] = await Promise.all([
+      api('/sii/compras-resumen'),
+      api('/sii/ventas-resumen'),
+      api('/sii/compras?limit=200'),
+      api('/sii/ventas?limit=200'),
+      api('/api-connections'),
+    ]);
+
+    // Compras resumen
+    document.querySelector('#table-compras-resumen tbody').innerHTML = comprasRes.map(c => {
+      const mes = new Date(c.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
+      return `<tr><td>${mes}</td><td>${c.total_docs}</td><td>${fmtCLP(c.total_neto)}</td><td>${fmtCLP(c.total_iva)}</td><td style="font-weight:700">${fmtCLP(c.total_total)}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#94a3b8">Sin datos. Sube un CSV de compras SII.</td></tr>';
+    makeSortable('table-compras-resumen');
+
+    // Ventas resumen
+    document.querySelector('#table-ventas-resumen tbody').innerHTML = ventasRes.map(v => {
+      const mes = new Date(v.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
+      return `<tr><td>${mes}</td><td>${v.total_docs}</td><td>${fmtCLP(v.total_neto)}</td><td>${fmtCLP(v.total_iva)}</td><td style="font-weight:700">${fmtCLP(v.total_total)}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#94a3b8">Sin datos. Sube un CSV de ventas SII.</td></tr>';
+    makeSortable('table-ventas-resumen');
+
+    // Raw compras
+    document.querySelector('#table-compras-raw tbody').innerHTML = compras.map(c =>
+      `<tr><td>${c.nro||''}</td><td>${c.tipo_doc||''}</td><td style="font-size:.65rem">${c.rut_proveedor||''}</td><td style="font-size:.65rem">${c.razon_social||''}</td><td>${c.folio||''}</td><td>${c.fecha_docto||''}</td><td>${fmtCLP(c.monto_neto)}</td><td>${fmtCLP(c.monto_iva_recuperable)}</td><td style="font-weight:600">${fmtCLP(c.monto_total)}</td><td style="font-size:.65rem">${c.periodo||''}</td></tr>`
+    ).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+
+    // Raw ventas
+    document.querySelector('#table-ventas-raw tbody').innerHTML = ventas.map(v =>
+      `<tr><td>${v.nro||''}</td><td>${v.tipo_doc||''}</td><td style="font-size:.65rem">${v.rut_cliente||''}</td><td style="font-size:.65rem">${v.razon_social||''}</td><td>${v.folio||''}</td><td>${v.fecha_docto||''}</td><td>${fmtCLP(v.monto_neto)}</td><td>${fmtCLP(v.monto_iva)}</td><td style="font-weight:600">${fmtCLP(v.monto_total)}</td><td style="font-size:.65rem">${v.periodo||''}</td></tr>`
+    ).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+
+    // API connections
+    const provLabels = {google_ads:'Google Ads',meta_ads:'Meta / Facebook Ads',sii:'SII Chile'};
+    const provColors = {google_ads:'#4285F4',meta_ads:'#1877F2',sii:'#dc2626'};
+    document.getElementById('api-connections-container').innerHTML = conns.map(c => {
+      const cfg = c.config || {};
+      const color = c.is_active ? '#16a34a' : '#d97706';
+      return `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:.8rem;min-width:200px">
+        <div style="font-weight:700;color:${provColors[c.provider]||'#1e293b'};margin-bottom:.3rem">${provLabels[c.provider]||c.provider}</div>
+        <span class="badge" style="background:${c.is_active?'#dcfce7':'#fef3c7'};color:${color}">${c.is_active?'Conectado':'Pendiente'}</span>
+        <p style="font-size:.7rem;color:#64748b;margin:.3rem 0 0">${cfg.note||''}</p>
+      </div>`;
+    }).join('');
+  } catch (err) { /* SII data not critical */ }
 }
 
 // ═══════════ HELP POPUPS ═══════════
