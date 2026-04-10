@@ -145,9 +145,45 @@
       .chart-row { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
     }
+    /* Auth gate */
+    #auth-gate {
+      display: flex; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, #1e293b, #334155);
+      z-index: 9999; justify-content: center; align-items: center;
+    }
+    #auth-gate.hidden { display: none; }
+    #auth-gate .auth-box {
+      background: #fff; border-radius: 16px; padding: 2.5rem; text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,.3); max-width: 360px; width: 90%;
+    }
+    #auth-gate .auth-box h2 { margin: 0 0 .5rem; color: #1e293b; font-size: 1.3rem; }
+    #auth-gate .auth-box p { color: #64748b; font-size: .85rem; margin-bottom: 1.2rem; }
+    #auth-gate .auth-box input {
+      width: 100%; padding: .7rem; border: 2px solid #e2e8f0; border-radius: 8px;
+      font-size: 1rem; text-align: center; letter-spacing: 2px; margin-bottom: .8rem;
+    }
+    #auth-gate .auth-box input:focus { border-color: #2563eb; outline: none; }
+    #auth-gate .auth-box button {
+      width: 100%; padding: .7rem; background: #2563eb; color: #fff; border: none;
+      border-radius: 8px; font-size: 1rem; font-weight: 700; cursor: pointer;
+    }
+    #auth-gate .auth-error { color: #dc2626; font-size: .8rem; margin-top: .5rem; display: none; }
   </style>
 </head>
 <body>
+
+<!-- Auth gate -->
+<div id="auth-gate">
+  <div class="auth-box">
+    <h2>Clinyco Review</h2>
+    <p>Ingresa la clave de acceso</p>
+    <form onsubmit="return checkAuth(event)">
+      <input type="password" id="auth-input" placeholder="Clave" autocomplete="off" autofocus>
+      <button type="submit">Entrar</button>
+    </form>
+    <div class="auth-error" id="auth-error">Clave incorrecta</div>
+  </div>
+</div>
 
 <div class="header-bar">
   <div>
@@ -1007,6 +1043,44 @@
             <li><strong>Otro:</strong> Cualquier gasto adicional (herramientas, software, eventos)</li>
           </ul>
         </div>
+
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem;margin-top:1.5rem">
+          <h4 style="color:#dc2626;margin-top:0">SII API — Automatizacion futura</h4>
+          <p style="font-size:.85rem">El SII <strong>no tiene API oficial</strong> para descargar el Libro de Compras/Ventas (RCV). Los web services oficiales son SOAP/XML y solo permiten consultar estado de DTEs individuales, no descargar el libro completo.</p>
+
+          <p style="font-size:.85rem"><strong>Autenticacion SII (para cualquier integracion):</strong></p>
+          <ol style="font-size:.85rem">
+            <li>Obtener <strong>certificado digital chileno</strong> (e-firma) en formato PFX/PKCS#12</li>
+            <li>Llamar a <code>CrSeed.jws</code> → obtener semilla</li>
+            <li>Firmar la semilla con XML-DSIG (RSA-SHA1) usando el certificado</li>
+            <li>Llamar a <code>GetTokenFromSeed.jws</code> → obtener token de sesion</li>
+            <li>Usar el token en las llamadas subsiguientes</li>
+          </ol>
+
+          <p style="font-size:.85rem"><strong>Endpoints oficiales SII (SOAP/WSDL):</strong></p>
+          <table style="font-size:.75rem;width:100%;border-collapse:collapse">
+            <tr style="background:#f8fafc"><th style="text-align:left;padding:.3rem">Servicio</th><th style="text-align:left;padding:.3rem">Funcion</th><th style="text-align:left;padding:.3rem">Produccion</th></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0">CrSeed.jws</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Obtener semilla</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">palena.sii.cl/DTEWS/</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0">GetTokenFromSeed.jws</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Autenticacion</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">palena.sii.cl/DTEWS/</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0">QueryEstDte.jws</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Estado de un DTE</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">palena.sii.cl/DTEWS/</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0">QueryEstDteAv.jws</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Estado avanzado DTE</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">palena.sii.cl/DTEWS/</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0">DTEUpload</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Subir DTEs firmados</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">palena.sii.cl/cgi_dte/UPL/</td></tr>
+          </table>
+
+          <p style="font-size:.85rem;margin-top:1rem"><strong>Opciones para automatizar descarga del RCV:</strong></p>
+          <table style="font-size:.75rem;width:100%;border-collapse:collapse">
+            <tr style="background:#f8fafc"><th style="text-align:left;padding:.3rem">Opcion</th><th style="text-align:left;padding:.3rem">Tipo</th><th style="text-align:left;padding:.3rem">Output</th><th style="text-align:left;padding:.3rem">Costo</th></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0"><a href="https://www.simpleapi.cl/Productos/SimpleRCV" target="_blank">SimpleAPI RCV</a></td><td style="padding:.3rem;border-top:1px solid #e2e8f0">REST API (managed)</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">JSON</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Pagado</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0"><a href="https://baseapi.cl" target="_blank">BaseAPI</a></td><td style="padding:.3rem;border-top:1px solid #e2e8f0">REST API (managed)</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">JSON</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Pagado</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0"><a href="https://github.com/sergioocode/Sii.RegistroCompraVenta" target="_blank">Sii.RegistroCompraVenta</a></td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Self-hosted (.NET)</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">JSON</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Gratis (open-source)</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0"><a href="https://www.apigateway.cl/" target="_blank">API Gateway</a></td><td style="padding:.3rem;border-top:1px solid #e2e8f0">REST API (managed)</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">JSON</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Pagado</td></tr>
+            <tr><td style="padding:.3rem;border-top:1px solid #e2e8f0">CSV manual (actual)</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">mipyme.sii.cl</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">CSV</td><td style="padding:.3rem;border-top:1px solid #e2e8f0">Gratis</td></tr>
+          </table>
+
+          <p style="font-size:.8rem;color:#64748b;margin-top:.8rem"><strong>Requisito obligatorio para cualquier opcion automatizada:</strong> Certificado digital chileno (e-firma) en formato PFX. Sin esto no hay acceso programatico al SII.</p>
+
+          <p style="font-size:.8rem;color:#64748b"><strong>Tipos de DTE:</strong> 33=Factura, 34=Factura Exenta, 39=Boleta, 46=Factura Compra, 52=Guia Despacho, 56=Nota Debito, 61=Nota Credito</p>
+        </div>
       </div>
 
       <div style="background:#f1f5f9;padding:1.5rem;border-radius:12px;margin-top:2rem">
@@ -1019,6 +1093,11 @@
           <li><a href="https://www.airtree.vc/open-source-vc/startup-metrics-cac-payback-and-ltv-cac-ratio" target="_blank">Airtree Ventures — LTV:CAC Benchmarks</a></li>
           <li><a href="https://gist.github.com/artivilla/fbfc6783ec4af88f9f61772a315812d8" target="_blank">SaaS Metrics Formulas Gist</a></li>
           <li><a href="https://getlago.com/" target="_blank">Lago — Open-source billing (MRR)</a></li>
+          <li><a href="https://www.sii.cl/factura_electronica/factura_mercado/estado_dte.pdf" target="_blank">SII — Estado DTE (PDF oficial)</a></li>
+          <li><a href="https://www.sii.cl/factura_electronica/factura_mercado/autenticacion.pdf" target="_blank">SII — Autenticacion (PDF oficial)</a></li>
+          <li><a href="https://github.com/sergioocode/Sii.RegistroCompraVenta" target="_blank">Sii.RegistroCompraVenta — Open-source .NET RCV</a></li>
+          <li><a href="https://www.simpleapi.cl/Productos/SimpleRCV" target="_blank">SimpleAPI — RCV como servicio</a></li>
+          <li><a href="https://baseapi.cl" target="_blank">BaseAPI — API SII Chile</a></li>
         </ul>
       </div>
     </div>
@@ -1026,6 +1105,37 @@
 </main>
 
 <script>
+// ═══════════ AUTH GATE ═══════════
+const AUTH_HASH = '6a204bd89f3c8348afd5c77c717a097a'; // md5 of 'clinyco2026'
+function md5simple(s) {
+  // Simple hash — not cryptographic, just access gate
+  let h = 0;
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+  return Math.abs(h).toString(36);
+}
+function checkAuth(e) {
+  e.preventDefault();
+  const val = document.getElementById('auth-input').value.trim();
+  // Check via URL path or direct password
+  const pathKey = window.location.pathname.split('/').filter(Boolean).pop();
+  if (val === 'clinyco2026' || pathKey === 'clinyco2026' || sessionStorage.getItem('clinyco_auth') === '1') {
+    sessionStorage.setItem('clinyco_auth', '1');
+    document.getElementById('auth-gate').classList.add('hidden');
+    return false;
+  }
+  document.getElementById('auth-error').style.display = 'block';
+  document.getElementById('auth-input').value = '';
+  return false;
+}
+// Auto-auth via URL path or session
+(function() {
+  const pathKey = window.location.pathname.split('/').filter(Boolean).pop();
+  if (pathKey === 'clinyco2026' || sessionStorage.getItem('clinyco_auth') === '1') {
+    sessionStorage.setItem('clinyco_auth', '1');
+    document.getElementById('auth-gate').classList.add('hidden');
+  }
+})();
+
 const API_BASE = window.location.hostname === "localhost"
   ? "http://localhost:10000/api/review"
   : "/api";
