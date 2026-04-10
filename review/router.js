@@ -40,6 +40,14 @@ import {
   commissionsPerAgent,
   dashboardSummary,
   velocityPerAgent,
+  marketingCosts,
+  marketingCostsByMonth,
+  upsertMarketingCost,
+  deleteMarketingCost,
+  dealsMonthlyForMarketing,
+  getBusinessParams,
+  updateBusinessParam,
+  marketingKPIs,
 } from "./db.js";
 
 const router = Router();
@@ -337,5 +345,61 @@ router.get(
     res.json(await velocityPerAgent());
   })
 );
+
+// ═══════════ MARKETING / COSTS / KPIs ═══════════
+
+router.get("/marketing/costs", wrap(async (req, res) => {
+  res.json(await marketingCosts(req.query.year || null));
+}));
+
+router.get("/marketing/costs-by-month", wrap(async (req, res) => {
+  res.json(await marketingCostsByMonth(req.query.year || null));
+}));
+
+router.post("/marketing/costs", wrap(async (req, res) => {
+  const { month, source, description, amount_clp } = req.body;
+  if (!month || !source || amount_clp == null)
+    return res.status(400).json({ error: "month, source, amount_clp required" });
+  res.json(await upsertMarketingCost({ month, source, description, amount_clp }));
+}));
+
+router.delete("/marketing/costs/:id", wrap(async (req, res) => {
+  await deleteMarketingCost(req.params.id);
+  res.json({ ok: true });
+}));
+
+router.get("/marketing/deals-monthly", wrap(async (req, res) => {
+  res.json(await dealsMonthlyForMarketing(req.query.year || null));
+}));
+
+router.get("/marketing/kpis", wrap(async (req, res) => {
+  const [kpis, params] = await Promise.all([
+    marketingKPIs(req.query.year || null),
+    getBusinessParams(),
+  ]);
+  const p = {};
+  params.forEach(r => { p[r.key] = r.value; });
+  const arpu = p.avg_revenue_per_patient || 2500000;
+  const margin = (p.gross_margin_pct || 40) / 100;
+  const churn = (p.monthly_churn_pct || 5) / 100;
+  const ltv = churn > 0 ? Math.round(arpu * margin / churn) : 0;
+  const paybackMonths = (avgCac) => avgCac > 0 && arpu * margin > 0 ? Math.round(avgCac / (arpu * margin) * 10) / 10 : null;
+  const revGrowth = p.revenue_growth_pct || 0;
+  const profitMargin = p.profit_margin_pct || 0;
+  const ruleOf40 = revGrowth + profitMargin;
+  res.json({ kpis, params: p, ltv, ruleOf40, revGrowth, profitMargin });
+}));
+
+router.get("/marketing/params", wrap(async (_req, res) => {
+  res.json(await getBusinessParams());
+}));
+
+router.put("/marketing/params/:key", wrap(async (req, res) => {
+  const { value } = req.body;
+  if (value == null) return res.status(400).json({ error: "value required" });
+  const result = await updateBusinessParam(req.params.key, value);
+  if (!result) return res.status(404).json({ error: "param not found" });
+  res.json(result);
+}));
 
 export default router;

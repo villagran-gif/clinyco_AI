@@ -166,6 +166,8 @@
     <button onclick="showTab('deals')">Deals Sell</button>
     <button onclick="showTab('gold')">Gold Analysis</button>
     <button onclick="showTab('agents')">Agentes</button>
+    <button onclick="showTab('marketing')" style="background:#d97706;color:#fff;border-radius:6px">Marketing $</button>
+    <button onclick="showTab('kpis')">KPIs</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -617,6 +619,301 @@
       </div>
     </div>
   </div>
+
+  <!-- ══════ TAB: MARKETING / COSTOS ══════ -->
+  <div id="tab-marketing" class="tab-content">
+    <div id="mkt-loading" class="loading">Cargando datos de marketing...</div>
+    <div id="mkt-content" style="display:none">
+      <div class="kpi-grid" id="kpi-marketing"></div>
+      <div style="display:flex;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap" id="mkt-year-btns"></div>
+      <div class="chart-row">
+        <div class="chart-box"><h3>Costos mensuales por fuente</h3><canvas id="chart-mkt-costs"></canvas></div>
+        <div class="chart-box"><h3>Deals mensuales + Exitosos</h3><canvas id="chart-mkt-deals"></canvas></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box"><h3>CAC mensual <a href="#kpi-cac" style="font-size:.7rem;color:#2563eb">ver definicion</a></h3><canvas id="chart-mkt-cac"></canvas></div>
+        <div class="chart-box"><h3>Conversion % <a href="#kpi-conversion" style="font-size:.7rem;color:#2563eb">ver definicion</a></h3><canvas id="chart-mkt-conversion"></canvas></div>
+      </div>
+      <!-- Manual cost entry -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Agregar / editar costos <a href="#kpi-cac" style="font-size:.7rem;color:#2563eb">ver CAC</a></h3>
+        <form id="form-mkt-cost" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;font-size:.85rem">
+          <div><label style="font-size:.7rem;display:block;color:#64748b">Mes</label>
+            <input type="month" id="mkt-month" required style="padding:.4rem;border-radius:6px;border:1px solid #cbd5e1"></div>
+          <div><label style="font-size:.7rem;display:block;color:#64748b">Fuente</label>
+            <select id="mkt-source" required style="padding:.4rem;border-radius:6px;border:1px solid #cbd5e1">
+              <option value="google_ads">Google Ads</option><option value="meta_ads">Meta / Facebook Ads</option>
+              <option value="agency">Agencia Redes Sociales</option><option value="salaries">Sueldos</option>
+              <option value="other">Otro</option></select></div>
+          <div><label style="font-size:.7rem;display:block;color:#64748b">Descripcion</label>
+            <input type="text" id="mkt-desc" placeholder="ej: Sueldo Gabriela" style="padding:.4rem;border-radius:6px;border:1px solid #cbd5e1;width:160px"></div>
+          <div><label style="font-size:.7rem;display:block;color:#64748b">Monto CLP</label>
+            <input type="number" id="mkt-amount" required min="0" placeholder="500000" style="padding:.4rem;border-radius:6px;border:1px solid #cbd5e1;width:120px"></div>
+          <button type="submit" style="padding:.5rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Guardar</button>
+          <span id="mkt-save-msg" style="font-size:.75rem;color:#16a34a"></span>
+        </form>
+      </div>
+      <!-- Business params -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Parametros del negocio <a href="#kpi-ltv" style="font-size:.7rem;color:#2563eb">ver LTV</a></h3>
+        <div id="params-container" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.85rem"></div>
+      </div>
+      <!-- Raw costs table -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Costos de marketing</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-mkt-costs" role="grid" style="font-size:.75rem">
+            <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="text">Fuente</th><th class="sortable" data-col="2" data-type="text">Descripcion</th><th class="sortable" data-col="3" data-type="num">Monto CLP</th><th>Acciones</th></tr></thead>
+            <tbody></tbody></table></div></div>
+      <!-- KPI table -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>KPIs mensuales — CAC, LTV, Payback, Ratio</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-mkt-kpis" role="grid" style="font-size:.75rem">
+            <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="num">Costo Total</th><th class="sortable" data-col="2" data-type="num">Deals</th><th class="sortable" data-col="3" data-type="num">Operados</th><th class="sortable" data-col="4" data-type="num">CAC</th><th class="sortable" data-col="5" data-type="num">LTV</th><th class="sortable" data-col="6" data-type="num">LTV:CAC</th><th class="sortable" data-col="7" data-type="num">Payback</th><th class="sortable" data-col="8" data-type="num">Conv%</th></tr></thead>
+            <tbody></tbody></table></div></div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: KPIs DEFINICIONES ══════ -->
+  <div id="tab-kpis" class="tab-content">
+    <div style="max-width:800px;margin:0 auto;font-size:.9rem;line-height:1.7;color:#334155">
+      <h2 style="color:#1e293b;border-bottom:3px solid #2563eb;padding-bottom:.5rem">Glosario de KPIs — Definiciones completas</h2>
+      <p style="color:#64748b;font-size:.8rem">Click en cualquier KPI para ir a su definicion. Cada formula incluye ejemplo con datos reales de Clinyco.</p>
+      <nav style="background:#f1f5f9;padding:1rem;border-radius:8px;margin-bottom:2rem">
+        <strong>Indice rapido:</strong><br>
+        <a href="#kpi-cac">CAC</a> · <a href="#kpi-ltv">LTV</a> · <a href="#kpi-ltv-cac">LTV:CAC</a> · <a href="#kpi-payback">Payback Period</a> · <a href="#kpi-churn">Churn Rate</a> · <a href="#kpi-conversion">Conversion %</a> · <a href="#kpi-mrr">MRR / ARR</a> · <a href="#kpi-quick-ratio">Quick Ratio</a> · <a href="#kpi-ndr">NDR</a> · <a href="#kpi-rule40">Rule of 40</a> · <a href="#kpi-runway">Runway</a>
+      </nav>
+
+      <div id="kpi-cac" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#dc2626">CAC — Customer Acquisition Cost (Costo de Adquisicion de Cliente)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Cuanto dinero cuesta conseguir UN paciente operado (o agendado/instalado).</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            CAC = Total Gastos Marketing y Ventas / Nuevos Pacientes Operados
+          </div>
+          <p><strong>Que incluye "Gastos Marketing y Ventas":</strong></p>
+          <ul>
+            <li>Google Ads (campanas de busqueda, display, YouTube)</li>
+            <li>Meta/Facebook Ads (Instagram, Facebook, WhatsApp Ads)</li>
+            <li>Agencia de redes sociales (fee mensual)</li>
+            <li>Sueldos del equipo comercial (proporcional a ventas)</li>
+            <li>Herramientas (Zendesk, WAHA, CRM)</li>
+          </ul>
+          <p><strong>Ejemplo Clinyco:</strong></p>
+          <div style="background:#f8fafc;padding:.8rem;border-radius:8px;font-size:.85rem">
+            Gasto mes marzo: Google $2M + Meta $1.5M + Agencia $800K + Sueldos $4M = <strong>$8.300.000</strong><br>
+            Pacientes operados en marzo: <strong>10</strong><br>
+            CAC = $8.300.000 / 10 = <strong>$830.000 por paciente</strong>
+          </div>
+          <p><strong>Benchmark:</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Excelente</span> CAC < 30% del precio de cirugia</li>
+            <li><span class="badge badge-amber">Aceptable</span> CAC = 30-50% del precio</li>
+            <li><span class="badge badge-red">Peligroso</span> CAC > 50% del precio</li>
+          </ul>
+          <p><strong>Fuente:</strong> <a href="https://www.maxio.com/saaspedia/cac-customer-acquisition-cost" target="_blank">Maxio SaaSpedia: CAC</a> · <a href="https://www.wallstreetprep.com/knowledge/customer-acquisition-cost/" target="_blank">Wall Street Prep</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-ltv" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#16a34a">LTV — Lifetime Value (Valor de Vida del Cliente)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Cuanto vale un paciente durante TODA su relacion con la clinica. Incluye reoperaciones, controles, y referidos.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            LTV = ARPU x (1 / Churn Rate Mensual) x Margen Bruto %<br>
+            <span style="color:#94a3b8">// ARPU = Average Revenue Per User (ingreso promedio por paciente)</span>
+          </div>
+          <p><strong>Ejemplo Clinyco:</strong></p>
+          <div style="background:#f8fafc;padding:.8rem;border-radius:8px;font-size:.85rem">
+            ARPU = $2.500.000 (ingreso promedio por paciente operado)<br>
+            Churn mensual = 5% (0.05)<br>
+            Margen bruto = 40%<br>
+            LTV = $2.500.000 x (1/0.05) x 0.40 = $2.500.000 x 20 x 0.40 = <strong>$20.000.000</strong>
+          </div>
+          <p><strong>Interpretacion:</strong> Cada paciente que operas genera $20M de valor a lo largo de su vida como cliente (reoperaciones, controles, referidos).</p>
+          <p><strong>Fuente:</strong> <a href="https://www.paddle.com/resources/customer-acquisition-cost" target="_blank">Paddle: CAC & LTV</a> · AgentSpore/saascalc</p>
+        </div>
+      </div>
+
+      <div id="kpi-ltv-cac" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#2563eb">LTV:CAC — Ratio de Retorno sobre Adquisicion</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Por cada peso gastado en marketing, cuantos pesos genera el paciente. LA metrica mas importante para decidir si aumentar o reducir gasto en marketing.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            LTV:CAC = LTV / CAC
+          </div>
+          <p><strong>Ejemplo:</strong> LTV $20M / CAC $830K = <strong>24.1x</strong></p>
+          <p><strong>Benchmark (saascalc):</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Excelente (>5x)</span> — Puedes invertir MAS en marketing</li>
+            <li><span class="badge badge-amber">Bueno (3-5x)</span> — Equilibrio saludable</li>
+            <li><span class="badge badge-red">Peligroso (<3x)</span> — Gastas demasiado para lo que generas</li>
+          </ul>
+          <p><strong>Fuente:</strong> <a href="https://www.airtree.vc/open-source-vc/startup-metrics-cac-payback-and-ltv-cac-ratio" target="_blank">Airtree Ventures: LTV:CAC Benchmarks</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-payback" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#d97706">Payback Period (Periodo de Recuperacion)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Cuantos meses tarda la clinica en recuperar lo que gasto en adquirir un paciente.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            Payback = CAC / (ARPU x Margen Bruto %)
+          </div>
+          <p><strong>Ejemplo:</strong> $830.000 / ($2.500.000 x 0.40) = $830.000 / $1.000.000 = <strong>0.8 meses</strong></p>
+          <p><strong>Benchmark (saascalc):</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Excelente</span> — &le; 12 meses</li>
+            <li><span class="badge badge-amber">Bueno</span> — &le; 18 meses</li>
+            <li><span class="badge badge-red">Necesita mejorar</span> — > 18 meses</li>
+          </ul>
+          <p><strong>Fuente:</strong> <a href="https://www.wallstreetprep.com/knowledge/customer-acquisition-cost/" target="_blank">Wall Street Prep: CAC Payback</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-churn" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#dc2626">Churn Rate (Tasa de Abandono)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Porcentaje de pacientes/clientes que dejan de usar los servicios en un periodo. En clinica bariatrica: pacientes que no vuelven a controles, no refieren, no se reoperan.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            Churn Mensual = Clientes Perdidos / Clientes al Inicio del Periodo<br>
+            Churn Anual = 1 - (1 - Churn Mensual)^12 <span style="color:#94a3b8">// compuesto</span>
+          </div>
+          <p><strong>Ejemplo:</strong> 50 pacientes activos, 2 no vuelven = 2/50 = <strong>4% mensual</strong>. Anual: 1-(1-0.04)^12 = <strong>39.2%</strong></p>
+          <p><strong>Benchmark (saascalc):</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Excelente</span> — &le; 1% mensual</li>
+            <li><span class="badge badge-amber">Bueno</span> — &le; 3% mensual</li>
+            <li><span class="badge badge-red">Necesita mejorar</span> — > 3% mensual</li>
+          </ul>
+          <p><strong>Fuente:</strong> AgentSpore/saascalc engine.py · <a href="https://www.profitwell.com/recur/all/churn-rate-formula" target="_blank">ProfitWell: Churn Formula</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-conversion" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#16a34a">Conversion % (Tasa de Conversion)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> De todos los deals (pacientes interesados), que porcentaje llega a operarse.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            Conversion % = Pacientes Exitosos / Total Deals x 100
+          </div>
+          <p><strong>Ejemplo:</strong> 100 deals en marzo, 27 terminan operados = <strong>27%</strong></p>
+          <p><strong>"Exitosos" incluye:</strong> CERRADO OPERADO + CERRADO AGENDADO + CERRADO INSTALADO (fases de Zendesk Sell)</p>
+          <p><strong>Fuente:</strong> Pipeline Zendesk Sell de Clinyco</p>
+        </div>
+      </div>
+
+      <div id="kpi-mrr" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#9333ea">MRR / ARR — Monthly & Annual Recurring Revenue</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Ingresos recurrentes mensuales/anuales predecibles. En clinica bariatrica no aplica directamente (no es SaaS), pero se puede adaptar como ingreso promedio mensual por operaciones.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            MRR = Pacientes Operados x Ingreso Promedio por Paciente<br>
+            ARR = MRR x 12
+          </div>
+          <p><strong>Ejemplo:</strong> 10 operados/mes x $2.5M = MRR $25M. ARR = $300M.</p>
+          <p><strong>Fuente:</strong> <a href="https://getlago.com/blog/calculating-stripe-mrr-is-difficult" target="_blank">Lago: Why MRR is difficult</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-quick-ratio" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#0891b2">Quick Ratio (SaaS Quick Ratio)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Que tan eficientemente creces. Compara ingresos nuevos vs ingresos perdidos. Un Quick Ratio alto = creces mas rapido de lo que pierdes.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            Quick Ratio = (New MRR + Expansion MRR) / (Churned MRR + Contraction MRR)
+          </div>
+          <p><strong>Adaptacion clinica:</strong> New = nuevos pacientes operados. Expansion = reoperaciones/tratamientos adicionales. Churned = pacientes que cancelaron. Contraction = descuentos/financiamiento.</p>
+          <p><strong>Benchmark (saascalc):</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Saludable</span> — > 4</li>
+            <li><span class="badge badge-amber">Bueno</span> — 2 a 4</li>
+            <li><span class="badge badge-red">Luchando</span> — < 2</li>
+          </ul>
+          <p><strong>Fuente:</strong> AgentSpore/saascalc · <a href="https://gist.github.com/artivilla/fbfc6783ec4af88f9f61772a315812d8" target="_blank">SaaS Metrics Formulas Gist</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-ndr" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#2563eb">NDR — Net Dollar Retention (Retencion Neta de Ingresos)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Si los pacientes existentes generan MAS o MENOS ingresos con el tiempo. NDR > 100% = los pacientes gastan mas cada vez (expansion). NDR < 100% = estas perdiendo ingresos de pacientes existentes.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            NDR = (MRR Inicio + Expansion - Contraccion - Churn) / MRR Inicio x 100
+          </div>
+          <p><strong>Benchmark (saascalc):</strong></p>
+          <ul>
+            <li><span class="badge badge-purple">Excepcional (&ge;130%)</span> — Hipercrecimiento desde pacientes existentes</li>
+            <li><span class="badge badge-green">Saludable (&ge;110%)</span> — Buena retencion con expansion</li>
+            <li><span class="badge badge-amber">Estable (&ge;100%)</span> — Crecimiento requiere nuevos pacientes</li>
+            <li><span class="badge badge-red">En riesgo (<100%)</span> — Ingresos encogiendo, retencion urgente</li>
+          </ul>
+          <p><strong>Fuente:</strong> AgentSpore/saascalc engine.py</p>
+        </div>
+      </div>
+
+      <div id="kpi-rule40" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#d97706">Rule of 40 (Regla del 40)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Balance entre crecimiento y rentabilidad. Una empresa saludable debe tener la SUMA de crecimiento + margen de ganancia &ge; 40%.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            Rule of 40 Score = Revenue Growth % + Profit Margin %
+          </div>
+          <p><strong>Ejemplo:</strong> Crecimiento 15% + Margen 10% = <strong>25</strong> (no pasa la regla del 40)</p>
+          <p><strong>Benchmark (saascalc):</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Saludable</span> — Score &ge; 40</li>
+            <li><span class="badge badge-amber">Aceptable</span> — Score &ge; 20</li>
+            <li><span class="badge badge-red">Necesita mejorar</span> — Score < 20</li>
+          </ul>
+          <p><strong>Fuente:</strong> <a href="https://www.bain.com/insights/rule-of-40-growth-efficiency/" target="_blank">Bain & Company: Rule of 40</a></p>
+        </div>
+      </div>
+
+      <div id="kpi-runway" style="margin-bottom:2.5rem;scroll-margin-top:80px">
+        <h3 style="color:#dc2626">Runway (Pista de Aterrizaje Financiera)</h3>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:1.5rem">
+          <p><strong>Que mide:</strong> Cuantos meses puede operar la clinica con el efectivo disponible antes de quedarse sin dinero.</p>
+          <p><strong>Formula:</strong></p>
+          <div style="background:#1e293b;color:#10b981;padding:1rem;border-radius:8px;font-family:monospace;font-size:.95rem;margin:.8rem 0">
+            Runway (meses) = Efectivo Disponible / Gasto Mensual (burn rate)
+          </div>
+          <p><strong>Ejemplo:</strong> $50M en caja / $8.3M gasto mensual = <strong>6 meses de runway</strong></p>
+          <p><strong>Benchmark:</strong></p>
+          <ul>
+            <li><span class="badge badge-green">Seguro</span> — > 12 meses</li>
+            <li><span class="badge badge-amber">Precaucion</span> — 6 a 12 meses</li>
+            <li><span class="badge badge-red">Urgente</span> — < 6 meses</li>
+          </ul>
+          <p><strong>Fuente:</strong> AgentSpore/saascalc engine.py</p>
+        </div>
+      </div>
+
+      <div style="background:#f1f5f9;padding:1.5rem;border-radius:12px;margin-top:2rem">
+        <h3 style="margin-top:0">Referencias generales</h3>
+        <ul style="font-size:.8rem">
+          <li><a href="https://www.maxio.com/saaspedia/cac-customer-acquisition-cost" target="_blank">Maxio SaaSpedia — CAC</a></li>
+          <li><a href="https://github.com/AgentSpore/saascalc" target="_blank">AgentSpore/saascalc — Calculadora SaaS open-source (Python/FastAPI)</a></li>
+          <li><a href="https://github.com/rameerez/profitable" target="_blank">rameerez/profitable — Ruby SaaS metrics (95 stars)</a></li>
+          <li><a href="https://www.paddle.com/resources/customer-acquisition-cost" target="_blank">Paddle — CAC & LTV Guide</a></li>
+          <li><a href="https://www.airtree.vc/open-source-vc/startup-metrics-cac-payback-and-ltv-cac-ratio" target="_blank">Airtree Ventures — LTV:CAC Benchmarks</a></li>
+          <li><a href="https://gist.github.com/artivilla/fbfc6783ec4af88f9f61772a315812d8" target="_blank">SaaS Metrics Formulas Gist</a></li>
+          <li><a href="https://getlago.com/" target="_blank">Lago — Open-source billing (MRR)</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -636,7 +933,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {} };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
@@ -1528,6 +1825,219 @@ function renderMonthlyDrilldown(year) {
     </tr>`;
   }).join('');
   makeSortable('table-monthly-detail');
+}
+
+// ═══════════ MARKETING / COSTOS (saascalc-enriched) ═══════════
+function ratingBadge(val, thresholds) {
+  // thresholds = [{max, label, cls}] sorted ascending, last = default
+  for (const t of thresholds) {
+    if (t.min != null && val >= t.min) continue;
+    if (t.max != null && val <= t.max) return `<span class="badge ${t.cls}">${t.label}</span>`;
+  }
+  return `<span class="badge ${thresholds[thresholds.length-1].cls}">${thresholds[thresholds.length-1].label}</span>`;
+}
+
+function ratingBadgeSimple(val, excellent, good) {
+  if (val == null) return '—';
+  if (val <= excellent) return `<span class="badge badge-green">${val}</span>`;
+  if (val <= good) return `<span class="badge badge-amber">${val}</span>`;
+  return `<span class="badge badge-red">${val}</span>`;
+}
+
+async function loadMarketing() {
+  const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
+  try {
+    const [kpiData, costsByMonth, allCosts, dealsMonthly] = await Promise.all([
+      api('/marketing/kpis'),
+      api('/marketing/costs-by-month'),
+      api('/marketing/costs'),
+      api('/marketing/deals-monthly'),
+    ]);
+
+    document.getElementById('mkt-loading').style.display = 'none';
+    document.getElementById('mkt-content').style.display = 'block';
+
+    const ltv = kpiData.ltv || 0;
+    const params = kpiData.params || {};
+    const kpis = kpiData.kpis || [];
+    const ruleOf40 = kpiData.ruleOf40 || 0;
+    const arpu = params.avg_revenue_per_patient || 2500000;
+    const marginPct = params.gross_margin_pct || 40;
+    const margin = marginPct / 100;
+
+    // Summary KPIs
+    const totalCost = costsByMonth.reduce((s, m) => s + (m.total || 0), 0);
+    const totalCustomers = kpis.reduce((s, k) => s + (k.new_customers || 0), 0);
+    const totalDeals = kpis.reduce((s, k) => s + (k.new_deals || 0), 0);
+    const avgCac = totalCustomers > 0 ? Math.round(totalCost / totalCustomers) : 0;
+    const ltvCac = avgCac > 0 ? (ltv / avgCac) : 0;
+    const ltvCacStr = ltvCac > 0 ? ltvCac.toFixed(1) + 'x' : '—';
+    const convPct = totalDeals > 0 ? (totalCustomers / totalDeals * 100).toFixed(1) : '0';
+    const paybackM = avgCac > 0 && arpu * margin > 0 ? (avgCac / (arpu * margin)).toFixed(1) : '—';
+
+    // LTV:CAC color
+    const ltvCacCls = ltvCac >= 5 ? 'badge-green' : ltvCac >= 3 ? 'badge-amber' : 'badge-red';
+    const paybackCls = paybackM !== '—' && parseFloat(paybackM) <= 12 ? 'badge-green' : paybackM !== '—' && parseFloat(paybackM) <= 18 ? 'badge-amber' : 'badge-red';
+    const r40Cls = ruleOf40 >= 40 ? 'badge-green' : ruleOf40 >= 20 ? 'badge-amber' : 'badge-red';
+
+    document.getElementById('kpi-marketing').innerHTML = [
+      { label: 'Gasto Total', value: fmtCLP(totalCost), link: '#kpi-cac' },
+      { label: 'Operados', value: totalCustomers, link: '#kpi-conversion' },
+      { label: 'CAC', value: fmtCLP(avgCac), link: '#kpi-cac' },
+      { label: 'LTV', value: fmtCLP(ltv), link: '#kpi-ltv' },
+      { label: 'LTV:CAC', value: `<span class="badge ${ltvCacCls}">${ltvCacStr}</span>`, link: '#kpi-ltv-cac' },
+      { label: 'Payback', value: `<span class="badge ${paybackCls}">${paybackM} meses</span>`, link: '#kpi-payback' },
+      { label: 'Rule of 40', value: `<span class="badge ${r40Cls}">${ruleOf40}</span>`, link: '#kpi-rule40' },
+      { label: 'Conv %', value: convPct + '%', link: '#kpi-conversion' },
+    ].map(k => `<div class="kpi-card" onclick="showTab('kpis');location.hash='${k.link}'"><div class="value">${k.value}</div><div class="label">${k.label}</div></div>`).join('');
+
+    // Year buttons
+    const allYears = [...new Set([
+      ...costsByMonth.map(c => c.month?.substring(0,4)),
+      ...dealsMonthly.map(d => d.month?.substring(0,4))
+    ].filter(Boolean))].sort();
+    document.getElementById('mkt-year-btns').innerHTML =
+      allYears.map(y => `<button onclick="filterMarketingYear(${y})" style="padding:.4rem .8rem;border:2px solid #2563eb;background:#fff;color:#2563eb;border-radius:6px;cursor:pointer;font-weight:700">${y}</button>`).join('');
+
+    window._mktCostsByMonth = costsByMonth;
+    window._mktKpis = kpis;
+    window._mktDealsMonthly = dealsMonthly;
+    window._mktLtv = ltv;
+    window._mktAllCosts = allCosts;
+    window._mktParams = params;
+
+    renderMarketingCharts(costsByMonth, kpis, dealsMonthly);
+    renderMarketingTables(allCosts, kpis, ltv, dealsMonthly, params);
+    renderBusinessParams(params);
+    setupCostForm();
+    window._marketingLoaded = true;
+  } catch (err) {
+    document.getElementById('mkt-loading').innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
+  }
+}
+
+function renderMarketingCharts(costsByMonth, kpis, dealsMonthly) {
+  const ml = arr => arr.map(c => { const d = new Date(c.month); return d.toLocaleDateString('es-CL',{month:'short',year:'2-digit'}); });
+
+  if (window._mktCostChart) window._mktCostChart.destroy();
+  window._mktCostChart = new Chart(document.getElementById('chart-mkt-costs'), {
+    type:'bar', data:{labels:ml(costsByMonth), datasets:[
+      {label:'Google Ads',data:costsByMonth.map(c=>c.google_ads||0),backgroundColor:'#4285F4'},
+      {label:'Meta Ads',data:costsByMonth.map(c=>c.meta_ads||0),backgroundColor:'#1877F2'},
+      {label:'Agencia',data:costsByMonth.map(c=>c.agency||0),backgroundColor:'#d97706'},
+      {label:'Sueldos',data:costsByMonth.map(c=>c.salaries||0),backgroundColor:'#dc2626'},
+      {label:'Otro',data:costsByMonth.map(c=>c.other||0),backgroundColor:'#94a3b8'},
+    ]}, options:{responsive:true,scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true,ticks:{callback:v=>'$'+(v/1000000).toFixed(1)+'M'}}},plugins:{legend:{position:'bottom',labels:{font:{size:10}}}}}
+  });
+
+  const dml = ml(dealsMonthly);
+  if (window._mktDealsChart) window._mktDealsChart.destroy();
+  window._mktDealsChart = new Chart(document.getElementById('chart-mkt-deals'), {
+    type:'bar', data:{labels:dml, datasets:[
+      {label:'Nuevos Deals',data:dealsMonthly.map(d=>d.new_deals),backgroundColor:'#2563eb88'},
+      {label:'Exitosos',data:dealsMonthly.map(d=>d.exitosos),backgroundColor:'#16a34a'},
+    ]}, options:{responsive:true,scales:{y:{beginAtZero:true}},plugins:{legend:{position:'bottom'}}}
+  });
+
+  const cacLabels = ml(kpis);
+  if (window._mktCacChart) window._mktCacChart.destroy();
+  window._mktCacChart = new Chart(document.getElementById('chart-mkt-cac'), {
+    type:'line', data:{labels:cacLabels, datasets:[{
+      label:'CAC (CLP)',data:kpis.map(k=>k.cac),borderColor:'#dc2626',backgroundColor:'#dc262622',fill:true,tension:.3
+    }]}, options:{responsive:true,scales:{y:{beginAtZero:true,ticks:{callback:v=>'$'+(v/1000).toFixed(0)+'k'}}},plugins:{legend:{display:false}}}
+  });
+
+  const convData = dealsMonthly.map(d=>d.new_deals>0?Math.round(d.exitosos/d.new_deals*1000)/10:0);
+  if (window._mktConvChart) window._mktConvChart.destroy();
+  window._mktConvChart = new Chart(document.getElementById('chart-mkt-conversion'), {
+    type:'line', data:{labels:dml, datasets:[{
+      label:'Conversion %',data:convData,borderColor:'#16a34a',backgroundColor:'#16a34a22',fill:true,tension:.3
+    }]}, options:{responsive:true,scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%'}}},plugins:{legend:{display:false}}}
+  });
+}
+
+function renderMarketingTables(allCosts, kpis, ltv, dealsMonthly, params) {
+  const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
+  const SRC = {google_ads:'Google Ads',meta_ads:'Meta Ads',agency:'Agencia',salaries:'Sueldos',other:'Otro'};
+  const SRCBG = {google_ads:'#dbeafe',meta_ads:'#dbeafe',agency:'#fef3c7',salaries:'#fee2e2',other:'#f1f5f9'};
+  const arpu = params.avg_revenue_per_patient || 2500000;
+  const margin = (params.gross_margin_pct || 40) / 100;
+
+  document.querySelector('#table-mkt-costs tbody').innerHTML = allCosts.map(c => {
+    const mes = new Date(c.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
+    return `<tr><td>${mes}</td><td><span class="badge" style="background:${SRCBG[c.source]||'#f1f5f9'};color:#1e293b">${SRC[c.source]||c.source}</span></td><td style="font-size:.7rem">${c.description||'—'}</td><td style="font-weight:600">${fmtCLP(c.amount_clp)}</td><td><button onclick="deleteMktCost(${c.id})" style="background:#fee2e2;color:#dc2626;border:none;border-radius:4px;padding:.2rem .5rem;cursor:pointer;font-size:.7rem">X</button></td></tr>`;
+  }).join('');
+  makeSortable('table-mkt-costs');
+
+  document.querySelector('#table-mkt-kpis tbody').innerHTML = kpis.map(k => {
+    const mes = new Date(k.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
+    const cac = k.cac ? Number(k.cac) : null;
+    const ltvCac = cac ? (ltv/cac) : null;
+    const ltvCacStr = ltvCac ? ltvCac.toFixed(1)+'x' : '—';
+    const ltvCacCls = ltvCac >= 5 ? 'badge-green' : ltvCac >= 3 ? 'badge-amber' : 'badge-red';
+    const payback = cac && arpu*margin > 0 ? (cac/(arpu*margin)).toFixed(1) : '—';
+    const paybackCls = payback !== '—' && parseFloat(payback) <= 12 ? 'badge-green' : payback !== '—' && parseFloat(payback) <= 18 ? 'badge-amber' : 'badge-red';
+    const conv = k.new_deals > 0 ? (k.new_customers/k.new_deals*100).toFixed(1) : '0.0';
+    return `<tr><td>${mes}</td><td>${fmtCLP(k.total_cost)}</td><td>${k.new_deals||0}</td><td><strong>${k.new_customers||0}</strong></td><td style="font-weight:600">${fmtCLP(cac)}</td><td>${fmtCLP(ltv)}</td><td><span class="badge ${ltvCacCls}">${ltvCacStr}</span></td><td><span class="badge ${paybackCls}">${payback}m</span></td><td>${conv}%</td></tr>`;
+  }).join('');
+  makeSortable('table-mkt-kpis');
+}
+
+function renderBusinessParams(params) {
+  const defs = [
+    {key:'avg_revenue_per_patient',label:'Ingreso por paciente (CLP)',link:'#kpi-ltv'},
+    {key:'gross_margin_pct',label:'Margen bruto (%)',link:'#kpi-ltv'},
+    {key:'monthly_churn_pct',label:'Churn mensual (%)',link:'#kpi-churn'},
+    {key:'avg_surgery_price',label:'Precio cirugia (CLP)',link:'#kpi-cac'},
+    {key:'revenue_growth_pct',label:'Crecimiento ingresos (%)',link:'#kpi-rule40'},
+    {key:'profit_margin_pct',label:'Margen ganancia neta (%)',link:'#kpi-rule40'},
+  ];
+  document.getElementById('params-container').innerHTML = defs.map(p => {
+    const val = params[p.key] || 0;
+    return `<div style="background:#f8fafc;border-radius:8px;padding:.6rem;border:1px solid #e2e8f0">
+      <label style="font-size:.7rem;color:#64748b;display:block"><a href="${p.link}" style="color:#2563eb;text-decoration:none">${p.label}</a></label>
+      <input type="number" value="${val}" data-param-key="${p.key}" style="width:130px;padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem" onchange="updateParam('${p.key}',this.value)">
+    </div>`;
+  }).join('');
+}
+
+function setupCostForm() {
+  const now = new Date();
+  document.getElementById('mkt-month').value = now.toISOString().substring(0,7);
+  document.getElementById('form-mkt-cost').onsubmit = async (e) => {
+    e.preventDefault();
+    const monthVal = document.getElementById('mkt-month').value + '-01';
+    const source = document.getElementById('mkt-source').value;
+    const desc = document.getElementById('mkt-desc').value || source;
+    const amount = parseInt(document.getElementById('mkt-amount').value);
+    try {
+      await fetch(API_BASE + '/marketing/costs', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({month:monthVal,source,description:desc,amount_clp:amount})});
+      document.getElementById('mkt-save-msg').textContent = 'Guardado!';
+      setTimeout(()=>document.getElementById('mkt-save-msg').textContent='',2000);
+      window._marketingLoaded = false; loadMarketing();
+    } catch(err) { alert('Error: '+err.message); }
+  };
+}
+
+async function deleteMktCost(id) {
+  if (!confirm('Eliminar este costo?')) return;
+  await fetch(API_BASE+'/marketing/costs/'+id,{method:'DELETE'});
+  window._marketingLoaded = false; loadMarketing();
+}
+
+async function updateParam(key, value) {
+  await fetch(API_BASE+'/marketing/params/'+key,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:parseFloat(value)})});
+  window._marketingLoaded = false; loadMarketing();
+}
+
+function filterMarketingYear(year) {
+  const y = String(year);
+  const costsByMonth = window._mktCostsByMonth.filter(c=>c.month?.startsWith(y));
+  const kpis = window._mktKpis.filter(k=>k.month?.startsWith(y));
+  const dealsMonthly = window._mktDealsMonthly.filter(d=>d.month?.startsWith(y));
+  const allCosts = window._mktAllCosts.filter(c=>c.month?.startsWith(y));
+  renderMarketingCharts(costsByMonth, kpis, dealsMonthly);
+  renderMarketingTables(allCosts, kpis, window._mktLtv, dealsMonthly, window._mktParams);
 }
 
 // ═══════════ HELP POPUPS ═══════════

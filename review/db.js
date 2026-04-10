@@ -1088,3 +1088,107 @@ export async function dashboardSummary() {
     },
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  MARKETING COSTS + KPIs (saascalc-enriched)
+// ═══════════════════════════════════════════════════════════════════
+
+export async function marketingCosts(year = null) {
+  const filter = year ? `WHERE EXTRACT(YEAR FROM month) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT id, month::text, source, description, amount_clp, updated_at
+     FROM marketing_costs ${filter}
+     ORDER BY month DESC, source`
+  );
+  return rows;
+}
+
+export async function marketingCostsByMonth(year = null) {
+  const filter = year ? `WHERE EXTRACT(YEAR FROM month) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT month::text,
+            sum(amount_clp) FILTER (WHERE source = 'google_ads')::int AS google_ads,
+            sum(amount_clp) FILTER (WHERE source = 'meta_ads')::int AS meta_ads,
+            sum(amount_clp) FILTER (WHERE source = 'agency')::int AS agency,
+            sum(amount_clp) FILTER (WHERE source = 'salaries')::int AS salaries,
+            sum(amount_clp) FILTER (WHERE source = 'other')::int AS other,
+            sum(amount_clp)::int AS total
+     FROM marketing_costs ${filter}
+     GROUP BY month ORDER BY month DESC`
+  );
+  return rows;
+}
+
+export async function upsertMarketingCost({ month, source, description, amount_clp }) {
+  const desc = description || source;
+  const { rows } = await getPool().query(
+    `INSERT INTO marketing_costs (month, source, description, amount_clp, updated_at)
+     VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (month, source, description)
+     DO UPDATE SET amount_clp = $4, updated_at = now()
+     RETURNING *`,
+    [month, source, desc, amount_clp]
+  );
+  return rows[0];
+}
+
+export async function deleteMarketingCost(id) {
+  await getPool().query(`DELETE FROM marketing_costs WHERE id = $1`, [id]);
+}
+
+export async function dealsMonthlyForMarketing(year = null) {
+  const filter = year ? `WHERE EXTRACT(YEAR FROM added_at) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT date_trunc('month', added_at)::date::text AS month,
+            count(*)::int AS new_deals,
+            count(*) FILTER (WHERE pipeline_phase IN (
+              'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+            ))::int AS exitosos
+     FROM deals ${filter}
+     GROUP BY 1 ORDER BY 1 DESC`
+  );
+  return rows;
+}
+
+export async function getBusinessParams() {
+  const { rows } = await getPool().query(
+    `SELECT key, value::float, label FROM business_params ORDER BY key`
+  );
+  return rows;
+}
+
+export async function updateBusinessParam(key, value) {
+  const { rows } = await getPool().query(
+    `UPDATE business_params SET value = $2, updated_at = now()
+     WHERE key = $1 RETURNING *`, [key, value]
+  );
+  return rows[0];
+}
+
+export async function marketingKPIs(year = null) {
+  const filter = year ? `WHERE EXTRACT(YEAR FROM m.month) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT m.month::text,
+            m.total_cost,
+            d.new_customers,
+            d.new_deals,
+            CASE WHEN d.new_customers > 0
+              THEN round(m.total_cost::numeric / d.new_customers, 0)
+              ELSE null END AS cac
+     FROM (
+       SELECT month, sum(amount_clp)::int AS total_cost
+       FROM marketing_costs GROUP BY month
+     ) m
+     LEFT JOIN (
+       SELECT date_trunc('month', added_at)::date AS month,
+              count(*)::int AS new_deals,
+              count(*) FILTER (WHERE pipeline_phase IN (
+                'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
+              ))::int AS new_customers
+       FROM deals GROUP BY 1
+     ) d ON m.month = d.month
+     ${filter}
+     ORDER BY m.month DESC`
+  );
+  return rows;
+}
