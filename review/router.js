@@ -40,6 +40,16 @@ import {
   commissionsPerAgent,
   dashboardSummary,
   velocityPerAgent,
+  marketingCosts,
+  marketingCostsByMonth,
+  upsertMarketingCost,
+  deleteMarketingCost,
+  leadsPerDay,
+  leadsPerMonth,
+  leadsFromDeals,
+  getBusinessParams,
+  updateBusinessParam,
+  marketingKPIs,
 } from "./db.js";
 
 const router = Router();
@@ -337,5 +347,74 @@ router.get(
     res.json(await velocityPerAgent());
   })
 );
+
+// ═══════════ MARKETING / COSTS / KPIs ═══════════
+
+router.get("/marketing/costs", wrap(async (req, res) => {
+  const year = req.query.year || null;
+  res.json(await marketingCosts(year));
+}));
+
+router.get("/marketing/costs-by-month", wrap(async (req, res) => {
+  const year = req.query.year || null;
+  res.json(await marketingCostsByMonth(year));
+}));
+
+router.post("/marketing/costs", wrap(async (req, res) => {
+  const { month, source, description, amount_clp } = req.body;
+  if (!month || !source || amount_clp == null) {
+    return res.status(400).json({ error: "month, source, amount_clp required" });
+  }
+  res.json(await upsertMarketingCost({ month, source, description, amount_clp }));
+}));
+
+router.delete("/marketing/costs/:id", wrap(async (req, res) => {
+  await deleteMarketingCost(req.params.id);
+  res.json({ ok: true });
+}));
+
+router.get("/marketing/leads-daily", wrap(async (req, res) => {
+  const year = req.query.year || null;
+  const limit = Math.min(parseInt(req.query.limit) || 90, 365);
+  res.json(await leadsPerDay(year, limit));
+}));
+
+router.get("/marketing/leads-monthly", wrap(async (req, res) => {
+  const year = req.query.year || null;
+  res.json(await leadsPerMonth(year));
+}));
+
+router.get("/marketing/deals-monthly", wrap(async (req, res) => {
+  const year = req.query.year || null;
+  res.json(await leadsFromDeals(year));
+}));
+
+router.get("/marketing/kpis", wrap(async (req, res) => {
+  const year = req.query.year || null;
+  const [kpis, params] = await Promise.all([
+    marketingKPIs(year),
+    getBusinessParams(),
+  ]);
+  // Calculate LTV from params
+  const paramMap = {};
+  params.forEach(p => { paramMap[p.key] = p.value; });
+  const arpu = paramMap.avg_revenue_per_patient || 2500000;
+  const margin = (paramMap.gross_margin_pct || 40) / 100;
+  const churn = (paramMap.monthly_churn_pct || 5) / 100;
+  const ltv = churn > 0 ? Math.round(arpu * margin / churn) : 0;
+  res.json({ kpis, params: paramMap, ltv });
+}));
+
+router.get("/marketing/params", wrap(async (_req, res) => {
+  res.json(await getBusinessParams());
+}));
+
+router.put("/marketing/params/:key", wrap(async (req, res) => {
+  const { value } = req.body;
+  if (value == null) return res.status(400).json({ error: "value required" });
+  const result = await updateBusinessParam(req.params.key, value);
+  if (!result) return res.status(404).json({ error: "param not found" });
+  res.json(result);
+}));
 
 export default router;
