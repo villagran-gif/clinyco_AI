@@ -1637,3 +1637,211 @@ export async function verificacionSII(periodo = null) {
     ...compare(resVentas, rawVentas, 'VENTAS'),
   ];
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  EXCHANGE RATES (Dolar Observado via mindicador.cl)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Get cached rate from DB */
+async function getCachedRate(dateStr) {
+  const pool = getPool();
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT rate FROM exchange_rates WHERE currency = 'USD' AND date = $1`, [dateStr]
+  );
+  return rows.length > 0 ? parseFloat(rows[0].rate) : null;
+}
+
+/** Fetch Dolar Observado from mindicador.cl and cache it */
+async function fetchDolarObservado(dateStr) {
+  // dateStr = "YYYY-MM-DD"
+  const [y, m, d] = dateStr.split('-');
+  const url = `https://mindicador.cl/api/dolar/${d}-${m}-${y}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.serie || data.serie.length === 0) return null;
+    const rate = data.serie[0].valor;
+    // Cache it
+    const pool = getPool();
+    if (pool) {
+      await pool.query(
+        `INSERT INTO exchange_rates (currency, date, rate, source)
+         VALUES ('USD', $1, $2, 'mindicador')
+         ON CONFLICT (currency, date) DO NOTHING`, [dateStr, rate]
+      );
+    }
+    return rate;
+  } catch (e) {
+    console.error(`[exchange] failed to fetch rate for ${dateStr}:`, e.message);
+    return null;
+  }
+}
+
+/** Get exchange rate for a date, with weekend/holiday fallback (up to 5 days back) */
+export async function getOrFetchRate(dateStr) {
+  // Try cache first
+  const cached = await getCachedRate(dateStr);
+  if (cached) return { rate: cached, date: dateStr, source: 'cache' };
+
+  // Try API for exact date
+  const fetched = await fetchDolarObservado(dateStr);
+  if (fetched) return { rate: fetched, date: dateStr, source: 'mindicador' };
+
+  // Fallback: walk backwards up to 5 days (weekends, holidays)
+  const d = new Date(dateStr + 'T12:00:00Z');
+  for (let i = 1; i <= 5; i++) {
+    d.setDate(d.getDate() - 1);
+    const fallbackDate = d.toISOString().substring(0, 10);
+    const cachedFb = await getCachedRate(fallbackDate);
+    if (cachedFb) return { rate: cachedFb, date: fallbackDate, source: 'cache-fallback' };
+    const fetchedFb = await fetchDolarObservado(fallbackDate);
+    if (fetchedFb) return { rate: fetchedFb, date: fallbackDate, source: 'mindicador-fallback' };
+  }
+
+  // Last resort: most recent cached rate
+  const pool = getPool();
+  if (pool) {
+    const { rows } = await pool.query(
+      `SELECT rate, date::text FROM exchange_rates WHERE currency = 'USD' ORDER BY date DESC LIMIT 1`
+    );
+    if (rows.length > 0) return { rate: parseFloat(rows[0].rate), date: rows[0].date, source: 'last-known' };
+  }
+  return null;
+}
+
+/** Get cached exchange rates for a month (for display) */
+export async function getExchangeRates(month) {
+  const pool = getPool();
+  if (!pool) return [];
+  if (month) {
+    const { rows } = await pool.query(
+      `SELECT date::text, rate, source FROM exchange_rates
+       WHERE currency = 'USD' AND date >= $1::date AND date < $1::date + interval '1 month'
+       ORDER BY date DESC`, [month + '-01']
+    );
+    return rows;
+  }
+  const { rows } = await pool.query(
+    `SELECT date::text, rate, source FROM exchange_rates WHERE currency = 'USD' ORDER BY date DESC LIMIT 100`
+  );
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  META ADS BILLING
+// ═══════════════════════════════════════════════════════════════════
+
+const IVA_RATE = 0.19; // Ley 21.210
+
+/**
+ * Insert Meta Ads billing rows with USD→CLP conversion.
+ * transactions: [{ fecha, transaction_id, description, payment_method, amount_usd, currency, tipo }]
+ * billingPeriod: raw string from CSV header (e.g. "1 ene 2026 - 31 ene 2026")
+ */
+export async function insertMetaBilling(transactions, periodo, batchId, billingPeriod) {
+  const pool = getPool();
+  if (!pool) throw new Error('DB not available');
+  await pool.query(`DELETE FROM meta_ads_billing WHERE periodo = $1`, [periodo]);
+
+  let inserted = 0, skipped = 0;
+  const rateCache = {}; // local cache to avoid repeated API calls for same date
+
+  for (const tx of transactions) {
+    try {
+      const fechaStr = tx.fecha; // "YYYY-MM-DD"
+      // Get exchange rate: use manual override if provided, else fetch from API
+      if (tx._manualRate) {
+        rateCache[fechaStr] = { rate: tx._manualRate, date: fechaStr, source: 'manual' };
+      } else if (!rateCache[fechaStr]) {
+        rateCache[fechaStr] = await getOrFetchRate(fechaStr);
+      }
+      const rateInfo = rateCache[fechaStr];
+      const dolar = rateInfo ? rateInfo.rate : null;
+      const amountUsd = parseFloat(tx.amount_usd) || 0;
+      const amountClp = dolar ? Math.round(amountUsd * dolar) : null;
+      const ivaClp = (tx.tipo === 'charge' && amountClp) ? Math.round(amountClp * IVA_RATE) : 0;
+      const totalClp = amountClp != null ? amountClp + ivaClp : null;
+
+      await pool.query(
+        `INSERT INTO meta_ads_billing
+         (fecha, transaction_id, description, payment_method, amount_usd, currency, tipo,
+          dolar_observado, amount_clp, iva_clp, total_clp, periodo, billing_period, upload_batch_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [
+          fechaStr, tx.transaction_id || '', tx.description || '', tx.payment_method || '',
+          amountUsd, tx.currency || 'USD', tx.tipo || 'charge',
+          dolar, amountClp, ivaClp, totalClp,
+          periodo, billingPeriod || '', batchId
+        ]
+      );
+      inserted++;
+    } catch (e) {
+      console.error(`[meta-billing] skip row:`, e.message);
+      skipped++;
+    }
+  }
+  return { inserted, skipped, total: transactions.length };
+}
+
+/** Auto-sync: aggregate Meta billing → marketing_costs */
+export async function syncMetaBillingToMarketingCosts(periodo) {
+  const pool = getPool();
+  if (!pool) return;
+  // Sum total_clp for charges only (exclude credits)
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(total_clp), 0)::int AS total
+     FROM meta_ads_billing
+     WHERE periodo = $1 AND tipo = 'charge'`, [periodo]
+  );
+  const totalClp = rows[0]?.total || 0;
+  // Also sum credits (negative amounts)
+  const { rows: creditRows } = await pool.query(
+    `SELECT COALESCE(SUM(total_clp), 0)::int AS total
+     FROM meta_ads_billing
+     WHERE periodo = $1 AND tipo = 'credit'`, [periodo]
+  );
+  const creditClp = creditRows[0]?.total || 0;
+  const netTotal = totalClp + creditClp; // credits are negative, so this subtracts them
+
+  const monthDate = periodo + '-01';
+  await pool.query(
+    `INSERT INTO marketing_costs (month, source, description, amount_clp, updated_at)
+     VALUES ($1, 'meta_ads', 'Meta Ads Billing (auto)', $2, now())
+     ON CONFLICT (month, source, description)
+     DO UPDATE SET amount_clp = $2, updated_at = now()`,
+    [monthDate, netTotal]
+  );
+}
+
+/** Get raw Meta billing records */
+export async function getMetaBilling(periodo = null, limit = 500) {
+  const pool = getPool();
+  if (!pool) return [];
+  const filter = periodo ? `WHERE periodo = $2` : '';
+  const params = periodo ? [limit, periodo] : [limit];
+  const { rows } = await pool.query(
+    `SELECT * FROM meta_ads_billing ${filter} ORDER BY fecha DESC NULLS LAST LIMIT $1`, params
+  );
+  return rows;
+}
+
+/** Monthly summary for Meta billing */
+export async function metaBillingSummary(year = null) {
+  const pool = getPool();
+  if (!pool) return [];
+  const filter = year ? `WHERE EXTRACT(YEAR FROM fecha) = ${parseInt(year)}` : '';
+  const { rows } = await pool.query(
+    `SELECT periodo,
+            count(*)::int AS transactions,
+            sum(amount_usd)::numeric(12,2) AS total_usd,
+            round(avg(dolar_observado), 2)::numeric(10,2) AS avg_rate,
+            sum(amount_clp)::int AS total_clp_neto,
+            sum(iva_clp)::int AS total_iva,
+            sum(total_clp)::int AS total_clp_total
+     FROM meta_ads_billing ${filter}
+     GROUP BY periodo ORDER BY periodo DESC`
+  );
+  return rows;
+}
