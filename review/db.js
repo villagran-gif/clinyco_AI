@@ -1249,13 +1249,28 @@ function parseFloat0(s) {
   return isNaN(n) ? 0 : n;
 }
 
-export async function insertCompras(rows, periodo, batchId) {
+function derivePeriodo(dateStr) {
+  const d = parseDate(dateStr);
+  if (!d) return null;
+  return d.substring(0, 7); // "2026-01" from "2026-01-15"
+}
+
+export async function insertCompras(rows, periodoFallback, batchId) {
   const pool = getPool();
-  // Delete existing rows for this periodo to avoid duplicates (NULL breaks UNIQUE)
-  await pool.query(`DELETE FROM sii_compras WHERE periodo = $1`, [periodo]);
+  // Derive periodos from fecha_docto (col 6) to avoid mislabeling
+  const periodos = new Set();
+  rows.forEach(r => {
+    const p = derivePeriodo(r[6]);
+    if (p) periodos.add(p);
+  });
+  // Delete existing rows for ALL periodos found in this CSV
+  for (const p of periodos) {
+    await pool.query(`DELETE FROM sii_compras WHERE periodo = $1`, [p]);
+  }
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
+      const periodo = derivePeriodo(r[6]) || periodoFallback;
       await pool.query(
         `INSERT INTO sii_compras (${COMPRAS_COLS.join(',')}, periodo, upload_batch_id)
          VALUES (${COMPRAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${COMPRAS_COLS.length+1}, $${COMPRAS_COLS.length+2})`,
@@ -1276,12 +1291,15 @@ export async function insertCompras(rows, periodo, batchId) {
   return { inserted, skipped, total: rows.length };
 }
 
-export async function insertVentas(rows, periodo, batchId) {
+export async function insertVentas(rows, periodoFallback, batchId) {
   const pool = getPool();
-  await pool.query(`DELETE FROM sii_ventas WHERE periodo = $1`, [periodo]);
+  const periodos = new Set();
+  rows.forEach(r => { const p = derivePeriodo(r[6]); if (p) periodos.add(p); });
+  for (const p of periodos) { await pool.query(`DELETE FROM sii_ventas WHERE periodo = $1`, [p]); }
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
+      const periodo = derivePeriodo(r[6]) || periodoFallback;
       await pool.query(
         `INSERT INTO sii_ventas (${VENTAS_COLS.join(',')}, periodo, upload_batch_id)
          VALUES (${VENTAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${VENTAS_COLS.length+1}, $${VENTAS_COLS.length+2})`,
@@ -1402,12 +1420,15 @@ const BOLETAS_COLS = [
   'indicador_servicio','folio','monto_neto','monto_iva','monto_exento','monto_total'
 ];
 
-export async function insertBoletas(rows, periodo, batchId) {
+export async function insertBoletas(rows, periodoFallback, batchId) {
   const pool = getPool();
-  await pool.query(`DELETE FROM sii_ventas_boletas WHERE periodo = $1`, [periodo]);
+  const periodos = new Set();
+  rows.forEach(r => { const p = derivePeriodo(r[2]); if (p) periodos.add(p); });
+  for (const p of periodos) { await pool.query(`DELETE FROM sii_ventas_boletas WHERE periodo = $1`, [p]); }
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
+      const periodo = derivePeriodo(r[2]) || periodoFallback;
       await pool.query(
         `INSERT INTO sii_ventas_boletas (${BOLETAS_COLS.join(',')}, periodo, upload_batch_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
