@@ -1745,8 +1745,8 @@ export async function insertMetaBilling(transactions, batchId, billingPeriod) {
   const pool = getPool();
   if (!pool) throw new Error('DB not available');
 
-  // Full replace — Meta exports the complete billing history each time
-  await pool.query(`DELETE FROM meta_ads_billing`);
+  // Replace only USD records — preserve CLP records from other uploads
+  await pool.query(`DELETE FROM meta_ads_billing WHERE currency = 'USD' OR currency IS NULL`);
 
   let inserted = 0, skipped = 0;
   const rateCache = {}; // local cache to avoid repeated API calls for same date

@@ -730,6 +730,8 @@
             <input type="month" id="meta-csv-periodo" style="padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem"></div>
           <div><label style="font-size:.7rem;display:block;color:#64748b">Tipo cambio manual CLP/USD (opcional):</label>
             <input type="number" id="meta-manual-rate" placeholder="ej: 920" step="0.01" style="padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem;width:100px"></div>
+          <div><label style="font-size:.7rem;display:block;color:#64748b">ID cuenta (opcional, para CSV CLP):</label>
+            <input type="text" id="meta-account-id" placeholder="ej: 353051184724413" style="padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem;width:160px"></div>
         </div>
         <div id="meta-csv-upload-status" style="font-size:.8rem;color:#64748b"></div>
       </div>
@@ -2452,21 +2454,31 @@ function handleMetaCSVFile(file) {
       const csv = e.target.result;
       const periodo = document.getElementById('meta-csv-periodo').value || null;
       const manualRate = document.getElementById('meta-manual-rate').value || null;
-      status.innerHTML = '<span style="color:#d97706">Subiendo y convirtiendo USD→CLP...</span>';
+      const accountId = document.getElementById('meta-account-id').value || null;
+      status.innerHTML = '<span style="color:#d97706">Procesando CSV de Meta Ads...</span>';
       try {
-        const data = await uploadMetaCSV(csv, periodo, manualRate);
+        const data = await uploadMetaCSV(csv, periodo, manualRate, accountId);
         if (data.error) {
           status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`;
           return;
         }
         const nPeriodos = data.periodos ? data.periodos.length : 0;
-        status.innerHTML = `<span style="color:#16a34a">` +
-          `<strong>${data.label}</strong> | ` +
-          `Transacciones: ${data.transactionCount || data.inserted} | ` +
-          `Periodos: ${nPeriodos} (${data.periodos ? data.periodos[data.periodos.length-1]+' a '+data.periodos[0] : '—'}) | ` +
-          `Insertados: ${data.inserted} | Skipped: ${data.skipped} | ` +
-          `Total USD: $${(data.totalUsd||0).toLocaleString('en-US',{minimumFractionDigits:2})}` +
-          `</span>`;
+        const fmtCLP = n => '$' + Number(n).toLocaleString('es-CL');
+        let detail;
+        if (data.currency === 'CLP') {
+          detail = `<strong>${data.label}</strong> | ` +
+            `Transacciones: ${data.transactionCount || data.inserted} | ` +
+            `Periodos: ${nPeriodos} (${data.periodos ? data.periodos[data.periodos.length-1]+' a '+data.periodos[0] : '—'}) | ` +
+            `Insertados: ${data.inserted} | Skipped: ${data.skipped} | ` +
+            `Total CLP: ${fmtCLP(data.totalClp || 0)}`;
+        } else {
+          detail = `<strong>${data.label}</strong> | ` +
+            `Transacciones: ${data.transactionCount || data.inserted} | ` +
+            `Periodos: ${nPeriodos} (${data.periodos ? data.periodos[data.periodos.length-1]+' a '+data.periodos[0] : '—'}) | ` +
+            `Insertados: ${data.inserted} | Skipped: ${data.skipped} | ` +
+            `Total USD: $${(data.totalUsd||0).toLocaleString('en-US',{minimumFractionDigits:2})}`;
+        }
+        status.innerHTML = `<span style="color:#16a34a">${detail}</span>`;
         loadMetaData();
         window._marketingLoaded = false;
         loadMarketing();
@@ -2478,10 +2490,11 @@ function handleMetaCSVFile(file) {
   }
 }
 
-async function uploadMetaCSV(csv, periodo, manualRate) {
+async function uploadMetaCSV(csv, periodo, manualRate, accountId) {
   const body = { csv };
   if (periodo) body.periodo = periodo;
   if (manualRate) body.manual_rate = parseFloat(manualRate);
+  if (accountId) body.account_id = accountId;
   const res = await fetch(API_BASE + '/meta-ads/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
