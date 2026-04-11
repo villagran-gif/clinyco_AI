@@ -58,7 +58,7 @@ import {
 } from "./Antonia/medinet-api.js";
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" }));
 app.use("/api/review", reviewRouter);
 
 app.use((req, res, next) => {
