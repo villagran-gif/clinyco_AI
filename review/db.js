@@ -1251,13 +1251,14 @@ function parseFloat0(s) {
 
 export async function insertCompras(rows, periodo, batchId) {
   const pool = getPool();
+  // Delete existing rows for this periodo to avoid duplicates (NULL breaks UNIQUE)
+  await pool.query(`DELETE FROM sii_compras WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
       await pool.query(
         `INSERT INTO sii_compras (${COMPRAS_COLS.join(',')}, periodo, upload_batch_id)
-         VALUES (${COMPRAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${COMPRAS_COLS.length+1}, $${COMPRAS_COLS.length+2})
-         ON CONFLICT (folio, tipo_doc, rut_proveedor, fecha_docto) DO NOTHING`,
+         VALUES (${COMPRAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${COMPRAS_COLS.length+1}, $${COMPRAS_COLS.length+2})`,
         [
           parseInt0(r[0]), r[1]||'', r[2]||'', r[3]||'', r[4]||'', r[5]||'',
           parseDate(r[6]), parseDate(r[7]), parseDate(r[8]),
@@ -1277,13 +1278,13 @@ export async function insertCompras(rows, periodo, batchId) {
 
 export async function insertVentas(rows, periodo, batchId) {
   const pool = getPool();
+  await pool.query(`DELETE FROM sii_ventas WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
       await pool.query(
         `INSERT INTO sii_ventas (${VENTAS_COLS.join(',')}, periodo, upload_batch_id)
-         VALUES (${VENTAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${VENTAS_COLS.length+1}, $${VENTAS_COLS.length+2})
-         ON CONFLICT (folio, tipo_doc, rut_cliente, fecha_docto) DO NOTHING`,
+         VALUES (${VENTAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${VENTAS_COLS.length+1}, $${VENTAS_COLS.length+2})`,
         [
           parseInt0(r[0]), r[1]||'', r[2]||'', r[3]||'', r[4]||'', r[5]||'',
           parseDate(r[6]), parseDate(r[7]), parseDate(r[8]), parseDate(r[9]),
@@ -1403,13 +1404,13 @@ const BOLETAS_COLS = [
 
 export async function insertBoletas(rows, periodo, batchId) {
   const pool = getPool();
+  await pool.query(`DELETE FROM sii_ventas_boletas WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
       await pool.query(
         `INSERT INTO sii_ventas_boletas (${BOLETAS_COLS.join(',')}, periodo, upload_batch_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-         ON CONFLICT (folio, tipo_doc, rut_receptor, fecha_docto) DO NOTHING`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           r[0]||'', r[1]||'', parseDate(r[2]), parseDate(r[3]),
           r[4]||'', r[5]||'', parseInt0(r[6]), parseInt0(r[7]),
