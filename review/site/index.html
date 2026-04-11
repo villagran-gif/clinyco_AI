@@ -2338,10 +2338,14 @@ function handleCSVDrop(e) {
 
 function handleCSVFile(file) {
   if (!file) return;
+  // Extract periodo from filename: RCV_..._202601 → 2026-01
+  let periodoFromName = null;
+  const m = file.name.match(/(\d{4})(\d{2})(?:\D|$)/);
+  if (m) periodoFromName = m[1] + '-' + m[2];
   const reader = new FileReader();
   reader.onload = async (e) => {
     const csv = e.target.result;
-    const periodo = document.getElementById('csv-periodo').value || null;
+    const periodo = periodoFromName || document.getElementById('csv-periodo').value || null;
     const status = document.getElementById('csv-upload-status');
     status.innerHTML = '<span style="color:#d97706">Subiendo...</span>';
     try {
@@ -2355,7 +2359,7 @@ function handleCSVFile(file) {
         status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`;
         return;
       }
-      status.innerHTML = `<span style="color:#16a34a">Tipo: <strong>${data.label || data.type}</strong> | Insertados: ${data.inserted} | Duplicados: ${data.skipped} | Total: ${data.total}</span>`;
+      status.innerHTML = `<span style="color:#16a34a">Tipo: <strong>${data.label || data.type}</strong> | Periodo: ${data.periodo} | Insertados: ${data.inserted} | Duplicados: ${data.skipped} | Total: ${data.total}</span>`;
       loadSIIData();
     } catch (err) {
       status.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;

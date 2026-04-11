@@ -1257,20 +1257,12 @@ function derivePeriodo(dateStr) {
 
 export async function insertCompras(rows, periodoFallback, batchId) {
   const pool = getPool();
-  // Derive periodos from fecha_docto (col 6) to avoid mislabeling
-  const periodos = new Set();
-  rows.forEach(r => {
-    const p = derivePeriodo(r[6]);
-    if (p) periodos.add(p);
-  });
-  // Delete existing rows for ALL periodos found in this CSV
-  for (const p of periodos) {
-    await pool.query(`DELETE FROM sii_compras WHERE periodo = $1`, [p]);
-  }
+  // Use the periodo from filename/selector — SII CSV belongs to ONE periodo
+  const periodo = periodoFallback;
+  await pool.query(`DELETE FROM sii_compras WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
-      const periodo = derivePeriodo(r[6]) || periodoFallback;
       await pool.query(
         `INSERT INTO sii_compras (${COMPRAS_COLS.join(',')}, periodo, upload_batch_id)
          VALUES (${COMPRAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${COMPRAS_COLS.length+1}, $${COMPRAS_COLS.length+2})`,
@@ -1293,13 +1285,11 @@ export async function insertCompras(rows, periodoFallback, batchId) {
 
 export async function insertVentas(rows, periodoFallback, batchId) {
   const pool = getPool();
-  const periodos = new Set();
-  rows.forEach(r => { const p = derivePeriodo(r[6]); if (p) periodos.add(p); });
-  for (const p of periodos) { await pool.query(`DELETE FROM sii_ventas WHERE periodo = $1`, [p]); }
+  const periodo = periodoFallback;
+  await pool.query(`DELETE FROM sii_ventas WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
-      const periodo = derivePeriodo(r[6]) || periodoFallback;
       await pool.query(
         `INSERT INTO sii_ventas (${VENTAS_COLS.join(',')}, periodo, upload_batch_id)
          VALUES (${VENTAS_COLS.map((_,i)=>'$'+(i+1)).join(',')}, $${VENTAS_COLS.length+1}, $${VENTAS_COLS.length+2})`,
@@ -1422,13 +1412,11 @@ const BOLETAS_COLS = [
 
 export async function insertBoletas(rows, periodoFallback, batchId) {
   const pool = getPool();
-  const periodos = new Set();
-  rows.forEach(r => { const p = derivePeriodo(r[2]); if (p) periodos.add(p); });
-  for (const p of periodos) { await pool.query(`DELETE FROM sii_ventas_boletas WHERE periodo = $1`, [p]); }
+  const periodo = periodoFallback;
+  await pool.query(`DELETE FROM sii_ventas_boletas WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
-      const periodo = derivePeriodo(r[2]) || periodoFallback;
       await pool.query(
         `INSERT INTO sii_ventas_boletas (${BOLETAS_COLS.join(',')}, periodo, upload_batch_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
