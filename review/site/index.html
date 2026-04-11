@@ -2410,8 +2410,11 @@ function handleMetaCSVFile(file) {
         status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`;
         return;
       }
+      const nPeriodos = data.periodos ? data.periodos.length : 0;
       status.innerHTML = `<span style="color:#16a34a">` +
-        `<strong>${data.label}</strong> | Periodo: ${data.periodo} | ` +
+        `<strong>${data.label}</strong> | ` +
+        `Transacciones: ${data.transactionCount || data.inserted} | ` +
+        `Periodos: ${nPeriodos} (${data.periodos ? data.periodos[data.periodos.length-1]+' a '+data.periodos[0] : '—'}) | ` +
         `Insertados: ${data.inserted} | Skipped: ${data.skipped} | ` +
         `Total USD: $${(data.totalUsd||0).toLocaleString('en-US',{minimumFractionDigits:2})}` +
         `</span>`;
