@@ -532,131 +532,183 @@ router.get("/api-connections", wrap(async (_req, res) => {
 // ═══════════ META ADS BILLING ═══════════
 
 /**
- * Parse Meta Ads billing CSV.
- * Meta CSVs have informational header lines before the transaction table.
- * We detect the header row by looking for "Fecha" + ("Importe" or "Amount").
+ * Parse Meta Ads billing CSV (real format from business.facebook.com/billing).
+ *
+ * Structure:
+ *   - Info header lines (Meta address, advertiser info, billing period)
+ *   - Main transactions table (6 cols: Fecha, ID, Descripción, Método pago, Importe, Divisa)
+ *   - Summary row ("Importe total facturado")
+ *   - Credits section header + credit rows (4 cols: Fecha, ID, Importe, Divisa)
+ *   - VAT info at bottom
+ *
+ * Amounts use Chilean/European format: period=thousands, comma=decimal (e.g. "1.071,00")
+ * Tab-separated.
  */
 function parseMetaCSV(text) {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 3) return { metadata: {}, transactions: [] };
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 5) return { metadata: {}, transactions: [] };
 
-  const sep = lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : ',';
+  const sep = '\t'; // Meta billing is always tab-separated
   const metadata = {};
-  let headerIdx = -1;
+  const transactions = [];
 
-  // Find the transaction header row and extract metadata from preceding lines
-  for (let i = 0; i < Math.min(lines.length, 15); i++) {
-    const lower = lines[i].toLowerCase().replace(/"/g, '');
-    if ((lower.includes('fecha') && (lower.includes('importe') || lower.includes('amount') || lower.includes('transacci')))
-        || (lower.includes('date') && lower.includes('transaction'))) {
-      headerIdx = i;
-      break;
+  // Extract metadata from header lines
+  for (let i = 0; i < Math.min(lines.length, 12); i++) {
+    const lower = lines[i].toLowerCase();
+    // Billing period: "Informe de facturación: 29/1/2012 - 12/4/2026"
+    if (lower.includes('informe') && lower.includes('factura')) {
+      const m = lines[i].match(/:\s*(.+)/);
+      if (m) metadata.billingPeriod = m[1].trim();
     }
-    // Extract metadata from header lines
-    const parts = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
-    if (parts.length >= 2) {
-      const key = parts[0].toLowerCase();
-      if (key.includes('periodo') || key.includes('billing')) metadata.billingPeriod = parts[1];
-      if (key.includes('empresa') || key.includes('company') || key.includes('nombre')) metadata.company = parts[1];
-      if (key.includes('cuenta') || key.includes('account')) metadata.account = parts[1];
-      if (key.includes('moneda') || key.includes('currency')) metadata.currency = parts[1];
+    // Account info: "Cuenta: 353051184724413"
+    if (lower.includes('cuenta:') || lower.includes('account:')) {
+      const parts = lines[i].split(sep).map(c => c.trim());
+      metadata.account = parts[0].replace(/^cuenta:\s*/i, '').trim();
+      // Business name is in next field
+      if (parts[1]) metadata.company = parts[1].replace(/^negocio:\s*/i, '').trim();
     }
+    // VAT / RUT
+    const vatMatch = lines[i].match(/VAT:\s*(\d+)/);
+    if (vatMatch) metadata.rut = vatMatch[1];
   }
 
-  if (headerIdx < 0) return { metadata, transactions: [] };
-
-  const headers = lines[headerIdx].split(sep).map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
-
-  // Find column indices by matching common Meta header patterns
-  const colIdx = {
-    fecha: headers.findIndex(h => h.includes('fecha') || h === 'date'),
-    transactionId: headers.findIndex(h => h.includes('transacci') || h.includes('transaction id')),
-    description: headers.findIndex(h => h.includes('descripci') || h.includes('description')),
-    paymentMethod: headers.findIndex(h => h.includes('metodo') || h.includes('payment') || h.includes('m\u00e9todo')),
-    amount: headers.findIndex(h => h.includes('importe') || h.includes('amount')),
-    currency: headers.findIndex(h => h.includes('divisa') || h.includes('currency')),
-  };
-
-  const transactions = [];
-  for (let i = headerIdx + 1; i < lines.length; i++) {
+  // Parse all sections — find each header row and parse its data rows
+  let i = 0;
+  while (i < lines.length) {
+    const lower = lines[i].toLowerCase();
     const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
-    if (cols.length < 3 || !cols[colIdx.fecha >= 0 ? colIdx.fecha : 0]) continue;
 
-    const rawDate = colIdx.fecha >= 0 ? cols[colIdx.fecha] : '';
-    const fecha = parseMetaDate(rawDate);
-    if (!fecha) continue;
+    // Detect main transaction header: "Fecha  Identificador de la transacción  Descripción ...  Importe  Divisa"
+    if (lower.includes('fecha') && lower.includes('importe') &&
+        (lower.includes('transacci') || lower.includes('descripci') || lower.includes('m\u00e9todo'))) {
+      const headers = cols.map(h => h.toLowerCase());
+      const cFecha = headers.findIndex(h => h.includes('fecha'));
+      const cId = headers.findIndex(h => h.includes('identificador') || h.includes('transacci'));
+      const cDesc = headers.findIndex(h => h.includes('descripci'));
+      const cPago = headers.findIndex(h => h.includes('m\u00e9todo') || h.includes('metodo'));
+      const cImporte = headers.findIndex(h => h.includes('importe'));
+      const cDivisa = headers.findIndex(h => h.includes('divisa'));
+      i++;
 
-    // Parse amount — handle unicode minus (−), commas as decimal sep, etc.
-    let rawAmount = colIdx.amount >= 0 ? cols[colIdx.amount] : '0';
-    rawAmount = rawAmount.replace(/\u2212/g, '-').replace(/[$ ]/g, '');
-    // If uses comma as decimal separator (e.g. "1.234,56")
-    if (rawAmount.includes(',') && rawAmount.indexOf(',') > rawAmount.lastIndexOf('.')) {
-      rawAmount = rawAmount.replace(/\./g, '').replace(',', '.');
+      // Read data rows until summary row or section break
+      while (i < lines.length) {
+        const row = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
+        const rowLower = lines[i].toLowerCase();
+
+        // Stop at total/summary rows or empty lines
+        if (rowLower.includes('importe total') || rowLower.includes('total de fondos')
+            || (!row[0] && !row[1]) || row.filter(c => c).length === 0) {
+          break;
+        }
+
+        const fecha = parseMetaDate(row[cFecha >= 0 ? cFecha : 0]);
+        if (!fecha) { i++; continue; }
+
+        const amountUsd = parseMetaAmount(row[cImporte >= 0 ? cImporte : 4]);
+        const description = cDesc >= 0 ? row[cDesc] : '';
+        const descLower = description.toLowerCase();
+
+        let tipo = 'charge';
+        if (amountUsd < 0 || descLower.includes('reembolso') || descLower.includes('refund')
+            || descLower.includes('cr\u00e9dito') || descLower.includes('credito')) {
+          tipo = 'credit';
+        }
+
+        transactions.push({
+          fecha,
+          transaction_id: cId >= 0 ? row[cId] : '',
+          description,
+          payment_method: cPago >= 0 ? row[cPago] : '',
+          amount_usd: amountUsd,
+          currency: cDivisa >= 0 ? (row[cDivisa] || 'USD') : 'USD',
+          tipo,
+        });
+        i++;
+      }
+      continue;
     }
-    const amountUsd = parseFloat(rawAmount) || 0;
 
-    const description = colIdx.description >= 0 ? cols[colIdx.description] : '';
-    const descLower = description.toLowerCase();
+    // Detect credits section header: "Fecha  Identificador de la transacción  Importe  Divisa" (4 cols, no Descripción)
+    if (lower.includes('fecha') && lower.includes('importe') && !lower.includes('descripci')) {
+      const headers = cols.map(h => h.toLowerCase());
+      const cFecha = headers.findIndex(h => h.includes('fecha'));
+      const cId = headers.findIndex(h => h.includes('identificador') || h.includes('transacci'));
+      const cImporte = headers.findIndex(h => h.includes('importe'));
+      const cDivisa = headers.findIndex(h => h.includes('divisa'));
+      i++;
 
-    // Classify transaction tipo
-    let tipo = 'charge';
-    if (amountUsd < 0 || descLower.includes('cr\u00e9dito') || descLower.includes('credito') || descLower.includes('credit') || descLower.includes('reembolso') || descLower.includes('refund')) {
-      tipo = 'credit';
-    } else if (descLower.includes('iva') || descLower.includes('impuesto') || descLower.includes('tax') || descLower.includes('vat')) {
-      tipo = 'tax';
+      while (i < lines.length) {
+        const row = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
+        const rowLower = lines[i].toLowerCase();
+
+        if (rowLower.includes('importe total') || (!row[0] && !row[1]) || row.filter(c => c).length === 0) {
+          break;
+        }
+
+        const fecha = parseMetaDate(row[cFecha >= 0 ? cFecha : 0]);
+        if (!fecha) { i++; continue; }
+
+        const amountUsd = parseMetaAmount(row[cImporte >= 0 ? cImporte : 2]);
+
+        transactions.push({
+          fecha,
+          transaction_id: cId >= 0 ? row[cId] : '',
+          description: 'Cr\u00e9dito publicitario',
+          payment_method: 'Cr\u00e9dito',
+          amount_usd: amountUsd,
+          currency: cDivisa >= 0 ? (row[cDivisa] || 'USD') : 'USD',
+          tipo: 'credit',
+        });
+        i++;
+      }
+      continue;
     }
 
-    transactions.push({
-      fecha,
-      transaction_id: colIdx.transactionId >= 0 ? cols[colIdx.transactionId] : '',
-      description,
-      payment_method: colIdx.paymentMethod >= 0 ? cols[colIdx.paymentMethod] : '',
-      amount_usd: amountUsd,
-      currency: colIdx.currency >= 0 ? cols[colIdx.currency] : metadata.currency || 'USD',
-      tipo,
-    });
+    // Extract VAT info: "VAT Rate: 19%" and "VAT Amount: 7.754,78"
+    if (lower.includes('vat amount')) {
+      const m = lines[i].match(/vat amount[:\s]*([\d.,]+)/i);
+      if (m) metadata.vatAmount = parseMetaAmount(m[1]);
+    }
+    if (lower.includes('vat rate')) {
+      const m = lines[i].match(/vat rate[:\s]*([\d.,]+)/i);
+      if (m) metadata.vatRate = parseMetaAmount(m[1]);
+    }
+
+    i++;
   }
 
   return { metadata, transactions };
 }
 
-/** Parse date from Meta CSV: handles "DD/MM/YYYY", "YYYY-MM-DD", "DD-MM-YYYY", "ene 5, 2026", etc. */
+/** Parse amount in Chilean/European format: "1.071,00" → 1071.00, "-40,90" → -40.90 */
+function parseMetaAmount(s) {
+  if (!s) return 0;
+  let raw = String(s).trim().replace(/\u2212/g, '-').replace(/[$ ]/g, '');
+  // Chilean/European: period=thousands, comma=decimal
+  if (raw.includes(',')) {
+    raw = raw.replace(/\./g, '').replace(',', '.');
+  }
+  return parseFloat(raw) || 0;
+}
+
+/** Parse date from Meta CSV: "D/M/YYYY" → "YYYY-MM-DD" */
 function parseMetaDate(s) {
   if (!s) return null;
   const cleaned = String(s).trim();
-  // ISO format
+  if (!cleaned || cleaned === '0') return null;
+  // ISO format (YYYY-MM-DD)
   const iso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return iso[0];
-  // DD/MM/YYYY or DD-MM-YYYY
+  // DD/MM/YYYY or D/M/YYYY (most common in Meta Chile)
   const dmy = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
-  // MM/DD/YYYY (US format — Meta sometimes uses this)
-  const mdy = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mdy) {
-    const m = parseInt(mdy[1]), d = parseInt(mdy[2]);
-    // Heuristic: if first number > 12, it's DD/MM/YYYY (already handled above)
-    if (m <= 12) return `${mdy[3]}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-  }
-  // "mes DD, YYYY" or "DD mes YYYY" (Spanish month names)
-  const MESES = {ene:'01',feb:'02',mar:'03',abr:'04',may:'05',jun:'06',jul:'07',ago:'08',sep:'09',oct:'10',nov:'11',dic:'12',
-                  jan:'01',apr:'04',aug:'08',dec:'12'};
-  const spMonth = cleaned.match(/(\w{3})\w*\s+(\d{1,2}),?\s+(\d{4})/i);
-  if (spMonth) {
-    const mm = MESES[spMonth[1].toLowerCase().substring(0,3)];
-    if (mm) return `${spMonth[3]}-${mm}-${spMonth[2].padStart(2,'0')}`;
-  }
-  const spDay = cleaned.match(/(\d{1,2})\s+de?\s*(\w{3})\w*\s+(\d{4})/i);
-  if (spDay) {
-    const mm = MESES[spDay[2].toLowerCase().substring(0,3)];
-    if (mm) return `${spDay[3]}-${mm}-${spDay[1].padStart(2,'0')}`;
-  }
   return null;
 }
 
 function detectMetaCSV(text) {
   const lower = text.toLowerCase();
   return (lower.includes('importe') || lower.includes('amount'))
-    && (lower.includes('transacci') || lower.includes('transaction') || lower.includes('m\u00e9todo de pago') || lower.includes('metodo de pago'));
+    && (lower.includes('transacci') || lower.includes('transaction') || lower.includes('m\u00e9todo de pago') || lower.includes('metodo de pago') || lower.includes('anuncios de meta'));
 }
 
 router.post("/meta-ads/upload", wrap(async (req, res) => {
@@ -664,17 +716,13 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
   if (!csv) return res.status(400).json({ error: "csv text required" });
 
   if (!detectMetaCSV(csv)) {
-    return res.status(400).json({ error: "No se reconoce como CSV de Meta Ads. Se esperan columnas: Fecha, ID de transaccion, Importe (USD)." });
+    return res.status(400).json({ error: "No se reconoce como CSV de Meta Ads. Se esperan columnas: Fecha, Identificador de la transaccion, Importe." });
   }
 
   const { metadata, transactions } = parseMetaCSV(csv);
   if (transactions.length === 0) {
     return res.status(400).json({ error: "CSV de Meta vacio o sin transacciones reconocidas", metadata });
   }
-
-  // Derive periodo from first transaction date or use override
-  const firstDate = transactions[0]?.fecha;
-  const periodo = periodoOverride || (firstDate ? firstDate.substring(0, 7) : new Date().toISOString().substring(0, 7));
 
   // If manual_rate provided, override the exchange rate for all transactions
   if (manual_rate) {
@@ -683,11 +731,20 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
     }
   }
 
-  const batchId = `meta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const result = await insertMetaBilling(transactions, periodo, batchId, metadata.billingPeriod || '');
+  // Derive periodo per transaction from its date (YYYY-MM)
+  // This CSV can span multiple years — each row gets its own periodo
+  for (const tx of transactions) {
+    tx.periodo = periodoOverride || (tx.fecha ? tx.fecha.substring(0, 7) : new Date().toISOString().substring(0, 7));
+  }
 
-  // Auto-sync to marketing_costs
-  await syncMetaBillingToMarketingCosts(periodo);
+  const batchId = `meta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const result = await insertMetaBilling(transactions, batchId, metadata.billingPeriod || '');
+
+  // Auto-sync to marketing_costs for each affected periodo
+  const periodos = [...new Set(transactions.map(t => t.periodo))];
+  for (const p of periodos) {
+    await syncMetaBillingToMarketingCosts(p);
+  }
 
   // Compute summary for response
   const totalUsd = transactions.reduce((s, t) => s + t.amount_usd, 0);
@@ -696,8 +753,9 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
     label: 'Meta Ads Billing',
     ...result,
     batchId,
-    periodo,
+    periodos,
     totalUsd: Math.round(totalUsd * 100) / 100,
+    transactionCount: transactions.length,
     metadata,
   });
 }));

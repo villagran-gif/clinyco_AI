@@ -1737,13 +1737,16 @@ const IVA_RATE = 0.19; // Ley 21.210
 
 /**
  * Insert Meta Ads billing rows with USD→CLP conversion.
- * transactions: [{ fecha, transaction_id, description, payment_method, amount_usd, currency, tipo }]
- * billingPeriod: raw string from CSV header (e.g. "1 ene 2026 - 31 ene 2026")
+ * Each transaction has its own periodo (derived from its date).
+ * Full replace: deletes ALL existing meta_ads_billing then inserts fresh.
+ * billingPeriod: raw string from CSV header (e.g. "29/1/2012 - 12/4/2026")
  */
-export async function insertMetaBilling(transactions, periodo, batchId, billingPeriod) {
+export async function insertMetaBilling(transactions, batchId, billingPeriod) {
   const pool = getPool();
   if (!pool) throw new Error('DB not available');
-  await pool.query(`DELETE FROM meta_ads_billing WHERE periodo = $1`, [periodo]);
+
+  // Full replace — Meta exports the complete billing history each time
+  await pool.query(`DELETE FROM meta_ads_billing`);
 
   let inserted = 0, skipped = 0;
   const rateCache = {}; // local cache to avoid repeated API calls for same date
@@ -1751,6 +1754,8 @@ export async function insertMetaBilling(transactions, periodo, batchId, billingP
   for (const tx of transactions) {
     try {
       const fechaStr = tx.fecha; // "YYYY-MM-DD"
+      const periodo = tx.periodo || fechaStr.substring(0, 7);
+
       // Get exchange rate: use manual override if provided, else fetch from API
       if (tx._manualRate) {
         rateCache[fechaStr] = { rate: tx._manualRate, date: fechaStr, source: 'manual' };
