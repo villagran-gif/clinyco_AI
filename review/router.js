@@ -1075,4 +1075,224 @@ router.post("/meta-ads/resync", wrap(async (req, res) => {
   res.json({ synced: results.length, results });
 }));
 
+// ═══════════════════════════════════════════════════════════════════
+//  GOOGLE ADS — PDF Billing Upload
+// ═══════════════════════════════════════════════════════════════════
+
+const SPANISH_MONTHS = {ene:'01',feb:'02',mar:'03',abr:'04',may:'05',jun:'06',jul:'07',ago:'08',sep:'09',oct:'10',nov:'11',dic:'12'};
+
+/** Parse CLP amount from Google Ads format: "CLP5.836" → 5836, "-CLP10.256" → -10256 */
+function parseGoogleCLP(s) {
+  if (!s) return 0;
+  const raw = String(s).trim();
+  const m = raw.match(/(-?)CLP\s*([\d.]+)/);
+  if (!m) return 0;
+  const sign = m[1] === '-' ? -1 : 1;
+  return sign * (parseInt(m[2].replace(/\./g, '')) || 0);
+}
+
+/** Parse date from Google Ads format: "31 mar 2026" → "2026-03-31" */
+function parseGoogleDate(s) {
+  if (!s) return null;
+  const m = String(s).trim().match(/(\d{1,2})\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\s+(\d{4})/i);
+  if (!m) return null;
+  const mm = SPANISH_MONTHS[m[2].toLowerCase()];
+  if (!mm) return null;
+  return `${m[3]}-${mm}-${m[1].padStart(2, '0')}`;
+}
+
+/**
+ * Parse Google Ads billing PDF text.
+ * Returns { billingPeriod, rows: [{ fecha, tipo, description, cost_clp, credits_clp }] }
+ */
+function parseGoogleAdsPDF(text) {
+  // Clean page markers like "- A1 -", "- B2 -", etc.
+  let cleaned = text.replace(/-\s*[A-Z]\d+\s*-/g, '');
+
+  // Extract billing period
+  let billingPeriod = '';
+  const periodMatch = cleaned.match(/(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})\s*-\s*(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})/);
+  if (periodMatch) {
+    billingPeriod = `${periodMatch[3]}-${periodMatch[6]}`;
+  }
+
+  const rows = [];
+  const lines = cleaned.split(/\n/);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Try to match a data row: date + type + rest
+    const dateMatch = trimmed.match(/^(\d{1,2}\s+(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\s+\d{4})\s+/i);
+    if (!dateMatch) continue;
+
+    const fecha = parseGoogleDate(dateMatch[1]);
+    if (!fecha) continue;
+
+    const afterDate = trimmed.substring(dateMatch[0].length);
+
+    // Determine row type
+    let tipo = null;
+    let rest = afterDate;
+    if (/^Campa[ñn]as\b/i.test(afterDate)) {
+      tipo = 'Campañas';
+      rest = afterDate.replace(/^Campa[ñn]as\s*/i, '');
+    } else if (/^Pagos\b/i.test(afterDate)) {
+      tipo = 'Pagos';
+      rest = afterDate.replace(/^Pagos\s*/i, '');
+    } else if (/^Ajustes\b/i.test(afterDate)) {
+      tipo = 'Ajustes';
+      rest = afterDate.replace(/^Ajustes\s*/i, '');
+    }
+
+    if (!tipo) continue;
+
+    // Extract CLP amounts from rest of line
+    const clpAmounts = [];
+    const clpRegex = /(-?CLP[\d.]+)/g;
+    let clpMatch;
+    while ((clpMatch = clpRegex.exec(rest)) !== null) {
+      clpAmounts.push(parseGoogleCLP(clpMatch[1]));
+    }
+
+    // For Campañas: first CLP = cost (Costes column)
+    // For Ajustes: look for credits (negative amounts)
+    // For Pagos: deposits (we'll record but filter out later)
+    let cost_clp = 0;
+    let credits_clp = 0;
+
+    if (tipo === 'Campañas') {
+      cost_clp = clpAmounts.length > 0 ? Math.abs(clpAmounts[0]) : 0;
+    } else if (tipo === 'Ajustes') {
+      // Ajustes are refunds/credits — typically negative in Créditos column
+      credits_clp = clpAmounts.length > 0 ? Math.abs(clpAmounts[0]) : 0;
+    } else if (tipo === 'Pagos') {
+      cost_clp = clpAmounts.length > 0 ? Math.abs(clpAmounts[0]) : 0;
+    }
+
+    // Extract description (text before first CLP amount)
+    const descMatch = rest.match(/^(.*?)(?:-?CLP|$)/);
+    const description = descMatch ? descMatch[1].trim() : '';
+
+    rows.push({ fecha, tipo, description, cost_clp, credits_clp });
+  }
+
+  return { billingPeriod, rows };
+}
+
+router.post("/google-ads/upload-pdf", wrap(async (req, res) => {
+  const { pdf } = req.body;
+  if (!pdf) return res.status(400).json({ error: "pdf (base64) required" });
+
+  let buffer;
+  try {
+    buffer = Buffer.from(pdf, 'base64');
+  } catch (e) {
+    return res.status(400).json({ error: "Invalid base64 PDF data" });
+  }
+
+  let pdfText;
+  let pageCount;
+  try {
+    const parser = new PDFParse({ data: buffer });
+    const result = await parser.getText();
+    pdfText = result.text;
+    pageCount = result.total;
+    parser.destroy();
+  } catch (e) {
+    return res.status(400).json({ error: "No se pudo leer el PDF: " + e.message });
+  }
+
+  const { billingPeriod, rows } = parseGoogleAdsPDF(pdfText);
+
+  if (rows.length === 0) {
+    const sampleLines = pdfText.split('\n').slice(0, 20).map((l, i) => `[${i}] ${l.substring(0, 120)}`);
+    return res.status(400).json({
+      error: "PDF de Google Ads no contiene filas reconocidas",
+      billingPeriod,
+      pageCount,
+      sampleLines,
+    });
+  }
+
+  // Filter: keep Campañas (spend) and Ajustes (refunds), skip Pagos (deposits)
+  const campanas = rows.filter(r => r.tipo === 'Campañas');
+  const ajustes = rows.filter(r => r.tipo === 'Ajustes');
+  const pagos = rows.filter(r => r.tipo === 'Pagos');
+
+  // Aggregate by month (YYYY-MM)
+  const byMonth = {};
+  for (const r of campanas) {
+    const month = r.fecha.substring(0, 7);
+    byMonth[month] = (byMonth[month] || 0) + r.cost_clp;
+  }
+  for (const r of ajustes) {
+    const month = r.fecha.substring(0, 7);
+    byMonth[month] = (byMonth[month] || 0) - r.credits_clp; // subtract refunds
+  }
+
+  // Upsert each month into marketing_costs
+  const upserted = [];
+  for (const [month, amount] of Object.entries(byMonth)) {
+    const result = await upsertMarketingCost({
+      month: month + '-01',
+      source: 'google_ads',
+      description: 'Google Ads Billing (auto)',
+      amount_clp: Math.round(amount),
+    });
+    upserted.push({ month, amount_clp: Math.round(amount), id: result.id });
+  }
+
+  const totalCampanas = campanas.reduce((s, r) => s + r.cost_clp, 0);
+  const totalAjustes = ajustes.reduce((s, r) => s + r.credits_clp, 0);
+  const totalNet = totalCampanas - totalAjustes;
+
+  res.json({
+    type: 'google_ads_billing_pdf',
+    label: 'Google Ads Billing (PDF CLP)',
+    billingPeriod,
+    pageCount,
+    totalRows: rows.length,
+    campanasCount: campanas.length,
+    ajustesCount: ajustes.length,
+    pagosCount: pagos.length,
+    totalCampanas,
+    totalAjustes,
+    totalNet,
+    monthsUpserted: upserted,
+    upsertedCount: upserted.length,
+  });
+}));
+
+// ═══════════════════════════════════════════════════════════════════
+//  BULK MARKETING COSTS (Sueldos, etc.)
+// ═══════════════════════════════════════════════════════════════════
+
+router.post("/marketing/costs/bulk", wrap(async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: "items array required" });
+  }
+
+  const results = [];
+  for (const item of items) {
+    const { month, source, description, amount_clp } = item;
+    if (!month || !source || amount_clp == null) {
+      results.push({ ...item, status: 'error', error: 'month, source, amount_clp required' });
+      continue;
+    }
+    const monthVal = month.length === 7 ? month + '-01' : month;
+    const result = await upsertMarketingCost({ month: monthVal, source, description, amount_clp: parseInt(amount_clp) });
+    results.push({ month, source, description, amount_clp: parseInt(amount_clp), status: 'ok', id: result.id });
+  }
+
+  res.json({
+    total: items.length,
+    ok: results.filter(r => r.status === 'ok').length,
+    errors: results.filter(r => r.status === 'error').length,
+    results,
+  });
+}));
+
 export default router;

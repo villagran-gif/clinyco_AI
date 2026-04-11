@@ -694,6 +694,19 @@
           <button type="submit" style="padding:.5rem 1rem;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Guardar</button>
           <span id="mkt-save-msg" style="font-size:.75rem;color:#16a34a"></span>
         </form>
+        <!-- Bulk salary/cost entry -->
+        <details style="margin-top:1rem">
+          <summary style="cursor:pointer;font-size:.8rem;color:#2563eb;font-weight:600">Carga masiva (sueldos, costos multiples)</summary>
+          <div style="margin-top:.5rem">
+            <p style="font-size:.75rem;color:#64748b;margin-bottom:.5rem">Pega datos tab-separados: <strong>Mes(YYYY-MM) ⇥ Fuente ⇥ Descripcion ⇥ Monto CLP</strong><br>
+            Ejemplo: <code>2026-01	salaries	Sueldo Gabriela	1500000</code></p>
+            <textarea id="bulk-cost-data" rows="5" placeholder="2026-01&#9;salaries&#9;Sueldo Gabriela&#9;1500000&#10;2026-01&#9;salaries&#9;Sueldo Camila&#9;1200000&#10;2026-02&#9;salaries&#9;Sueldo Gabriela&#9;1500000" style="width:100%;font-size:.75rem;font-family:monospace;padding:.5rem;border:1px solid #cbd5e1;border-radius:6px;resize:vertical"></textarea>
+            <div style="margin-top:.4rem;display:flex;gap:.5rem;align-items:center">
+              <button onclick="uploadBulkCosts()" style="padding:.4rem .8rem;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:.8rem">Cargar masivo</button>
+              <span id="bulk-cost-status" style="font-size:.75rem;color:#64748b"></span>
+            </div>
+          </div>
+        </details>
       </div>
       <!-- Business params -->
       <div class="chart-box" style="margin-bottom:2rem">
@@ -770,6 +783,19 @@
               <th class="sortable" data-col="9" data-type="text">Tipo</th>
             </tr></thead>
             <tbody></tbody></table></div></div>
+
+      <!-- Google Ads Billing Upload -->
+      <div class="chart-box" style="margin-bottom:2rem;border-left:3px solid #34a853">
+        <h3 style="color:#34a853">Subir PDF — Google Ads Billing</h3>
+        <p style="font-size:.8rem;color:#64748b;margin-bottom:.8rem">Arrastra el <strong>PDF de actividad de facturacion</strong> descargado desde <strong>ads.google.com → Facturacion</strong>. Se extraen gastos diarios (Campañas) y ajustes, se agregan por mes y se insertan en costos de marketing como <em>Google Ads</em>.</p>
+        <div id="google-ads-drop-zone" style="border:2px dashed #34a853;border-radius:12px;padding:2rem;text-align:center;cursor:pointer;transition:border-color .2s;margin-bottom:1rem;background:#f0fdf4" ondragover="event.preventDefault();this.style.borderColor='#16a34a';this.style.background='#dcfce7'" ondragleave="this.style.borderColor='#34a853';this.style.background='#f0fdf4'" ondrop="handleGoogleAdsDrop(event)">
+          <div style="font-size:2rem;opacity:.4">Google</div>
+          <p style="color:#64748b;font-size:.85rem;margin:.5rem 0">Arrastra PDF de Google Ads aqui o</p>
+          <input type="file" id="google-ads-file-input" accept=".pdf" onchange="handleGoogleAdsFile(this.files[0])" style="display:none">
+          <button onclick="document.getElementById('google-ads-file-input').click()" style="padding:.5rem 1rem;background:#34a853;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Seleccionar PDF</button>
+        </div>
+        <div id="google-ads-upload-status" style="font-size:.8rem;color:#64748b"></div>
+      </div>
 
       <!-- CSV Upload -->
       <div class="chart-box" style="margin-bottom:2rem">
@@ -2501,6 +2527,108 @@ async function uploadMetaCSV(csv, periodo, manualRate, accountId) {
     body: JSON.stringify(body)
   });
   return await res.json();
+}
+
+// ═══════════ GOOGLE ADS PDF UPLOAD ═══════════
+
+function handleGoogleAdsDrop(e) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = '#34a853';
+  e.currentTarget.style.background = '#f0fdf4';
+  const file = e.dataTransfer.files[0];
+  if (file) handleGoogleAdsFile(file);
+}
+
+function handleGoogleAdsFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    document.getElementById('google-ads-upload-status').innerHTML = '<span style="color:#dc2626">Solo se aceptan archivos PDF</span>';
+    return;
+  }
+  const status = document.getElementById('google-ads-upload-status');
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    status.innerHTML = '<span style="color:#d97706">Procesando PDF de Google Ads...</span>';
+    try {
+      const arrayBuffer = e.target.result;
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+
+      const res = await fetch(API_BASE + '/google-ads/upload-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf: base64 })
+      });
+      const data = await res.json();
+      if (data.error) {
+        let errMsg = data.error;
+        if (data.sampleLines) errMsg += '<br><small style="color:#666">Primeras lineas: ' + data.sampleLines.slice(0, 5).join(' | ') + '</small>';
+        status.innerHTML = `<span style="color:#dc2626">Error: ${errMsg}</span>`;
+        return;
+      }
+      const fmtCLP = n => '$' + Number(n).toLocaleString('es-CL');
+      let detail = `<strong>${data.label}</strong><br>` +
+        `Filas totales: ${data.totalRows} | ` +
+        `Campañas: ${data.campanasCount} | ` +
+        `Ajustes: ${data.ajustesCount} | ` +
+        `Pagos (ignorados): ${data.pagosCount}<br>` +
+        `Total Campañas: ${fmtCLP(data.totalCampanas)} | ` +
+        `Ajustes: -${fmtCLP(data.totalAjustes)} | ` +
+        `<strong>Neto: ${fmtCLP(data.totalNet)}</strong><br>` +
+        `Meses insertados: ${data.upsertedCount}`;
+      if (data.monthsUpserted && data.monthsUpserted.length > 0) {
+        detail += ' — ' + data.monthsUpserted.map(m => `${m.month}: ${fmtCLP(m.amount_clp)}`).join(' | ');
+      }
+      status.innerHTML = `<span style="color:#16a34a">${detail}</span>`;
+      window._marketingLoaded = false;
+      loadMarketing();
+    } catch (err) {
+      status.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ═══════════ BULK COST UPLOAD ═══════════
+
+async function uploadBulkCosts() {
+  const textarea = document.getElementById('bulk-cost-data');
+  const status = document.getElementById('bulk-cost-status');
+  const text = textarea.value.trim();
+  if (!text) { status.textContent = 'Pega datos primero'; return; }
+
+  const lines = text.split(/\n/).filter(l => l.trim());
+  const items = [];
+  for (const line of lines) {
+    const parts = line.split(/\t/);
+    if (parts.length < 4) { status.textContent = `Error: linea con menos de 4 columnas: "${line.substring(0,50)}"`; return; }
+    items.push({
+      month: parts[0].trim(),
+      source: parts[1].trim(),
+      description: parts[2].trim(),
+      amount_clp: parseInt(parts[3].trim().replace(/\./g, '').replace(/,/g, '')),
+    });
+  }
+
+  status.innerHTML = '<span style="color:#d97706">Cargando ' + items.length + ' registros...</span>';
+  try {
+    const res = await fetch(API_BASE + '/marketing/costs/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    });
+    const data = await res.json();
+    if (data.error) { status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`; return; }
+    status.innerHTML = `<span style="color:#16a34a">Cargados: ${data.ok}/${data.total} registros` +
+      (data.errors > 0 ? ` | Errores: ${data.errors}` : '') + '</span>';
+    textarea.value = '';
+    window._marketingLoaded = false;
+    loadMarketing();
+  } catch (err) {
+    status.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;
+  }
 }
 
 async function loadMetaData() {
