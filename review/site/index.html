@@ -145,6 +145,11 @@
       .chart-row { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, 1fr); }
     }
+    .table-search {
+      width: 100%; padding: .4rem .8rem; border: 1px solid #e2e8f0; border-radius: 6px;
+      font-size: .8rem; margin-bottom: .5rem; background: #f8fafc;
+    }
+    .table-search:focus { border-color: #2563eb; outline: none; background: #fff; }
     /* Auth gate */
     #auth-gate {
       display: flex; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -1768,6 +1773,26 @@ function makeSortable(tableId) {
   if (!table) return;
   if (table.dataset.sortable) return;
   table.dataset.sortable = '1';
+
+  // Add search input above table
+  if (!document.getElementById('search-' + tableId)) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'search-' + tableId;
+    input.className = 'table-search';
+    input.placeholder = 'Buscar...';
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase();
+      const rows = table.querySelector('tbody').querySelectorAll('tr');
+      rows.forEach(r => {
+        const text = r.textContent.toLowerCase();
+        r.style.display = text.includes(q) ? '' : 'none';
+      });
+    });
+    table.parentNode.insertBefore(input, table);
+  }
+
+  // Sort on header click
   table.querySelectorAll('th.sortable').forEach(th => {
     th.addEventListener('click', () => {
       const col = parseInt(th.dataset.col);
@@ -1776,13 +1801,11 @@ function makeSortable(tableId) {
       const rows = Array.from(tbody.querySelectorAll('tr'));
       const isAsc = th.classList.contains('sort-asc');
 
-      // Clear all sort indicators
       table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
       th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
 
       const nextAsc = !isAsc;
       rows.sort((a, b) => {
-        // Use data-sort attribute if present (for chronological month sorting)
         const aVal = a.cells[col]?.dataset?.sort || a.cells[col]?.textContent?.trim() || '';
         const bVal = b.cells[col]?.dataset?.sort || b.cells[col]?.textContent?.trim() || '';
         if (type === 'num') {
