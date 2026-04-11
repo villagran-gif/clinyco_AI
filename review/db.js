@@ -1434,13 +1434,21 @@ export async function getBoletas(periodo = null, limit = 500) {
 
 // ── Resumen CSVs (RCV_RESUMEN_COMPRA / RCV_RESUMEN_VENTA) ──
 
+function extractDteCode(s) {
+  // "Factura Electrónica(33)" → "33", "Total Oper. del mes Boleta Electr.(39)" → "39"
+  const m = String(s).match(/\((\d+)\)\s*$/);
+  return m ? m[1] : String(s).trim();
+}
+
 export async function insertResumenCompras(rows, periodo, batchId) {
   const pool = getPool();
+  await pool.query(`DELETE FROM sii_resumen_compras WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
-      const tipoDoc = r[0]||'';
-      if (!tipoDoc || tipoDoc.toLowerCase().includes('tipo documento')) continue;
+      const raw = r[0]||'';
+      if (!raw || raw.toLowerCase().includes('tipo documento')) continue;
+      const tipoDoc = extractDteCode(raw);
       await pool.query(
         `INSERT INTO sii_resumen_compras (periodo, tipo_doc, total_documentos, monto_exento, monto_neto, iva_recuperable, iva_uso_comun, iva_no_recuperable, monto_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -1458,11 +1466,13 @@ export async function insertResumenCompras(rows, periodo, batchId) {
 
 export async function insertResumenVentas(rows, periodo, batchId) {
   const pool = getPool();
+  await pool.query(`DELETE FROM sii_resumen_ventas WHERE periodo = $1`, [periodo]);
   let inserted = 0, skipped = 0;
   for (const r of rows) {
     try {
-      const tipoDoc = r[0]||'';
-      if (!tipoDoc || tipoDoc.toLowerCase().includes('tipo documento')) continue;
+      const raw = r[0]||'';
+      if (!raw || raw.toLowerCase().includes('tipo documento')) continue;
+      const tipoDoc = extractDteCode(raw);
       await pool.query(
         `INSERT INTO sii_resumen_ventas (periodo, tipo_doc, total_documentos, monto_exento, monto_neto, monto_iva, monto_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
