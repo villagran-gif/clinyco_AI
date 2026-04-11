@@ -5,7 +5,7 @@
  * All endpoints are read-only. CORS enabled for Netlify frontend.
  */
 import { Router } from "express";
-import pdfParse from "pdf-parse";
+import { PDFParse } from "pdf-parse";
 import {
   eugeniaAccuracy,
   eugeniaTrends,
@@ -892,20 +892,25 @@ router.post("/meta-ads/upload-pdf", wrap(async (req, res) => {
     return res.status(400).json({ error: "Invalid base64 PDF data" });
   }
 
-  let pdfData;
+  let pdfText;
+  let pageCount;
   try {
-    pdfData = await pdfParse(buffer);
+    const parser = new PDFParse({ data: buffer });
+    const result = await parser.getText();
+    pdfText = result.text;
+    pageCount = result.total;
+    parser.destroy();
   } catch (e) {
     return res.status(400).json({ error: "No se pudo leer el PDF: " + e.message });
   }
 
-  const { metadata, transactions } = parseMetaPDFText(pdfData.text);
+  const { metadata, transactions } = parseMetaPDFText(pdfText);
   if (transactions.length === 0) {
-    const sampleLines = pdfData.text.split('\n').slice(0, 20).map((l, i) => `[${i}] ${l.substring(0, 100)}`);
+    const sampleLines = pdfText.split('\n').slice(0, 20).map((l, i) => `[${i}] ${l.substring(0, 100)}`);
     return res.status(400).json({
       error: "PDF de Meta no contiene transacciones reconocidas",
       metadata,
-      pageCount: pdfData.numpages,
+      pageCount,
       sampleLines,
     });
   }
