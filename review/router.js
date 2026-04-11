@@ -546,14 +546,16 @@ router.get("/api-connections", wrap(async (_req, res) => {
  */
 function parseMetaCSV(text) {
   const lines = text.split(/\r?\n/);
-  if (lines.length < 5) return { metadata: {}, transactions: [] };
+  if (lines.length < 5) return { metadata: {}, transactions: [], debug: { lineCount: lines.length, firstLine: lines[0]?.substring(0,80) } };
 
-  const sep = '\t'; // Meta billing is always tab-separated
+  // Auto-detect separator: tab, semicolon, or comma
+  const sample = lines.slice(0, 15).join('\n');
+  const sep = sample.includes('\t') ? '\t' : sample.includes(';') ? ';' : ',';
   const metadata = {};
   const transactions = [];
 
   // Extract metadata from header lines
-  for (let i = 0; i < Math.min(lines.length, 12); i++) {
+  for (let i = 0; i < Math.min(lines.length, 15); i++) {
     const lower = lines[i].toLowerCase();
     // Billing period: "Informe de facturación: 29/1/2012 - 12/4/2026"
     if (lower.includes('informe') && lower.includes('factura')) {
@@ -578,14 +580,17 @@ function parseMetaCSV(text) {
     const lower = lines[i].toLowerCase();
     const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
 
-    // Detect main transaction header: "Fecha  Identificador de la transacción  Descripción ...  Importe  Divisa"
-    if (lower.includes('fecha') && lower.includes('importe') &&
-        (lower.includes('transacci') || lower.includes('descripci') || lower.includes('m\u00e9todo'))) {
-      const headers = cols.map(h => h.toLowerCase());
+    // Normalize accented chars for matching
+    const norm = lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    // Detect main transaction header: has "Fecha" + "Importe" + at least "Descripci" or "Metodo" or "Transacci"
+    if (norm.includes('fecha') && norm.includes('importe') &&
+        (norm.includes('transacci') || norm.includes('descripci') || norm.includes('metodo'))) {
+      const headers = cols.map(h => h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
       const cFecha = headers.findIndex(h => h.includes('fecha'));
       const cId = headers.findIndex(h => h.includes('identificador') || h.includes('transacci'));
       const cDesc = headers.findIndex(h => h.includes('descripci'));
-      const cPago = headers.findIndex(h => h.includes('m\u00e9todo') || h.includes('metodo'));
+      const cPago = headers.findIndex(h => h.includes('metodo'));
       const cImporte = headers.findIndex(h => h.includes('importe'));
       const cDivisa = headers.findIndex(h => h.includes('divisa'));
       i++;
@@ -595,9 +600,9 @@ function parseMetaCSV(text) {
         const row = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
         const rowLower = lines[i].toLowerCase();
 
-        // Stop at total/summary rows or empty lines
+        // Stop at total/summary rows or empty lines or section headers
         if (rowLower.includes('importe total') || rowLower.includes('total de fondos')
-            || (!row[0] && !row[1]) || row.filter(c => c).length === 0) {
+            || row.filter(c => c).length === 0) {
           break;
         }
 
@@ -629,8 +634,8 @@ function parseMetaCSV(text) {
     }
 
     // Detect credits section header: "Fecha  Identificador de la transacción  Importe  Divisa" (4 cols, no Descripción)
-    if (lower.includes('fecha') && lower.includes('importe') && !lower.includes('descripci')) {
-      const headers = cols.map(h => h.toLowerCase());
+    if (norm.includes('fecha') && norm.includes('importe') && !norm.includes('descripci') && !norm.includes('metodo')) {
+      const headers = cols.map(h => h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
       const cFecha = headers.findIndex(h => h.includes('fecha'));
       const cId = headers.findIndex(h => h.includes('identificador') || h.includes('transacci'));
       const cImporte = headers.findIndex(h => h.includes('importe'));
@@ -719,9 +724,19 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
     return res.status(400).json({ error: "No se reconoce como CSV de Meta Ads. Se esperan columnas: Fecha, Identificador de la transaccion, Importe." });
   }
 
-  const { metadata, transactions } = parseMetaCSV(csv);
+  const { metadata, transactions, debug } = parseMetaCSV(csv);
   if (transactions.length === 0) {
-    return res.status(400).json({ error: "CSV de Meta vacio o sin transacciones reconocidas", metadata });
+    // Return debug info to help diagnose parsing issues
+    const csvLines = csv.split(/\r?\n/).filter(l => l.trim());
+    const sample = csvLines.slice(0, 10).map((l, idx) => `[${idx}] ${l.substring(0, 120)}`);
+    return res.status(400).json({
+      error: "CSV de Meta vacio o sin transacciones reconocidas",
+      metadata, debug,
+      lineCount: csvLines.length,
+      sample,
+      hasTabs: csv.includes('\t'),
+      hasSemicolons: csv.includes(';'),
+    });
   }
 
   // If manual_rate provided, override the exchange rate for all transactions
