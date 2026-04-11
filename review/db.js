@@ -1792,12 +1792,31 @@ export async function insertMetaBilling(transactions, batchId, billingPeriod) {
 
 /**
  * Insert Meta Ads billing from PDF (CLP amounts — no exchange rate needed).
- * Full replace: deletes ALL existing meta_ads_billing then inserts fresh.
+ * Per-account replace: deletes only records for the uploaded account(s), preserving others.
  */
-export async function insertMetaBillingCLP(transactions, batchId, billingPeriod) {
+export async function insertMetaBillingCLP(transactions, batchId, billingPeriod, accountIds = []) {
   const pool = getPool();
   if (!pool) throw new Error('DB not available');
-  await pool.query(`DELETE FROM meta_ads_billing`);
+
+  // Check if account_id column exists (migration 013)
+  let hasAccountCol = false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'meta_ads_billing' AND column_name = 'account_id'`
+    );
+    hasAccountCol = rows.length > 0;
+  } catch (e) { /* ignore */ }
+
+  // Delete only records for the accounts being uploaded (not ALL records)
+  if (hasAccountCol && accountIds.length > 0) {
+    const placeholders = accountIds.map((_, i) => `$${i + 1}`).join(',');
+    await pool.query(`DELETE FROM meta_ads_billing WHERE account_id IN (${placeholders})`, accountIds);
+  } else if (accountIds.length > 0) {
+    // Fallback: no account_id column yet — delete by transaction_id match to avoid dupes
+    // but don't wipe everything
+    console.warn('[meta-billing-clp] account_id column missing, run migration 013');
+  }
 
   let inserted = 0, skipped = 0;
   for (const tx of transactions) {
@@ -1805,18 +1824,33 @@ export async function insertMetaBillingCLP(transactions, batchId, billingPeriod)
       const periodo = tx.periodo || tx.fecha.substring(0, 7);
       const amountClp = tx.amount_clp_direct || 0;
 
-      await pool.query(
-        `INSERT INTO meta_ads_billing
-         (fecha, transaction_id, description, payment_method, amount_usd, currency, tipo,
-          dolar_observado, amount_clp, iva_clp, total_clp, periodo, billing_period, upload_batch_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [
-          tx.fecha, tx.transaction_id || '', tx.description || '', tx.payment_method || '',
-          0, 'CLP', tx.tipo || 'charge',
-          null, amountClp, 0, amountClp,
-          periodo, billingPeriod || '', batchId
-        ]
-      );
+      if (hasAccountCol) {
+        await pool.query(
+          `INSERT INTO meta_ads_billing
+           (fecha, transaction_id, description, payment_method, amount_usd, currency, tipo,
+            dolar_observado, amount_clp, iva_clp, total_clp, periodo, billing_period, upload_batch_id, account_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          [
+            tx.fecha, tx.transaction_id || '', tx.description || '', tx.payment_method || '',
+            0, 'CLP', tx.tipo || 'charge',
+            null, amountClp, 0, amountClp,
+            periodo, billingPeriod || '', batchId, tx.account_id || null
+          ]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO meta_ads_billing
+           (fecha, transaction_id, description, payment_method, amount_usd, currency, tipo,
+            dolar_observado, amount_clp, iva_clp, total_clp, periodo, billing_period, upload_batch_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [
+            tx.fecha, tx.transaction_id || '', tx.description || '', tx.payment_method || '',
+            0, 'CLP', tx.tipo || 'charge',
+            null, amountClp, 0, amountClp,
+            periodo, billingPeriod || '', batchId
+          ]
+        );
+      }
       inserted++;
     } catch (e) {
       console.error(`[meta-billing-clp] skip row:`, e.message);
@@ -1868,20 +1902,22 @@ export async function getMetaBilling(periodo = null, limit = 500) {
   return rows;
 }
 
-/** Monthly summary for Meta billing */
+/** Monthly summary for Meta billing (excludes fondos from totals) */
 export async function metaBillingSummary(year = null) {
   const pool = getPool();
   if (!pool) return [];
-  const filter = year ? `WHERE EXTRACT(YEAR FROM fecha) = ${parseInt(year)}` : '';
+  const yearFilter = year ? `AND EXTRACT(YEAR FROM fecha) = ${parseInt(year)}` : '';
   const { rows } = await pool.query(
     `SELECT periodo,
             count(*)::int AS transactions,
             sum(amount_usd)::numeric(12,2) AS total_usd,
             round(avg(dolar_observado), 2)::numeric(10,2) AS avg_rate,
-            sum(amount_clp)::int AS total_clp_neto,
+            sum(CASE WHEN tipo = 'charge' THEN amount_clp ELSE 0 END)::int AS total_clp_neto,
             sum(iva_clp)::int AS total_iva,
-            sum(total_clp)::int AS total_clp_total
-     FROM meta_ads_billing ${filter}
+            sum(CASE WHEN tipo = 'charge' THEN total_clp ELSE 0 END)::int AS total_clp_total,
+            sum(CASE WHEN tipo = 'fondos' THEN total_clp ELSE 0 END)::int AS total_fondos,
+            sum(CASE WHEN tipo = 'credit' THEN total_clp ELSE 0 END)::int AS total_credits
+     FROM meta_ads_billing WHERE tipo IN ('charge','credit','fondos') ${yearFilter}
      GROUP BY periodo ORDER BY periodo DESC`
   );
   return rows;

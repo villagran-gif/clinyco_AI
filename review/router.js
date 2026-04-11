@@ -788,11 +788,14 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
  */
 function parseMetaPDFText(text) {
   const lines = text.split(/\n/);
-  const metadata = {};
+  const metadata = { accounts: [] };
   const transactions = [];
 
-  // Extract billing period
+  // Extract all account IDs ("Cuenta: XXXX")
+  const accountIds = [];
   for (const line of lines) {
+    const accMatch = line.match(/Cuenta[:\s]+(\d{5,})/i);
+    if (accMatch && !accountIds.includes(accMatch[1])) accountIds.push(accMatch[1]);
     const bpMatch = line.match(/Informe de facturaci[oó]n[:\s]*([\d/]+ *- *[\d/]+)/i);
     if (bpMatch) metadata.billingPeriod = bpMatch[1].trim();
     const vatAmtMatch = line.match(/VAT Amount[:\s]*\$?([\d.,]+)/i);
@@ -800,79 +803,118 @@ function parseMetaPDFText(text) {
     const vatRateMatch = line.match(/VAT Rate[:\s]*([\d.,]+)/i);
     if (vatRateMatch) metadata.vatRate = parseMetaAmount(vatRateMatch[1]);
   }
+  metadata.accounts = accountIds;
 
-  // PDF text extraction often merges table rows oddly.
-  // Strategy: scan for lines starting with a date pattern DD/MM/YYYY,
-  // then collect the transaction ID, payment method, and amount from same or following lines.
-  const fullText = text.replace(/\n/g, ' ');
-
-  // Match pattern: date + transaction_id + payment_method + amount CLP
-  // Date: D/M/YYYY or DD/MM/YYYY
-  // Amount: $NNN.NNN CLP or $NNN CLP
-  const txRegex = /(\d{1,2}\/\d{1,2}\/\d{4})\s+([\d\w-]+(?:\s+[\d\w-]+)?)\s+((?:Visa|Mastercard|No disponible|Cr[eé]dito)[^\$]*?)\s+\$([\d.,]+)\s*CLP/gi;
-  let match;
-  while ((match = txRegex.exec(fullText)) !== null) {
-    const fecha = parseMetaDate(match[1]);
-    if (!fecha) continue;
-
-    const rawAmount = match[4];
-    // CLP amounts use period as thousands separator: $151.191 = 151191
-    const amountClp = parseInt(rawAmount.replace(/\./g, '').replace(/,/g, ''), 10) || 0;
-
-    const description = 'Pago de Anuncios de Meta';
-    const paymentMethod = match[3].trim();
-
-    transactions.push({
-      fecha,
-      transaction_id: match[2].trim(),
-      description,
-      payment_method: paymentMethod,
-      amount_usd: 0,
-      amount_clp_direct: amountClp,
-      currency: 'CLP',
-      tipo: 'charge',
-    });
-  }
-
-  // Also catch "Fondos agregable" / credit lines with simpler pattern
-  const creditRegex = /(\d{1,2}\/\d{1,2}\/\d{4})\s+([\d\w-]+(?:\s+[\d\w-]+)?)\s+[^\$]*?\$([\d.,]+)\s*CLP\s+Fondos\s+agregable/gi;
-  let cMatch;
-  while ((cMatch = creditRegex.exec(fullText)) !== null) {
-    // Mark existing matching transaction as credit
-    const fecha = parseMetaDate(cMatch[1]);
-    const txId = cMatch[2].trim();
-    const existing = transactions.find(t => t.transaction_id === txId && t.fecha === fecha);
-    if (existing) existing.tipo = 'credit';
-  }
-
-  // If regex approach found nothing, try line-by-line fallback
-  if (transactions.length === 0) {
-    let currentDate = null;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      // Try to find a date at start of line
-      const dateMatch = trimmed.match(/^(\d{1,2}\/\d{1,2}\/\d{4})/);
-      if (dateMatch) {
-        currentDate = parseMetaDate(dateMatch[1]);
+  // Split PDF text into per-account sections so we can tag each transaction
+  // Split on "Cuenta:" lines to get sections
+  const sections = [];
+  let currentAccountId = accountIds[0] || 'unknown';
+  let currentSection = '';
+  for (const line of lines) {
+    const accMatch = line.match(/Cuenta[:\s]+(\d{5,})/i);
+    if (accMatch) {
+      if (currentSection.trim()) {
+        sections.push({ accountId: currentAccountId, text: currentSection });
       }
-      // Try to find CLP amount on any line
-      const amountMatch = trimmed.match(/\$([\d.,]+)\s*CLP/);
-      if (amountMatch && currentDate) {
-        const amountClp = parseInt(amountMatch[1].replace(/\./g, '').replace(/,/g, ''), 10) || 0;
-        if (amountClp > 0) {
-          // Try to extract transaction ID from between date and amount
-          const idMatch = trimmed.match(/(\d{5,}[\d-]+\d{3,})/);
-          transactions.push({
-            fecha: currentDate,
-            transaction_id: idMatch ? idMatch[1] : '',
-            description: 'Pago de Anuncios de Meta',
-            payment_method: '',
-            amount_usd: 0,
-            amount_clp_direct: amountClp,
-            currency: 'CLP',
-            tipo: 'charge',
-          });
-          currentDate = null; // reset to avoid duplicates
+      currentAccountId = accMatch[1];
+      currentSection = '';
+    }
+    currentSection += line + '\n';
+  }
+  if (currentSection.trim()) {
+    sections.push({ accountId: currentAccountId, text: currentSection });
+  }
+
+  // If no sections found, treat entire text as one section
+  if (sections.length === 0) {
+    sections.push({ accountId: 'unknown', text: text });
+  }
+
+  // Parse each section independently
+  for (const section of sections) {
+    const sectionFull = section.text.replace(/\n/g, ' ');
+
+    // Detect "Crédito publicitario" sections — these are credits, not charges
+    const isCreditSection = /M[eé]todo de pago[:\s]*Cr[eé]dito publicitario/i.test(sectionFull);
+
+    // Match pattern: date + transaction_id + payment_method + amount CLP + status
+    const txRegex = /(\d{1,2}\/\d{1,2}\/\d{4})\s+([\d\w-]+(?:\s+[\d\w-]+)?)\s+((?:Visa|Mastercard|No disponible|Cr[eé]dito)[^\$]*?)\s+\$([\d.,]+)\s*CLP\s*(Pagado|Fondos\s+agregados?)?/gi;
+    let match;
+    while ((match = txRegex.exec(sectionFull)) !== null) {
+      const fecha = parseMetaDate(match[1]);
+      if (!fecha) continue;
+
+      const rawAmount = match[4];
+      const amountClp = parseInt(rawAmount.replace(/\./g, '').replace(/,/g, ''), 10) || 0;
+      const status = (match[5] || '').trim().toLowerCase();
+      const paymentMethod = match[3].trim();
+
+      // Classify tipo
+      let tipo = 'charge';
+      if (/fondos\s+agregados?/i.test(status)) tipo = 'fondos';
+      else if (isCreditSection) tipo = 'credit';
+
+      transactions.push({
+        fecha,
+        transaction_id: match[2].trim(),
+        description: isCreditSection ? 'Crédito publicitario' : 'Pago de Anuncios de Meta',
+        payment_method: paymentMethod,
+        amount_usd: 0,
+        amount_clp_direct: amountClp,
+        currency: 'CLP',
+        tipo,
+        account_id: section.accountId,
+      });
+    }
+
+    // Line-by-line fallback for this section (if regex found nothing for it)
+    const sectionTxCount = transactions.filter(t => t.account_id === section.accountId).length;
+    if (sectionTxCount === 0) {
+      const sectionLines = section.text.split(/\n/);
+      let currentDate = null;
+      for (const line of sectionLines) {
+        const trimmed = line.trim();
+        const dateMatch = trimmed.match(/^(\d{1,2}\/\d{1,2}\/\d{4})/);
+        if (dateMatch) {
+          currentDate = parseMetaDate(dateMatch[1]);
+        }
+        const amountMatch = trimmed.match(/\$([\d.,]+)\s*CLP/);
+        if (amountMatch && currentDate) {
+          const amountClp = parseInt(amountMatch[1].replace(/\./g, '').replace(/,/g, ''), 10) || 0;
+          if (amountClp > 0) {
+            const idMatch = trimmed.match(/(\d{5,}[\d-]+\d{3,})/);
+            const isFondos = /fondos\s+agregados?/i.test(trimmed);
+            transactions.push({
+              fecha: currentDate,
+              transaction_id: idMatch ? idMatch[1] : '',
+              description: isCreditSection ? 'Crédito publicitario' : 'Pago de Anuncios de Meta',
+              payment_method: '',
+              amount_usd: 0,
+              amount_clp_direct: amountClp,
+              currency: 'CLP',
+              tipo: isFondos ? 'fondos' : (isCreditSection ? 'credit' : 'charge'),
+              account_id: section.accountId,
+            });
+            currentDate = null;
+          }
+        }
+      }
+    }
+  }
+
+  // Post-process: mark "Fondos agregados" by checking the full text context
+  // Some PDF extractions may have "Fondos agregados" on the same line as the amount
+  const fullText = text.replace(/\n/g, ' ');
+  for (const tx of transactions) {
+    if (tx.tipo !== 'fondos') {
+      // Check if this transaction's amount appears near "Fondos agregados" in the raw text
+      const escapedId = tx.transaction_id.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&').substring(0, 20);
+      if (escapedId) {
+        const nearbyRegex = new RegExp(escapedId + '[^]*?Fondos\\s+agregados?', 'i');
+        const nearby = fullText.match(nearbyRegex);
+        if (nearby && nearby[0].length < 200) {
+          tx.tipo = 'fondos';
+          tx.description = 'Fondos agregados';
         }
       }
     }
@@ -920,23 +962,36 @@ router.post("/meta-ads/upload-pdf", wrap(async (req, res) => {
     tx.periodo = tx.fecha ? tx.fecha.substring(0, 7) : new Date().toISOString().substring(0, 7);
   }
 
+  // Group transactions by account_id for per-account upsert
+  const accountIds = [...new Set(transactions.map(t => t.account_id || 'unknown'))];
   const batchId = `meta-pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const result = await insertMetaBillingCLP(transactions, batchId, metadata.billingPeriod || '');
+  const result = await insertMetaBillingCLP(transactions, batchId, metadata.billingPeriod || '', accountIds);
 
-  // Auto-sync to marketing_costs
+  // Auto-sync to marketing_costs for ALL affected periodos
   const periodos = [...new Set(transactions.map(t => t.periodo))];
   for (const p of periodos) {
     await syncMetaBillingToMarketingCosts(p);
   }
 
-  const totalClp = transactions.filter(t => t.tipo === 'charge').reduce((s, t) => s + (t.amount_clp_direct || 0), 0);
+  const charges = transactions.filter(t => t.tipo === 'charge');
+  const fondos = transactions.filter(t => t.tipo === 'fondos');
+  const credits = transactions.filter(t => t.tipo === 'credit');
+  const totalClp = charges.reduce((s, t) => s + (t.amount_clp_direct || 0), 0);
+  const totalFondos = fondos.reduce((s, t) => s + (t.amount_clp_direct || 0), 0);
+  const totalCredits = credits.reduce((s, t) => s + (t.amount_clp_direct || 0), 0);
   res.json({
     type: 'meta_ads_billing_pdf',
     label: 'Meta Ads Billing (PDF CLP)',
     ...result,
     batchId,
     periodos,
+    accountIds,
     totalClp,
+    totalFondos,
+    totalCredits,
+    chargeCount: charges.length,
+    fondosCount: fondos.length,
+    creditCount: credits.length,
     transactionCount: transactions.length,
     metadata,
   });
