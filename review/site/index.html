@@ -2136,7 +2136,7 @@ function renderMonthlyDrilldown(year) {
     backgroundColor: COLORS[i % COLORS.length],
   }));
 
-  const labels = months.map(m => new Date(m).toLocaleDateString('es-CL', { month: 'short' }));
+  const labels = months.map(m => new Date(m).toLocaleDateString('es-CL', { month: 'short', timeZone: 'UTC' }));
 
   if (window._monthlyChart) window._monthlyChart.destroy();
   window._monthlyChart = new Chart(document.getElementById("chart-agents-monthly"), {
@@ -2156,7 +2156,7 @@ function renderMonthlyDrilldown(year) {
     return mCmp !== 0 ? mCmp : (b.total_deals - a.total_deals);
   });
   document.querySelector('#table-monthly-detail tbody').innerHTML = sortedMonthly.map(m => {
-    const mesLabel = new Date(m.month).toLocaleDateString('es-CL', { year: 'numeric', month: 'short' });
+    const mesLabel = new Date(m.month).toLocaleDateString('es-CL', { year: 'numeric', month: 'short', timeZone: 'UTC' });
     return `<tr>
       <td>${mesLabel}</td>
       <td><strong>${m.agent}</strong></td>
@@ -2261,7 +2261,7 @@ async function loadMarketing() {
 }
 
 function renderMarketingCharts(costsByMonth, kpis, dealsMonthly) {
-  const ml = arr => arr.map(c => { const d = new Date(c.month); return d.toLocaleDateString('es-CL',{month:'short',year:'2-digit'}); });
+  const ml = arr => arr.map(c => { const d = new Date(c.month); return d.toLocaleDateString('es-CL',{month:'short',year:'2-digit',timeZone:'UTC'}); });
 
   if (window._mktCostChart) window._mktCostChart.destroy();
   window._mktCostChart = new Chart(document.getElementById('chart-mkt-costs'), {
@@ -2308,13 +2308,13 @@ function renderMarketingTables(allCosts, kpis, ltv, dealsMonthly, params) {
   const margin = (params.gross_margin_pct || 40) / 100;
 
   document.querySelector('#table-mkt-costs tbody').innerHTML = allCosts.map(c => {
-    const mes = new Date(c.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
+    const mes = new Date(c.month).toLocaleDateString('es-CL',{year:'numeric',month:'short',timeZone:'UTC'});
     return `<tr><td>${mes}</td><td><span class="badge" style="background:${SRCBG[c.source]||'#f1f5f9'};color:#1e293b">${SRC[c.source]||c.source}</span></td><td style="font-size:.7rem">${c.description||'—'}</td><td style="font-weight:600">${fmtCLP(c.amount_clp)}</td><td><button onclick="deleteMktCost(${c.id})" style="background:#fee2e2;color:#dc2626;border:none;border-radius:4px;padding:.2rem .5rem;cursor:pointer;font-size:.7rem">X</button></td></tr>`;
   }).join('');
   makeSortable('table-mkt-costs');
 
   document.querySelector('#table-mkt-kpis tbody').innerHTML = kpis.map(k => {
-    const mes = new Date(k.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
+    const mes = new Date(k.month).toLocaleDateString('es-CL',{year:'numeric',month:'short',timeZone:'UTC'});
     const cac = k.cac ? Number(k.cac) : null;
     const ltvCac = cac ? (ltv/cac) : null;
     const ltvCacStr = ltvCac ? ltvCac.toFixed(1)+'x' : '—';

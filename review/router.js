@@ -74,6 +74,7 @@ import {
   syncMetaBillingToMarketingCosts,
   getMetaBilling,
   metaBillingSummary,
+  getPool,
 } from "./db.js";
 
 const router = Router();
@@ -1009,6 +1010,24 @@ router.get("/meta-ads/summary", wrap(async (req, res) => {
 
 router.get("/exchange-rates", wrap(async (req, res) => {
   res.json(await getExchangeRates(req.query.month || null));
+}));
+
+// Re-sync all Meta billing periodos to marketing_costs
+router.post("/meta-ads/resync", wrap(async (req, res) => {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT periodo FROM meta_ads_billing WHERE periodo IS NOT NULL ORDER BY periodo`
+  );
+  const results = [];
+  for (const r of rows) {
+    try {
+      await syncMetaBillingToMarketingCosts(r.periodo);
+      results.push({ periodo: r.periodo, status: 'ok' });
+    } catch (e) {
+      results.push({ periodo: r.periodo, status: 'error', error: e.message });
+    }
+  }
+  res.json({ synced: results.length, results });
 }));
 
 export default router;
