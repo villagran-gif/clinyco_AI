@@ -612,7 +612,8 @@ function parseMetaCSV(text) {
         const fecha = parseMetaDate(row[cFecha >= 0 ? cFecha : 0]);
         if (!fecha) { i++; continue; }
 
-        const amountUsd = parseMetaAmount(row[cImporte >= 0 ? cImporte : 4]);
+        const currency = cDivisa >= 0 ? (row[cDivisa] || 'USD').toUpperCase() : 'USD';
+        const amountUsd = parseMetaAmount(row[cImporte >= 0 ? cImporte : 4], currency);
         const description = cDesc >= 0 ? row[cDesc] : '';
         const descLower = description.toLowerCase();
 
@@ -628,7 +629,7 @@ function parseMetaCSV(text) {
           description,
           payment_method: cPago >= 0 ? row[cPago] : '',
           amount_usd: amountUsd,
-          currency: cDivisa >= 0 ? (row[cDivisa] || 'USD') : 'USD',
+          currency,
           tipo,
         });
         i++;
@@ -657,7 +658,8 @@ function parseMetaCSV(text) {
         const fecha = parseMetaDate(row[cFecha >= 0 ? cFecha : 0]);
         if (!fecha) { i++; continue; }
 
-        const amount = parseMetaAmount(row[cImporte >= 0 ? cImporte : 2]);
+        const currency = cDivisa >= 0 ? (row[cDivisa] || 'USD').toUpperCase() : 'USD';
+        const amount = parseMetaAmount(row[cImporte >= 0 ? cImporte : 2], currency);
         const tipo = amount < 0 ? 'credit' : 'charge';
 
         transactions.push({
@@ -666,7 +668,7 @@ function parseMetaCSV(text) {
           description: tipo === 'credit' ? 'Cr\u00e9dito publicitario' : '',
           payment_method: '',
           amount_usd: amount,
-          currency: cDivisa >= 0 ? (row[cDivisa] || 'USD') : 'USD',
+          currency,
           tipo,
         });
         i++;
@@ -690,11 +692,19 @@ function parseMetaCSV(text) {
   return { metadata, transactions };
 }
 
-/** Parse amount in Chilean/European format: "1.071,00" → 1071.00, "-40,90" → -40.90 */
-function parseMetaAmount(s) {
+/** Parse amount in Chilean/European format.
+ * CLP: period=thousands, no decimals → "151.191" = 151191
+ * USD: period=thousands if comma present → "1.071,00" = 1071.00, "44,07" = 44.07
+ */
+function parseMetaAmount(s, currency) {
   if (!s) return 0;
   let raw = String(s).trim().replace(/\u2212/g, '-').replace(/[$ ]/g, '');
-  // Chilean/European: period=thousands, comma=decimal
+  if (currency === 'CLP') {
+    // CLP: period is always thousands separator, no fractional amounts
+    raw = raw.replace(/\./g, '');
+    return parseInt(raw) || 0;
+  }
+  // USD/other: period=thousands only if comma is also present
   if (raw.includes(',')) {
     raw = raw.replace(/\./g, '').replace(',', '.');
   }
