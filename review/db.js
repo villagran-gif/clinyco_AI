@@ -1790,6 +1790,42 @@ export async function insertMetaBilling(transactions, batchId, billingPeriod) {
   return { inserted, skipped, total: transactions.length };
 }
 
+/**
+ * Insert Meta Ads billing from PDF (CLP amounts — no exchange rate needed).
+ * Full replace: deletes ALL existing meta_ads_billing then inserts fresh.
+ */
+export async function insertMetaBillingCLP(transactions, batchId, billingPeriod) {
+  const pool = getPool();
+  if (!pool) throw new Error('DB not available');
+  await pool.query(`DELETE FROM meta_ads_billing`);
+
+  let inserted = 0, skipped = 0;
+  for (const tx of transactions) {
+    try {
+      const periodo = tx.periodo || tx.fecha.substring(0, 7);
+      const amountClp = tx.amount_clp_direct || 0;
+
+      await pool.query(
+        `INSERT INTO meta_ads_billing
+         (fecha, transaction_id, description, payment_method, amount_usd, currency, tipo,
+          dolar_observado, amount_clp, iva_clp, total_clp, periodo, billing_period, upload_batch_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [
+          tx.fecha, tx.transaction_id || '', tx.description || '', tx.payment_method || '',
+          0, 'CLP', tx.tipo || 'charge',
+          null, amountClp, 0, amountClp,
+          periodo, billingPeriod || '', batchId
+        ]
+      );
+      inserted++;
+    } catch (e) {
+      console.error(`[meta-billing-clp] skip row:`, e.message);
+      skipped++;
+    }
+  }
+  return { inserted, skipped, total: transactions.length };
+}
+
 /** Auto-sync: aggregate Meta billing → marketing_costs */
 export async function syncMetaBillingToMarketingCosts(periodo) {
   const pool = getPool();

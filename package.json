@@ -24,8 +24,9 @@
     "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "openai": "^5.12.2",
-    "playwright": "^1.58.2",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
+    "playwright": "^1.58.2",
     "xlsx": "^0.18.5"
   }
 }

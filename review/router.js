@@ -5,6 +5,7 @@
  * All endpoints are read-only. CORS enabled for Netlify frontend.
  */
 import { Router } from "express";
+import pdfParse from "pdf-parse";
 import {
   eugeniaAccuracy,
   eugeniaTrends,
@@ -69,6 +70,7 @@ import {
   getOrFetchRate,
   getExchangeRates,
   insertMetaBilling,
+  insertMetaBillingCLP,
   syncMetaBillingToMarketingCosts,
   getMetaBilling,
   metaBillingSummary,
@@ -770,6 +772,166 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
     batchId,
     periodos,
     totalUsd: Math.round(totalUsd * 100) / 100,
+    transactionCount: transactions.length,
+    metadata,
+  });
+}));
+
+// ── Meta Ads PDF Upload (CLP billing) ──
+
+/**
+ * Parse Meta Ads billing PDF.
+ * PDF text structure (extracted by pdf-parse):
+ *   Lines with: DD/MM/YYYY  <transaction_id>  <payment_method>  $NNN.NNN CLP  <status>
+ *   Summary: "Importe total facturado  $9.032.482 CLP"
+ *   VAT: "VAT Amount: $793.071"
+ */
+function parseMetaPDFText(text) {
+  const lines = text.split(/\n/);
+  const metadata = {};
+  const transactions = [];
+
+  // Extract billing period
+  for (const line of lines) {
+    const bpMatch = line.match(/Informe de facturaci[oó]n[:\s]*([\d/]+ *- *[\d/]+)/i);
+    if (bpMatch) metadata.billingPeriod = bpMatch[1].trim();
+    const vatAmtMatch = line.match(/VAT Amount[:\s]*\$?([\d.,]+)/i);
+    if (vatAmtMatch) metadata.vatAmount = parseMetaAmount(vatAmtMatch[1]);
+    const vatRateMatch = line.match(/VAT Rate[:\s]*([\d.,]+)/i);
+    if (vatRateMatch) metadata.vatRate = parseMetaAmount(vatRateMatch[1]);
+  }
+
+  // PDF text extraction often merges table rows oddly.
+  // Strategy: scan for lines starting with a date pattern DD/MM/YYYY,
+  // then collect the transaction ID, payment method, and amount from same or following lines.
+  const fullText = text.replace(/\n/g, ' ');
+
+  // Match pattern: date + transaction_id + payment_method + amount CLP
+  // Date: D/M/YYYY or DD/MM/YYYY
+  // Amount: $NNN.NNN CLP or $NNN CLP
+  const txRegex = /(\d{1,2}\/\d{1,2}\/\d{4})\s+([\d\w-]+(?:\s+[\d\w-]+)?)\s+((?:Visa|Mastercard|No disponible|Cr[eé]dito)[^\$]*?)\s+\$([\d.,]+)\s*CLP/gi;
+  let match;
+  while ((match = txRegex.exec(fullText)) !== null) {
+    const fecha = parseMetaDate(match[1]);
+    if (!fecha) continue;
+
+    const rawAmount = match[4];
+    // CLP amounts use period as thousands separator: $151.191 = 151191
+    const amountClp = parseInt(rawAmount.replace(/\./g, '').replace(/,/g, ''), 10) || 0;
+
+    const description = 'Pago de Anuncios de Meta';
+    const paymentMethod = match[3].trim();
+
+    transactions.push({
+      fecha,
+      transaction_id: match[2].trim(),
+      description,
+      payment_method: paymentMethod,
+      amount_usd: 0,
+      amount_clp_direct: amountClp,
+      currency: 'CLP',
+      tipo: 'charge',
+    });
+  }
+
+  // Also catch "Fondos agregable" / credit lines with simpler pattern
+  const creditRegex = /(\d{1,2}\/\d{1,2}\/\d{4})\s+([\d\w-]+(?:\s+[\d\w-]+)?)\s+[^\$]*?\$([\d.,]+)\s*CLP\s+Fondos\s+agregable/gi;
+  let cMatch;
+  while ((cMatch = creditRegex.exec(fullText)) !== null) {
+    // Mark existing matching transaction as credit
+    const fecha = parseMetaDate(cMatch[1]);
+    const txId = cMatch[2].trim();
+    const existing = transactions.find(t => t.transaction_id === txId && t.fecha === fecha);
+    if (existing) existing.tipo = 'credit';
+  }
+
+  // If regex approach found nothing, try line-by-line fallback
+  if (transactions.length === 0) {
+    let currentDate = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Try to find a date at start of line
+      const dateMatch = trimmed.match(/^(\d{1,2}\/\d{1,2}\/\d{4})/);
+      if (dateMatch) {
+        currentDate = parseMetaDate(dateMatch[1]);
+      }
+      // Try to find CLP amount on any line
+      const amountMatch = trimmed.match(/\$([\d.,]+)\s*CLP/);
+      if (amountMatch && currentDate) {
+        const amountClp = parseInt(amountMatch[1].replace(/\./g, '').replace(/,/g, ''), 10) || 0;
+        if (amountClp > 0) {
+          // Try to extract transaction ID from between date and amount
+          const idMatch = trimmed.match(/(\d{5,}[\d-]+\d{3,})/);
+          transactions.push({
+            fecha: currentDate,
+            transaction_id: idMatch ? idMatch[1] : '',
+            description: 'Pago de Anuncios de Meta',
+            payment_method: '',
+            amount_usd: 0,
+            amount_clp_direct: amountClp,
+            currency: 'CLP',
+            tipo: 'charge',
+          });
+          currentDate = null; // reset to avoid duplicates
+        }
+      }
+    }
+  }
+
+  return { metadata, transactions };
+}
+
+router.post("/meta-ads/upload-pdf", wrap(async (req, res) => {
+  const { pdf } = req.body; // base64-encoded PDF
+  if (!pdf) return res.status(400).json({ error: "pdf (base64) required" });
+
+  let buffer;
+  try {
+    buffer = Buffer.from(pdf, 'base64');
+  } catch (e) {
+    return res.status(400).json({ error: "Invalid base64 PDF data" });
+  }
+
+  let pdfData;
+  try {
+    pdfData = await pdfParse(buffer);
+  } catch (e) {
+    return res.status(400).json({ error: "No se pudo leer el PDF: " + e.message });
+  }
+
+  const { metadata, transactions } = parseMetaPDFText(pdfData.text);
+  if (transactions.length === 0) {
+    const sampleLines = pdfData.text.split('\n').slice(0, 20).map((l, i) => `[${i}] ${l.substring(0, 100)}`);
+    return res.status(400).json({
+      error: "PDF de Meta no contiene transacciones reconocidas",
+      metadata,
+      pageCount: pdfData.numpages,
+      sampleLines,
+    });
+  }
+
+  // Set periodo per transaction
+  for (const tx of transactions) {
+    tx.periodo = tx.fecha ? tx.fecha.substring(0, 7) : new Date().toISOString().substring(0, 7);
+  }
+
+  const batchId = `meta-pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const result = await insertMetaBillingCLP(transactions, batchId, metadata.billingPeriod || '');
+
+  // Auto-sync to marketing_costs
+  const periodos = [...new Set(transactions.map(t => t.periodo))];
+  for (const p of periodos) {
+    await syncMetaBillingToMarketingCosts(p);
+  }
+
+  const totalClp = transactions.filter(t => t.tipo === 'charge').reduce((s, t) => s + (t.amount_clp_direct || 0), 0);
+  res.json({
+    type: 'meta_ads_billing_pdf',
+    label: 'Meta Ads Billing (PDF CLP)',
+    ...result,
+    batchId,
+    periodos,
+    totalClp,
     transactionCount: transactions.length,
     metadata,
   });
