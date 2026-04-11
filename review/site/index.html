@@ -2338,9 +2338,9 @@ function handleCSVDrop(e) {
 
 function handleCSVFile(file) {
   if (!file) return;
-  // Extract periodo from filename: RCV_..._202601 → 2026-01
+  // Extract periodo from filename: RCV_..._202601 → 2026-01 (last 6 digits before extension)
   let periodoFromName = null;
-  const m = file.name.match(/(\d{4})(\d{2})(?:\D|$)/);
+  const m = file.name.match(/(20\d{2})(\d{2})(?:\D|$)/);
   if (m) periodoFromName = m[1] + '-' + m[2];
   const reader = new FileReader();
   reader.onload = async (e) => {
