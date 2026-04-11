@@ -636,7 +636,8 @@ function parseMetaCSV(text) {
       continue;
     }
 
-    // Detect credits section header: "Fecha  Identificador de la transacción  Importe  Divisa" (4 cols, no Descripción)
+    // Detect section header with fewer columns: "Fecha  Identificador de la transacción  Importe  Divisa" (no Descripción/Método)
+    // These can be either charges or credits — determine tipo from the amount sign
     if (norm.includes('fecha') && norm.includes('importe') && !norm.includes('descripci') && !norm.includes('metodo')) {
       const headers = cols.map(h => h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
       const cFecha = headers.findIndex(h => h.includes('fecha'));
@@ -656,16 +657,17 @@ function parseMetaCSV(text) {
         const fecha = parseMetaDate(row[cFecha >= 0 ? cFecha : 0]);
         if (!fecha) { i++; continue; }
 
-        const amountUsd = parseMetaAmount(row[cImporte >= 0 ? cImporte : 2]);
+        const amount = parseMetaAmount(row[cImporte >= 0 ? cImporte : 2]);
+        const tipo = amount < 0 ? 'credit' : 'charge';
 
         transactions.push({
           fecha,
           transaction_id: cId >= 0 ? row[cId] : '',
-          description: 'Cr\u00e9dito publicitario',
-          payment_method: 'Cr\u00e9dito',
-          amount_usd: amountUsd,
+          description: tipo === 'credit' ? 'Cr\u00e9dito publicitario' : '',
+          payment_method: '',
+          amount_usd: amount,
           currency: cDivisa >= 0 ? (row[cDivisa] || 'USD') : 'USD',
-          tipo: 'credit',
+          tipo,
         });
         i++;
       }
@@ -720,7 +722,7 @@ function detectMetaCSV(text) {
 }
 
 router.post("/meta-ads/upload", wrap(async (req, res) => {
-  const { csv, periodo: periodoOverride, manual_rate } = req.body;
+  const { csv, periodo: periodoOverride, manual_rate, account_id } = req.body;
   if (!csv) return res.status(400).json({ error: "csv text required" });
 
   if (!detectMetaCSV(csv)) {
@@ -742,40 +744,73 @@ router.post("/meta-ads/upload", wrap(async (req, res) => {
     });
   }
 
-  // If manual_rate provided, override the exchange rate for all transactions
-  if (manual_rate) {
-    for (const tx of transactions) {
-      tx._manualRate = parseFloat(manual_rate);
-    }
-  }
-
   // Derive periodo per transaction from its date (YYYY-MM)
-  // This CSV can span multiple years — each row gets its own periodo
   for (const tx of transactions) {
     tx.periodo = periodoOverride || (tx.fecha ? tx.fecha.substring(0, 7) : new Date().toISOString().substring(0, 7));
   }
 
   const batchId = `meta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const result = await insertMetaBilling(transactions, batchId, metadata.billingPeriod || '');
 
-  // Auto-sync to marketing_costs for each affected periodo
-  const periodos = [...new Set(transactions.map(t => t.periodo))];
-  for (const p of periodos) {
-    await syncMetaBillingToMarketingCosts(p);
+  // Detect if all transactions are CLP (direct billing, no conversion needed)
+  const isCLP = transactions.length > 0 &&
+    transactions.every(t => (t.currency || '').toUpperCase() === 'CLP');
+
+  if (isCLP) {
+    // CLP path: amounts are already in CLP, no exchange rate or IVA needed
+    const clpTxns = transactions.map(t => ({
+      ...t,
+      amount_clp_direct: Math.round(t.amount_usd), // amount_usd is actually CLP (parsed by parseMetaAmount)
+      account_id: account_id || metadata.account || null,
+    }));
+    const acctId = account_id || metadata.account || `csv-clp-${batchId}`;
+    const result = await insertMetaBillingCLP(clpTxns, batchId, metadata.billingPeriod || '', [acctId]);
+
+    const periodos = [...new Set(transactions.map(t => t.periodo))];
+    for (const p of periodos) {
+      await syncMetaBillingToMarketingCosts(p);
+    }
+
+    const totalClp = clpTxns.reduce((s, t) => s + (t.amount_clp_direct || 0), 0);
+    res.json({
+      type: 'meta_ads_billing_clp',
+      label: 'Meta Ads Billing (CLP directo)',
+      ...result,
+      batchId,
+      periodos,
+      totalClp,
+      totalUsd: 0,
+      transactionCount: transactions.length,
+      metadata,
+      currency: 'CLP',
+    });
+  } else {
+    // USD path: convert via Dolar Observado + IVA 19%
+    if (manual_rate) {
+      for (const tx of transactions) {
+        tx._manualRate = parseFloat(manual_rate);
+      }
+    }
+
+    const result = await insertMetaBilling(transactions, batchId, metadata.billingPeriod || '');
+
+    const periodos = [...new Set(transactions.map(t => t.periodo))];
+    for (const p of periodos) {
+      await syncMetaBillingToMarketingCosts(p);
+    }
+
+    const totalUsd = transactions.reduce((s, t) => s + t.amount_usd, 0);
+    res.json({
+      type: 'meta_ads_billing',
+      label: 'Meta Ads Billing (USD → CLP)',
+      ...result,
+      batchId,
+      periodos,
+      totalUsd: Math.round(totalUsd * 100) / 100,
+      transactionCount: transactions.length,
+      metadata,
+      currency: 'USD',
+    });
   }
-
-  // Compute summary for response
-  const totalUsd = transactions.reduce((s, t) => s + t.amount_usd, 0);
-  res.json({
-    type: 'meta_ads_billing',
-    label: 'Meta Ads Billing',
-    ...result,
-    batchId,
-    periodos,
-    totalUsd: Math.round(totalUsd * 100) / 100,
-    transactionCount: transactions.length,
-    metadata,
-  });
 }));
 
 // ── Meta Ads PDF Upload (CLP billing) ──
