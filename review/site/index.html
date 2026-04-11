@@ -2442,9 +2442,10 @@ async function loadMetaData() {
   const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
   const fmtUSD = n => n != null ? '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '—';
   try {
+    const safeFetch = async (path) => { try { return await api(path); } catch { return []; } };
     const [summary, billing] = await Promise.all([
-      api('/meta-ads/summary'),
-      api('/meta-ads/billing?limit=500'),
+      safeFetch('/meta-ads/summary'),
+      safeFetch('/meta-ads/billing?limit=500'),
     ]);
 
     // Summary table
