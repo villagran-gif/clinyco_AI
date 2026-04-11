@@ -11,7 +11,7 @@ const DATABASE_SSL =
 
 let pool = null;
 
-function getPool() {
+export function getPool() {
   if (!pool && DATABASE_URL) {
     pool = new Pool({
       connectionString: DATABASE_URL,
