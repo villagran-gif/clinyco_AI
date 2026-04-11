@@ -57,6 +57,15 @@ import {
   ventasResumen,
   ventasResumenPorTipo,
   getApiConnections,
+  insertBoletas,
+  getBoletas,
+  insertResumenCompras,
+  insertResumenVentas,
+  getResumenCompras,
+  getResumenVentas,
+  ventasResumenUnificado,
+  ventasResumenPorTipoUnificado,
+  verificacionSII,
 } from "./db.js";
 
 const router = Router();
@@ -424,10 +433,22 @@ function parseCSVRows(text) {
 
 function detectCSVType(headers) {
   const h = headers.map(x => x.toLowerCase());
-  if (h.includes('tipo compra') || h.includes('rut proveedor') || h.includes('monto iva recuperable')) return 'compras';
-  if (h.includes('tipo venta') || h.includes('rut cliente') || h.includes('monto iva')) return 'ventas';
+  const hasTotal = h.some(x => x.includes('total documentos'));
+  // Resumen files have "Total Documentos" column
+  if (hasTotal && h.some(x => x.includes('iva recuperable') || x.includes('iva uso comun'))) return 'resumen_compras';
+  if (hasTotal) return 'resumen_ventas';
+  // Boletas have "Fecha Venc" but NOT "Tipo Venta"
+  if ((h.some(x => x.includes('fecha venc')) || h.some(x => x.includes('indicador servicio'))) && !h.some(x => x.includes('tipo venta'))) return 'boletas';
+  // Compras vs Ventas
+  if (h.some(x => x.includes('tipo compra') || x.includes('rut proveedor') || x.includes('iva recuperable'))) return 'compras';
+  if (h.some(x => x.includes('tipo venta') || x.includes('rut cliente'))) return 'ventas';
   return null;
 }
+
+const CSV_TYPE_LABELS = {
+  compras: 'RCV_COMPRAS', ventas: 'RCV_VENTAS', boletas: 'RCV_VENTA_BOLETAS',
+  resumen_compras: 'RCV_RESUMEN_COMPRA', resumen_ventas: 'RCV_RESUMEN_VENTA'
+};
 
 router.post("/sii/upload", wrap(async (req, res) => {
   const { csv, periodo } = req.body;
@@ -435,13 +456,21 @@ router.post("/sii/upload", wrap(async (req, res) => {
   const { headers, rows } = parseCSVRows(csv);
   if (rows.length === 0) return res.status(400).json({ error: "CSV vacio o sin filas de datos" });
   const type = detectCSVType(headers);
-  if (!type) return res.status(400).json({ error: "No se pudo detectar formato. Headers esperados: 'Tipo Compra'/'RUT Proveedor' (compras) o 'Tipo Venta'/'Rut cliente' (ventas)", headers });
+  if (!type) return res.status(400).json({
+    error: "No se pudo detectar formato CSV. Tipos soportados: RCV_COMPRAS, RCV_VENTAS, RCV_VENTA_BOLETAS, RCV_RESUMEN_COMPRA, RCV_RESUMEN_VENTA",
+    headers
+  });
   const batchId = `upload-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
   const per = periodo || new Date().toISOString().substring(0,7);
-  const result = type === 'compras'
-    ? await insertCompras(rows, per, batchId)
-    : await insertVentas(rows, per, batchId);
-  res.json({ type, ...result, batchId, periodo: per });
+  let result;
+  switch (type) {
+    case 'compras': result = await insertCompras(rows, per, batchId); break;
+    case 'ventas': result = await insertVentas(rows, per, batchId); break;
+    case 'boletas': result = await insertBoletas(rows, per, batchId); break;
+    case 'resumen_compras': result = await insertResumenCompras(rows, per, batchId); break;
+    case 'resumen_ventas': result = await insertResumenVentas(rows, per, batchId); break;
+  }
+  res.json({ type, label: CSV_TYPE_LABELS[type], ...result, batchId, periodo: per });
 }));
 
 router.get("/sii/compras", wrap(async (req, res) => {
@@ -465,11 +494,29 @@ router.get("/sii/compras-por-tipo", wrap(async (req, res) => {
 }));
 
 router.get("/sii/ventas-resumen", wrap(async (req, res) => {
-  res.json(await ventasResumen(req.query.year || null));
+  res.json(await ventasResumenUnificado(req.query.year || null));
 }));
 
 router.get("/sii/ventas-por-tipo", wrap(async (req, res) => {
-  res.json(await ventasResumenPorTipo(req.query.periodo || null));
+  res.json(await ventasResumenPorTipoUnificado(req.query.periodo || null));
+}));
+
+router.get("/sii/boletas", wrap(async (req, res) => {
+  const periodo = req.query.periodo || null;
+  const limit = Math.min(parseInt(req.query.limit) || 500, 2000);
+  res.json(await getBoletas(periodo, limit));
+}));
+
+router.get("/sii/resumen-oficial-compras", wrap(async (req, res) => {
+  res.json(await getResumenCompras(req.query.periodo || null));
+}));
+
+router.get("/sii/resumen-oficial-ventas", wrap(async (req, res) => {
+  res.json(await getResumenVentas(req.query.periodo || null));
+}));
+
+router.get("/sii/verificacion", wrap(async (req, res) => {
+  res.json(await verificacionSII(req.query.periodo || null));
 }));
 
 router.get("/api-connections", wrap(async (_req, res) => {

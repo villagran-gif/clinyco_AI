@@ -763,20 +763,48 @@
             <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="text">Tipo Doc</th><th class="sortable" data-col="2" data-type="num">Docs</th><th class="sortable" data-col="3" data-type="num">Exento</th><th class="sortable" data-col="4" data-type="num">Neto</th><th class="sortable" data-col="5" data-type="num">IVA</th><th class="sortable" data-col="6" data-type="num">Total</th></tr></thead>
             <tbody></tbody></table></div></div>
 
-      <!-- Raw Compras -->
+      <!-- Verificacion SII -->
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Datos raw — Compras (SII)</h3>
+        <h3>Verificacion — Raw vs Resumen Oficial SII</h3>
+        <p style="font-size:.75rem;color:#64748b">Sube los 5 CSVs del SII. Esta tabla compara los totales calculados del raw vs el resumen oficial. Diferencias aparecen en rojo.</p>
         <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
-          <table id="table-compras-raw" role="grid" style="font-size:.7rem">
-            <thead><tr><th>Nro</th><th>Tipo</th><th>RUT</th><th>Razon Social</th><th>Folio</th><th>Fecha</th><th>Neto</th><th>IVA</th><th>Total</th><th>Periodo</th></tr></thead>
+          <table id="table-verificacion" role="grid" style="font-size:.7rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Libro</th>
+              <th class="sortable" data-col="1" data-type="text">Periodo</th>
+              <th class="sortable" data-col="2" data-type="text">Tipo Doc</th>
+              <th class="sortable" data-col="3" data-type="num">Oficial Docs</th>
+              <th class="sortable" data-col="4" data-type="num">Raw Docs</th>
+              <th class="sortable" data-col="5" data-type="num">Diff Docs</th>
+              <th class="sortable" data-col="6" data-type="num">Oficial Total</th>
+              <th class="sortable" data-col="7" data-type="num">Raw Total</th>
+              <th class="sortable" data-col="8" data-type="num">Diff Total</th>
+              <th>Estado</th>
+            </tr></thead>
             <tbody></tbody></table></div></div>
 
-      <!-- Raw Ventas -->
+      <!-- Raw Compras (ALL 27 columns) -->
       <div class="chart-box" style="margin-bottom:2rem">
-        <h3>Datos raw — Ventas (SII)</h3>
+        <h3>Datos raw — Compras (SII) — 27 columnas</h3>
         <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
-          <table id="table-ventas-raw" role="grid" style="font-size:.7rem">
-            <thead><tr><th>Nro</th><th>Tipo</th><th>RUT</th><th>Razon Social</th><th>Folio</th><th>Fecha</th><th>Neto</th><th>IVA</th><th>Total</th><th>Periodo</th></tr></thead>
+          <table id="table-compras-raw" role="grid" style="font-size:.65rem">
+            <thead><tr><th>Nro</th><th>Tipo Doc</th><th>Tipo Compra</th><th>RUT Proveedor</th><th>Razon Social</th><th>Folio</th><th>Fecha Docto</th><th>Fecha Recepcion</th><th>Fecha Acuse</th><th>Monto Exento</th><th>Monto Neto</th><th>IVA Recuperable</th><th>IVA No Recuperable</th><th>Cod IVA No Rec</th><th>Monto Total</th><th>Neto Activo Fijo</th><th>IVA Activo Fijo</th><th>IVA Uso Comun</th><th>Impto Sin Der Credito</th><th>IVA No Retenido</th><th>Tab Puros</th><th>Tab Cigarrillos</th><th>Tab Elaborados</th><th>NCE/NDE</th><th>Cod Otro Imp</th><th>Valor Otro Imp</th><th>Tasa Otro Imp</th><th>Periodo</th></tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- Raw Ventas (ALL 43 columns) -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Ventas (SII) — 43 columnas</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-ventas-raw" role="grid" style="font-size:.65rem">
+            <thead><tr><th>Nro</th><th>Tipo Doc</th><th>Tipo Venta</th><th>RUT Cliente</th><th>Razon Social</th><th>Folio</th><th>Fecha Docto</th><th>Fecha Recepcion</th><th>Fecha Acuse</th><th>Fecha Reclamo</th><th>Monto Exento</th><th>Monto Neto</th><th>Monto IVA</th><th>Monto Total</th><th>IVA Ret Total</th><th>IVA Ret Parcial</th><th>IVA No Ret</th><th>IVA Propio</th><th>IVA Terceros</th><th>RUT Emisor Liq</th><th>Neto Com Liq</th><th>Exento Com Liq</th><th>IVA Com Liq</th><th>IVA Fuera Plazo</th><th>Tipo Doc Ref</th><th>Folio Doc Ref</th><th>ID Receptor Ext</th><th>Nac Receptor Ext</th><th>Cred Constructora</th><th>Impto Zona Franca</th><th>Garantia Envases</th><th>Venta Sin Costo</th><th>Serv Periodico</th><th>No Facturable</th><th>Total Periodo</th><th>Pasajes Nac</th><th>Pasajes Int</th><th>Num Interno</th><th>Cod Sucursal</th><th>NCE/NDE</th><th>Cod Otro Imp</th><th>Valor Otro Imp</th><th>Tasa Otro Imp</th><th>Periodo</th></tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- Raw Boletas (ALL 10 columns) -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3>Datos raw — Boletas (SII) — 10 columnas</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-boletas-raw" role="grid" style="font-size:.7rem">
+            <thead><tr><th>Tipo Doc</th><th>RUT Receptor</th><th>Fecha Docto</th><th>Fecha Venc</th><th>Ind Servicio</th><th>Folio</th><th>Monto Neto</th><th>Monto IVA</th><th>Monto Exento</th><th>Monto Total</th><th>Periodo</th></tr></thead>
             <tbody></tbody></table></div></div>
 
       <!-- API Connections (future) -->
@@ -2327,7 +2355,7 @@ function handleCSVFile(file) {
         status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`;
         return;
       }
-      status.innerHTML = `<span style="color:#16a34a">Tipo: <strong>${data.type}</strong> | Insertados: ${data.inserted} | Duplicados: ${data.skipped} | Total: ${data.total}</span>`;
+      status.innerHTML = `<span style="color:#16a34a">Tipo: <strong>${data.label || data.type}</strong> | Insertados: ${data.inserted} | Duplicados: ${data.skipped} | Total: ${data.total}</span>`;
       loadSIIData();
     } catch (err) {
       status.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;
@@ -2339,11 +2367,13 @@ function handleCSVFile(file) {
 async function loadSIIData() {
   const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
   try {
-    const [comprasRes, ventasRes, compras, ventas, conns] = await Promise.all([
+    const [comprasRes, ventasRes, compras, ventas, boletas, verif, conns] = await Promise.all([
       api('/sii/compras-resumen'),
       api('/sii/ventas-resumen'),
-      api('/sii/compras?limit=200'),
-      api('/sii/ventas?limit=200'),
+      api('/sii/compras?limit=500'),
+      api('/sii/ventas?limit=500'),
+      api('/sii/boletas?limit=500'),
+      api('/sii/verificacion'),
       api('/api-connections'),
     ]);
 
@@ -2367,15 +2397,40 @@ async function loadSIIData() {
     }).join('') || '<tr><td colspan="6" style="text-align:center;color:#94a3b8">Sin datos. Sube un CSV de ventas SII.</td></tr>';
     makeSortable('table-ventas-resumen');
 
-    // Raw compras
-    document.querySelector('#table-compras-raw tbody').innerHTML = compras.map(c =>
-      `<tr><td>${c.nro||''}</td><td>${c.tipo_doc||''}</td><td style="font-size:.65rem">${c.rut_proveedor||''}</td><td style="font-size:.65rem">${c.razon_social||''}</td><td>${c.folio||''}</td><td>${c.fecha_docto||''}</td><td>${fmtCLP(c.monto_neto)}</td><td>${fmtCLP(c.monto_iva_recuperable)}</td><td style="font-weight:600">${fmtCLP(c.monto_total)}</td><td style="font-size:.65rem">${c.periodo||''}</td></tr>`
-    ).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+    // Verificacion
+    document.querySelector('#table-verificacion tbody').innerHTML = verif.map(v => {
+      const cls = v.ok ? '' : 'style="background:#fee2e2"';
+      return `<tr ${cls}>
+        <td><strong>${v.libro}</strong></td><td>${v.periodo}</td><td>${v.tipo_doc||'—'}</td>
+        <td>${v.oficial_docs}</td><td>${v.raw_docs}</td>
+        <td style="color:${v.diff_docs===0?'#16a34a':'#dc2626'};font-weight:700">${v.diff_docs}</td>
+        <td>${fmtCLP(v.oficial_total)}</td><td>${fmtCLP(v.raw_total)}</td>
+        <td style="color:${v.diff_total===0?'#16a34a':'#dc2626'};font-weight:700">${fmtCLP(v.diff_total)}</td>
+        <td>${v.ok ? '<span class="badge badge-green">OK</span>' : '<span class="badge badge-red">DIFF</span>'}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8">Sube los 5 CSVs para verificar</td></tr>';
+    makeSortable('table-verificacion');
 
-    // Raw ventas
+    // Populate periodo selectors (include boletas periodos)
+    const boletasPeriodos = [...new Set(boletas.map(b => b.periodo).filter(Boolean))];
+
+    // Raw compras (ALL 27 columns)
+    document.querySelector('#table-compras-raw tbody').innerHTML = compras.map(c =>
+      `<tr><td>${c.nro||''}</td><td>${c.tipo_doc||''}</td><td>${c.tipo_compra||''}</td><td style="font-size:.6rem">${c.rut_proveedor||''}</td><td style="font-size:.6rem">${c.razon_social||''}</td><td>${c.folio||''}</td><td>${c.fecha_docto||''}</td><td>${c.fecha_recepcion||''}</td><td>${c.fecha_acuse||''}</td><td>${fmtCLP(c.monto_exento)}</td><td>${fmtCLP(c.monto_neto)}</td><td>${fmtCLP(c.monto_iva_recuperable)}</td><td>${fmtCLP(c.monto_iva_no_recuperable)}</td><td>${c.codigo_iva_no_rec||''}</td><td style="font-weight:600">${fmtCLP(c.monto_total)}</td><td>${fmtCLP(c.monto_neto_activo_fijo)}</td><td>${fmtCLP(c.iva_activo_fijo)}</td><td>${fmtCLP(c.iva_uso_comun)}</td><td>${fmtCLP(c.impto_sin_derecho_credito)}</td><td>${fmtCLP(c.iva_no_retenido)}</td><td>${c.tabacos_puros||0}</td><td>${c.tabacos_cigarrillos||0}</td><td>${c.tabacos_elaborados||0}</td><td>${c.nce_nde_sobre_fact_compra||0}</td><td>${c.codigo_otro_impuesto||''}</td><td>${fmtCLP(c.valor_otro_impuesto)}</td><td>${c.tasa_otro_impuesto||0}</td><td style="font-size:.6rem">${c.periodo||''}</td></tr>`
+    ).join('') || '<tr><td colspan="28" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+    makeSortable('table-compras-raw');
+
+    // Raw ventas (ALL 43 columns)
     document.querySelector('#table-ventas-raw tbody').innerHTML = ventas.map(v =>
-      `<tr><td>${v.nro||''}</td><td>${v.tipo_doc||''}</td><td style="font-size:.65rem">${v.rut_cliente||''}</td><td style="font-size:.65rem">${v.razon_social||''}</td><td>${v.folio||''}</td><td>${v.fecha_docto||''}</td><td>${fmtCLP(v.monto_neto)}</td><td>${fmtCLP(v.monto_iva)}</td><td style="font-weight:600">${fmtCLP(v.monto_total)}</td><td style="font-size:.65rem">${v.periodo||''}</td></tr>`
-    ).join('') || '<tr><td colspan="10" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+      `<tr><td>${v.nro||''}</td><td>${v.tipo_doc||''}</td><td>${v.tipo_venta||''}</td><td style="font-size:.6rem">${v.rut_cliente||''}</td><td style="font-size:.6rem">${v.razon_social||''}</td><td>${v.folio||''}</td><td>${v.fecha_docto||''}</td><td>${v.fecha_recepcion||''}</td><td>${v.fecha_acuse_recibo||''}</td><td>${v.fecha_reclamo||''}</td><td>${fmtCLP(v.monto_exento)}</td><td>${fmtCLP(v.monto_neto)}</td><td>${fmtCLP(v.monto_iva)}</td><td style="font-weight:600">${fmtCLP(v.monto_total)}</td><td>${fmtCLP(v.iva_retenido_total)}</td><td>${fmtCLP(v.iva_retenido_parcial)}</td><td>${fmtCLP(v.iva_no_retenido)}</td><td>${fmtCLP(v.iva_propio)}</td><td>${fmtCLP(v.iva_terceros)}</td><td>${v.rut_emisor_liquid_factura||''}</td><td>${fmtCLP(v.neto_comision_liquid_factura)}</td><td>${fmtCLP(v.exento_comision_liquid_factura)}</td><td>${fmtCLP(v.iva_comision_liquid_factura)}</td><td>${fmtCLP(v.iva_fuera_de_plazo)}</td><td>${v.tipo_docto_referencia||''}</td><td>${v.folio_docto_referencia||''}</td><td>${v.num_ident_receptor_extranjero||''}</td><td>${v.nacionalidad_receptor_extranjero||''}</td><td>${fmtCLP(v.credito_empresa_constructora)}</td><td>${fmtCLP(v.impto_zona_franca)}</td><td>${fmtCLP(v.garantia_dep_envases)}</td><td>${v.indicador_venta_sin_costo||''}</td><td>${v.indicador_servicio_periodico||''}</td><td>${fmtCLP(v.monto_no_facturable)}</td><td>${fmtCLP(v.total_monto_periodo)}</td><td>${fmtCLP(v.venta_pasajes_nacional)}</td><td>${fmtCLP(v.venta_pasajes_internacional)}</td><td>${v.numero_interno||''}</td><td>${v.codigo_sucursal||''}</td><td>${v.nce_nde_sobre_fact_compra||0}</td><td>${v.codigo_otro_imp||''}</td><td>${fmtCLP(v.valor_otro_imp)}</td><td>${v.tasa_otro_imp||0}</td><td style="font-size:.6rem">${v.periodo||''}</td></tr>`
+    ).join('') || '<tr><td colspan="44" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+    makeSortable('table-ventas-raw');
+
+    // Raw boletas (ALL 10 columns)
+    document.querySelector('#table-boletas-raw tbody').innerHTML = boletas.map(b =>
+      `<tr><td>${b.tipo_doc||''}</td><td style="font-size:.6rem">${b.rut_receptor||''}</td><td>${b.fecha_docto||''}</td><td>${b.fecha_venc||''}</td><td>${b.indicador_servicio||''}</td><td>${b.folio||''}</td><td>${fmtCLP(b.monto_neto)}</td><td>${fmtCLP(b.monto_iva)}</td><td>${fmtCLP(b.monto_exento)}</td><td style="font-weight:600">${fmtCLP(b.monto_total)}</td><td style="font-size:.6rem">${b.periodo||''}</td></tr>`
+    ).join('') || '<tr><td colspan="11" style="text-align:center;color:#94a3b8">Sin datos. Sube un CSV de boletas (RCV_VENTA_BOLETAS).</td></tr>';
+    makeSortable('table-boletas-raw');
 
     // API connections
     const provLabels = {google_ads:'Google Ads',meta_ads:'Meta / Facebook Ads',sii:'SII Chile'};

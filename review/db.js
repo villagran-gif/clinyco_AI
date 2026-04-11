@@ -1393,3 +1393,227 @@ export async function getApiConnections() {
   );
   return rows;
 }
+
+// ── Boletas (RCV_VENTA_BOLETAS) ──
+
+const BOLETAS_COLS = [
+  'tipo_doc','rut_receptor','fecha_docto','fecha_venc',
+  'indicador_servicio','folio','monto_neto','monto_iva','monto_exento','monto_total'
+];
+
+export async function insertBoletas(rows, periodo, batchId) {
+  const pool = getPool();
+  let inserted = 0, skipped = 0;
+  for (const r of rows) {
+    try {
+      await pool.query(
+        `INSERT INTO sii_ventas_boletas (${BOLETAS_COLS.join(',')}, periodo, upload_batch_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         ON CONFLICT (folio, tipo_doc, rut_receptor, fecha_docto) DO NOTHING`,
+        [
+          r[0]||'', r[1]||'', parseDate(r[2]), parseDate(r[3]),
+          r[4]||'', r[5]||'', parseInt0(r[6]), parseInt0(r[7]),
+          parseInt0(r[8]), parseInt0(r[9]),
+          periodo, batchId
+        ]
+      );
+      inserted++;
+    } catch (e) { skipped++; }
+  }
+  return { inserted, skipped, total: rows.length };
+}
+
+export async function getBoletas(periodo = null, limit = 500) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT * FROM sii_ventas_boletas ${filter} ORDER BY fecha_docto DESC NULLS LAST LIMIT $1`, [limit]
+  );
+  return rows;
+}
+
+// ── Resumen CSVs (RCV_RESUMEN_COMPRA / RCV_RESUMEN_VENTA) ──
+
+export async function insertResumenCompras(rows, periodo, batchId) {
+  const pool = getPool();
+  let inserted = 0, skipped = 0;
+  for (const r of rows) {
+    try {
+      const tipoDoc = r[0]||'';
+      if (!tipoDoc || tipoDoc.toLowerCase().includes('tipo documento')) continue;
+      await pool.query(
+        `INSERT INTO sii_resumen_compras (periodo, tipo_doc, total_documentos, monto_exento, monto_neto, iva_recuperable, iva_uso_comun, iva_no_recuperable, monto_total)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (periodo, tipo_doc) DO UPDATE SET
+           total_documentos=$3, monto_exento=$4, monto_neto=$5, iva_recuperable=$6,
+           iva_uso_comun=$7, iva_no_recuperable=$8, monto_total=$9`,
+        [periodo, tipoDoc, parseInt0(r[1]), parseInt0(r[2]), parseInt0(r[3]),
+         parseInt0(r[4]), parseInt0(r[5]), parseInt0(r[6]), parseInt0(r[7])]
+      );
+      inserted++;
+    } catch (e) { skipped++; }
+  }
+  return { inserted, skipped, total: rows.length };
+}
+
+export async function insertResumenVentas(rows, periodo, batchId) {
+  const pool = getPool();
+  let inserted = 0, skipped = 0;
+  for (const r of rows) {
+    try {
+      const tipoDoc = r[0]||'';
+      if (!tipoDoc || tipoDoc.toLowerCase().includes('tipo documento')) continue;
+      await pool.query(
+        `INSERT INTO sii_resumen_ventas (periodo, tipo_doc, total_documentos, monto_exento, monto_neto, monto_iva, monto_total)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (periodo, tipo_doc) DO UPDATE SET
+           total_documentos=$3, monto_exento=$4, monto_neto=$5, monto_iva=$6, monto_total=$7`,
+        [periodo, tipoDoc, parseInt0(r[1]), parseInt0(r[2]), parseInt0(r[3]),
+         parseInt0(r[4]), parseInt0(r[5])]
+      );
+      inserted++;
+    } catch (e) { skipped++; }
+  }
+  return { inserted, skipped, total: rows.length };
+}
+
+export async function getResumenCompras(periodo = null) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT * FROM sii_resumen_compras ${filter} ORDER BY periodo DESC, monto_total DESC`
+  );
+  return rows;
+}
+
+export async function getResumenVentas(periodo = null) {
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT * FROM sii_resumen_ventas ${filter} ORDER BY periodo DESC, monto_total DESC`
+  );
+  return rows;
+}
+
+// ── Ventas resumen unificado (ventas + boletas) ──
+
+export async function ventasResumenUnificado(year = null) {
+  const filter = year ? `AND EXTRACT(YEAR FROM fecha_docto) = ${parseInt(year)}` : '';
+  const { rows } = await getPool().query(
+    `SELECT month, sum(total_docs)::int AS total_docs,
+            sum(total_exento)::bigint AS total_exento,
+            sum(total_neto)::bigint AS total_neto,
+            sum(total_iva)::bigint AS total_iva,
+            sum(total_total)::bigint AS total_total
+     FROM (
+       SELECT date_trunc('month', fecha_docto)::date::text AS month,
+              count(*)::int AS total_docs,
+              sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+              sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+              sum(COALESCE(monto_iva,0))::bigint AS total_iva,
+              sum(COALESCE(monto_total,0))::bigint AS total_total
+       FROM sii_ventas WHERE true ${filter}
+       GROUP BY 1
+       UNION ALL
+       SELECT date_trunc('month', fecha_docto)::date::text AS month,
+              count(*)::int AS total_docs,
+              sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+              sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+              sum(COALESCE(monto_iva,0))::bigint AS total_iva,
+              sum(COALESCE(monto_total,0))::bigint AS total_total
+       FROM sii_ventas_boletas WHERE true ${filter}
+       GROUP BY 1
+     ) combined
+     GROUP BY month ORDER BY month DESC`
+  );
+  return rows;
+}
+
+export async function ventasResumenPorTipoUnificado(periodo = null) {
+  const filter = periodo ? `AND periodo = '${periodo}'` : '';
+  const { rows } = await getPool().query(
+    `SELECT month, tipo_doc,
+            sum(total_docs)::int AS total_docs,
+            sum(total_exento)::bigint AS total_exento,
+            sum(total_neto)::bigint AS total_neto,
+            sum(total_iva)::bigint AS total_iva,
+            sum(total_total)::bigint AS total_total
+     FROM (
+       SELECT date_trunc('month', fecha_docto)::date::text AS month, tipo_doc,
+              count(*)::int AS total_docs,
+              sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+              sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+              sum(COALESCE(monto_iva,0))::bigint AS total_iva,
+              sum(COALESCE(monto_total,0))::bigint AS total_total
+       FROM sii_ventas WHERE true ${filter}
+       GROUP BY 1, tipo_doc
+       UNION ALL
+       SELECT date_trunc('month', fecha_docto)::date::text AS month, tipo_doc,
+              count(*)::int AS total_docs,
+              sum(COALESCE(monto_exento,0))::bigint AS total_exento,
+              sum(COALESCE(monto_neto,0))::bigint AS total_neto,
+              sum(COALESCE(monto_iva,0))::bigint AS total_iva,
+              sum(COALESCE(monto_total,0))::bigint AS total_total
+       FROM sii_ventas_boletas WHERE true ${filter}
+       GROUP BY 1, tipo_doc
+     ) combined
+     GROUP BY month, tipo_doc ORDER BY month ASC, total_total DESC`
+  );
+  return rows;
+}
+
+/** Verificación: compara raw calculado vs resumen oficial del SII */
+export async function verificacionSII(periodo = null) {
+  const pool = getPool();
+  const filter = periodo ? `WHERE periodo = '${periodo}'` : '';
+
+  // Get official resumen
+  const { rows: resCompras } = await pool.query(
+    `SELECT periodo, tipo_doc, total_documentos, monto_total FROM sii_resumen_compras ${filter} ORDER BY periodo, tipo_doc`
+  );
+  const { rows: resVentas } = await pool.query(
+    `SELECT periodo, tipo_doc, total_documentos, monto_total FROM sii_resumen_ventas ${filter} ORDER BY periodo, tipo_doc`
+  );
+
+  // Get calculated from raw data
+  const filterRaw = periodo ? `WHERE periodo = '${periodo}'` : '';
+  const { rows: rawCompras } = await pool.query(
+    `SELECT periodo, tipo_doc, count(*)::int AS total_documentos, sum(COALESCE(monto_total,0))::bigint AS monto_total
+     FROM sii_compras ${filterRaw} GROUP BY periodo, tipo_doc ORDER BY periodo, tipo_doc`
+  );
+  const { rows: rawVentas } = await pool.query(
+    `SELECT periodo, tipo_doc, total_documentos, monto_total FROM (
+       SELECT periodo, tipo_doc, count(*)::int AS total_documentos, sum(COALESCE(monto_total,0))::bigint AS monto_total
+       FROM sii_ventas ${filterRaw} GROUP BY periodo, tipo_doc
+       UNION ALL
+       SELECT periodo, tipo_doc, count(*)::int, sum(COALESCE(monto_total,0))::bigint
+       FROM sii_ventas_boletas ${filterRaw} GROUP BY periodo, tipo_doc
+     ) x ORDER BY periodo, tipo_doc`
+  );
+
+  // Build comparison
+  const compare = (oficial, raw, label) => {
+    const result = [];
+    const rawMap = {};
+    raw.forEach(r => { rawMap[`${r.periodo}|${r.tipo_doc}`] = r; });
+    const oficialMap = {};
+    oficial.forEach(o => { oficialMap[`${o.periodo}|${o.tipo_doc}`] = o; });
+    const allKeys = [...new Set([...Object.keys(rawMap), ...Object.keys(oficialMap)])];
+    for (const key of allKeys) {
+      const o = oficialMap[key] || { total_documentos: 0, monto_total: 0 };
+      const r = rawMap[key] || { total_documentos: 0, monto_total: 0 };
+      const [per, tipo] = key.split('|');
+      const docsDiff = Number(r.total_documentos) - Number(o.total_documentos);
+      const montoDiff = Number(r.monto_total) - Number(o.monto_total);
+      result.push({
+        libro: label, periodo: per, tipo_doc: tipo,
+        oficial_docs: Number(o.total_documentos), raw_docs: Number(r.total_documentos), diff_docs: docsDiff,
+        oficial_total: Number(o.monto_total), raw_total: Number(r.monto_total), diff_total: montoDiff,
+        ok: docsDiff === 0 && montoDiff === 0
+      });
+    }
+    return result;
+  };
+
+  return [
+    ...compare(resCompras, rawCompras, 'COMPRAS'),
+    ...compare(resVentas, rawVentas, 'VENTAS'),
+  ];
+}
