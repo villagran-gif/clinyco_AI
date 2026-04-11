@@ -715,6 +715,60 @@
             <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="num">Costo Total</th><th class="sortable" data-col="2" data-type="num">Deals</th><th class="sortable" data-col="3" data-type="num">Operados</th><th class="sortable" data-col="4" data-type="num">CAC</th><th class="sortable" data-col="5" data-type="num">LTV</th><th class="sortable" data-col="6" data-type="num">LTV:CAC</th><th class="sortable" data-col="7" data-type="num">Payback</th><th class="sortable" data-col="8" data-type="num">Conv%</th></tr></thead>
             <tbody></tbody></table></div></div>
 
+      <!-- Meta Ads Billing Upload -->
+      <div class="chart-box" style="margin-bottom:2rem;border-left:3px solid #1877F2">
+        <h3 style="color:#1877F2">Subir CSV — Meta / Facebook Ads Billing</h3>
+        <p style="font-size:.8rem;color:#64748b;margin-bottom:.8rem">Arrastra el CSV de facturacion descargado desde <strong>business.facebook.com/billing</strong>. Se convierte automaticamente USD → CLP usando el Dolar Observado (mindicador.cl) y se calcula IVA 19% (Ley 21.210).</p>
+        <div id="meta-csv-drop-zone" style="border:2px dashed #1877F2;border-radius:12px;padding:2rem;text-align:center;cursor:pointer;transition:border-color .2s;margin-bottom:1rem;background:#f0f4ff" ondragover="event.preventDefault();this.style.borderColor='#2563eb';this.style.background='#dbeafe'" ondragleave="this.style.borderColor='#1877F2';this.style.background='#f0f4ff'" ondrop="handleMetaCSVDrop(event)">
+          <div style="font-size:2rem;opacity:.4">META</div>
+          <p style="color:#64748b;font-size:.85rem;margin:.5rem 0">Arrastra CSV de Meta Ads aqui o</p>
+          <input type="file" id="meta-csv-file-input" accept=".csv,.tsv,.txt" onchange="handleMetaCSVFile(this.files[0])" style="display:none">
+          <button onclick="document.getElementById('meta-csv-file-input').click()" style="padding:.5rem 1rem;background:#1877F2;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Seleccionar archivo</button>
+        </div>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.5rem;align-items:end">
+          <div><label style="font-size:.7rem;display:block;color:#64748b">Periodo (opcional):</label>
+            <input type="month" id="meta-csv-periodo" style="padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem"></div>
+          <div><label style="font-size:.7rem;display:block;color:#64748b">Tipo cambio manual CLP/USD (opcional):</label>
+            <input type="number" id="meta-manual-rate" placeholder="ej: 920" step="0.01" style="padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem;width:100px"></div>
+        </div>
+        <div id="meta-csv-upload-status" style="font-size:.8rem;color:#64748b"></div>
+      </div>
+
+      <!-- Meta Ads Billing Summary -->
+      <div class="chart-box" style="margin-bottom:2rem" id="meta-billing-section" style="display:none">
+        <h3 style="color:#1877F2">Meta Ads Billing — Resumen mensual</h3>
+        <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+          <table id="table-meta-summary" role="grid" style="font-size:.75rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Mes</th>
+              <th class="sortable" data-col="1" data-type="num">Transacciones</th>
+              <th class="sortable" data-col="2" data-type="num">Total USD</th>
+              <th class="sortable" data-col="3" data-type="num">TC Promedio</th>
+              <th class="sortable" data-col="4" data-type="num">Neto CLP</th>
+              <th class="sortable" data-col="5" data-type="num">IVA CLP</th>
+              <th class="sortable" data-col="6" data-type="num">Total CLP</th>
+            </tr></thead>
+            <tbody></tbody></table></div></div>
+
+      <!-- Meta Ads Billing Detail -->
+      <div class="chart-box" style="margin-bottom:2rem">
+        <h3 style="color:#1877F2">Meta Ads Billing — Detalle USD→CLP</h3>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table id="table-meta-billing" role="grid" style="font-size:.7rem">
+            <thead><tr>
+              <th class="sortable" data-col="0" data-type="text">Fecha</th>
+              <th class="sortable" data-col="1" data-type="text">ID Transaccion</th>
+              <th class="sortable" data-col="2" data-type="text">Descripcion</th>
+              <th class="sortable" data-col="3" data-type="text">Metodo Pago</th>
+              <th class="sortable" data-col="4" data-type="num">USD</th>
+              <th class="sortable" data-col="5" data-type="num">Dolar Obs</th>
+              <th class="sortable" data-col="6" data-type="num">CLP Neto</th>
+              <th class="sortable" data-col="7" data-type="num">IVA 19%</th>
+              <th class="sortable" data-col="8" data-type="num">Total CLP</th>
+              <th class="sortable" data-col="9" data-type="text">Tipo</th>
+            </tr></thead>
+            <tbody></tbody></table></div></div>
+
       <!-- CSV Upload -->
       <div class="chart-box" style="margin-bottom:2rem">
         <h3>Subir CSV — Libro de Compras o Ventas (SII)</h3>
@@ -2199,6 +2253,7 @@ async function loadMarketing() {
     renderBusinessParams(params);
     setupCostForm();
     loadSIIData();
+    loadMetaData();
     window._marketingLoaded = true;
   } catch (err) {
     document.getElementById('mkt-loading').innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
@@ -2330,6 +2385,111 @@ function filterMarketingYear(year) {
 }
 
 // ═══════════ CSV UPLOAD + SII DATA ═══════════
+// ═══════════ META ADS BILLING ═══════════
+
+function handleMetaCSVDrop(e) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = '#1877F2';
+  e.currentTarget.style.background = '#f0f4ff';
+  const file = e.dataTransfer.files[0];
+  if (file) handleMetaCSVFile(file);
+}
+
+function handleMetaCSVFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const csv = e.target.result;
+    const periodo = document.getElementById('meta-csv-periodo').value || null;
+    const manualRate = document.getElementById('meta-manual-rate').value || null;
+    const status = document.getElementById('meta-csv-upload-status');
+    status.innerHTML = '<span style="color:#d97706">Subiendo y convirtiendo USD→CLP...</span>';
+    try {
+      const data = await uploadMetaCSV(csv, periodo, manualRate);
+      if (data.error) {
+        status.innerHTML = `<span style="color:#dc2626">Error: ${data.error}</span>`;
+        return;
+      }
+      status.innerHTML = `<span style="color:#16a34a">` +
+        `<strong>${data.label}</strong> | Periodo: ${data.periodo} | ` +
+        `Insertados: ${data.inserted} | Skipped: ${data.skipped} | ` +
+        `Total USD: $${(data.totalUsd||0).toLocaleString('en-US',{minimumFractionDigits:2})}` +
+        `</span>`;
+      loadMetaData();
+      // Reload marketing to refresh KPIs/charts with new costs
+      window._marketingLoaded = false;
+      loadMarketing();
+    } catch (err) {
+      status.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;
+    }
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+async function uploadMetaCSV(csv, periodo, manualRate) {
+  const body = { csv };
+  if (periodo) body.periodo = periodo;
+  if (manualRate) body.manual_rate = parseFloat(manualRate);
+  const res = await fetch(API_BASE + '/meta-ads/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return await res.json();
+}
+
+async function loadMetaData() {
+  const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
+  const fmtUSD = n => n != null ? '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '—';
+  try {
+    const [summary, billing] = await Promise.all([
+      api('/meta-ads/summary'),
+      api('/meta-ads/billing?limit=500'),
+    ]);
+
+    // Summary table
+    const summaryTb = document.querySelector('#table-meta-summary tbody');
+    if (summary.length > 0) {
+      summaryTb.innerHTML = summary.map(s =>
+        `<tr><td>${s.periodo}</td><td>${s.transactions}</td><td>${fmtUSD(s.total_usd)}</td>` +
+        `<td>${s.avg_rate ? '$'+Number(s.avg_rate).toLocaleString('es-CL') : '—'}</td>` +
+        `<td>${fmtCLP(s.total_clp_neto)}</td><td>${fmtCLP(s.total_iva)}</td><td>${fmtCLP(s.total_clp_total)}</td></tr>`
+      ).join('');
+    } else {
+      summaryTb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8">Sin datos — sube un CSV de Meta Ads</td></tr>';
+    }
+
+    // Detail table
+    const TIPO_BADGE = { charge: '<span style="background:#dbeafe;color:#1d4ed8;padding:1px 6px;border-radius:4px;font-size:.7rem">Gasto</span>',
+                         credit: '<span style="background:#dcfce7;color:#16a34a;padding:1px 6px;border-radius:4px;font-size:.7rem">Credito</span>',
+                         tax: '<span style="background:#fef3c7;color:#d97706;padding:1px 6px;border-radius:4px;font-size:.7rem">IVA</span>' };
+    const billingTb = document.querySelector('#table-meta-billing tbody');
+    if (billing.length > 0) {
+      billingTb.innerHTML = billing.map(b =>
+        `<tr><td>${b.fecha?.substring(0,10)||''}</td><td>${b.transaction_id||''}</td>` +
+        `<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(b.description||'').replace(/"/g,'&quot;')}">${b.description||''}</td>` +
+        `<td>${b.payment_method||''}</td>` +
+        `<td>${fmtUSD(b.amount_usd)}</td>` +
+        `<td>${b.dolar_observado ? '$'+Number(b.dolar_observado).toLocaleString('es-CL') : '—'}</td>` +
+        `<td>${fmtCLP(b.amount_clp)}</td>` +
+        `<td>${fmtCLP(b.iva_clp)}</td>` +
+        `<td style="font-weight:600">${fmtCLP(b.total_clp)}</td>` +
+        `<td>${TIPO_BADGE[b.tipo] || b.tipo}</td></tr>`
+      ).join('');
+    } else {
+      billingTb.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#94a3b8">Sin datos</td></tr>';
+    }
+
+    // Make tables sortable
+    makeSortable('table-meta-summary');
+    makeSortable('table-meta-billing');
+  } catch (err) {
+    console.error('[meta-billing] load error:', err);
+  }
+}
+
+// ═══════════ SII CSV UPLOAD ═══════════
+
 function handleCSVDrop(e) {
   e.preventDefault();
   e.target.style.borderColor = '#cbd5e1';

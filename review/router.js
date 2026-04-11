@@ -66,6 +66,12 @@ import {
   ventasResumenUnificado,
   ventasResumenPorTipoUnificado,
   verificacionSII,
+  getOrFetchRate,
+  getExchangeRates,
+  insertMetaBilling,
+  syncMetaBillingToMarketingCosts,
+  getMetaBilling,
+  metaBillingSummary,
 } from "./db.js";
 
 const router = Router();
@@ -84,7 +90,7 @@ router.use((req, res, next) => {
     (origin && origin.endsWith(".netlify.app"))
   ) {
     res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   }
   if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -521,6 +527,193 @@ router.get("/sii/verificacion", wrap(async (req, res) => {
 
 router.get("/api-connections", wrap(async (_req, res) => {
   res.json(await getApiConnections());
+}));
+
+// ═══════════ META ADS BILLING ═══════════
+
+/**
+ * Parse Meta Ads billing CSV.
+ * Meta CSVs have informational header lines before the transaction table.
+ * We detect the header row by looking for "Fecha" + ("Importe" or "Amount").
+ */
+function parseMetaCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 3) return { metadata: {}, transactions: [] };
+
+  const sep = lines[0].includes('\t') ? '\t' : lines[0].includes(';') ? ';' : ',';
+  const metadata = {};
+  let headerIdx = -1;
+
+  // Find the transaction header row and extract metadata from preceding lines
+  for (let i = 0; i < Math.min(lines.length, 15); i++) {
+    const lower = lines[i].toLowerCase().replace(/"/g, '');
+    if ((lower.includes('fecha') && (lower.includes('importe') || lower.includes('amount') || lower.includes('transacci')))
+        || (lower.includes('date') && lower.includes('transaction'))) {
+      headerIdx = i;
+      break;
+    }
+    // Extract metadata from header lines
+    const parts = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
+    if (parts.length >= 2) {
+      const key = parts[0].toLowerCase();
+      if (key.includes('periodo') || key.includes('billing')) metadata.billingPeriod = parts[1];
+      if (key.includes('empresa') || key.includes('company') || key.includes('nombre')) metadata.company = parts[1];
+      if (key.includes('cuenta') || key.includes('account')) metadata.account = parts[1];
+      if (key.includes('moneda') || key.includes('currency')) metadata.currency = parts[1];
+    }
+  }
+
+  if (headerIdx < 0) return { metadata, transactions: [] };
+
+  const headers = lines[headerIdx].split(sep).map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
+
+  // Find column indices by matching common Meta header patterns
+  const colIdx = {
+    fecha: headers.findIndex(h => h.includes('fecha') || h === 'date'),
+    transactionId: headers.findIndex(h => h.includes('transacci') || h.includes('transaction id')),
+    description: headers.findIndex(h => h.includes('descripci') || h.includes('description')),
+    paymentMethod: headers.findIndex(h => h.includes('metodo') || h.includes('payment') || h.includes('m\u00e9todo')),
+    amount: headers.findIndex(h => h.includes('importe') || h.includes('amount')),
+    currency: headers.findIndex(h => h.includes('divisa') || h.includes('currency')),
+  };
+
+  const transactions = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
+    if (cols.length < 3 || !cols[colIdx.fecha >= 0 ? colIdx.fecha : 0]) continue;
+
+    const rawDate = colIdx.fecha >= 0 ? cols[colIdx.fecha] : '';
+    const fecha = parseMetaDate(rawDate);
+    if (!fecha) continue;
+
+    // Parse amount — handle unicode minus (−), commas as decimal sep, etc.
+    let rawAmount = colIdx.amount >= 0 ? cols[colIdx.amount] : '0';
+    rawAmount = rawAmount.replace(/\u2212/g, '-').replace(/[$ ]/g, '');
+    // If uses comma as decimal separator (e.g. "1.234,56")
+    if (rawAmount.includes(',') && rawAmount.indexOf(',') > rawAmount.lastIndexOf('.')) {
+      rawAmount = rawAmount.replace(/\./g, '').replace(',', '.');
+    }
+    const amountUsd = parseFloat(rawAmount) || 0;
+
+    const description = colIdx.description >= 0 ? cols[colIdx.description] : '';
+    const descLower = description.toLowerCase();
+
+    // Classify transaction tipo
+    let tipo = 'charge';
+    if (amountUsd < 0 || descLower.includes('cr\u00e9dito') || descLower.includes('credito') || descLower.includes('credit') || descLower.includes('reembolso') || descLower.includes('refund')) {
+      tipo = 'credit';
+    } else if (descLower.includes('iva') || descLower.includes('impuesto') || descLower.includes('tax') || descLower.includes('vat')) {
+      tipo = 'tax';
+    }
+
+    transactions.push({
+      fecha,
+      transaction_id: colIdx.transactionId >= 0 ? cols[colIdx.transactionId] : '',
+      description,
+      payment_method: colIdx.paymentMethod >= 0 ? cols[colIdx.paymentMethod] : '',
+      amount_usd: amountUsd,
+      currency: colIdx.currency >= 0 ? cols[colIdx.currency] : metadata.currency || 'USD',
+      tipo,
+    });
+  }
+
+  return { metadata, transactions };
+}
+
+/** Parse date from Meta CSV: handles "DD/MM/YYYY", "YYYY-MM-DD", "DD-MM-YYYY", "ene 5, 2026", etc. */
+function parseMetaDate(s) {
+  if (!s) return null;
+  const cleaned = String(s).trim();
+  // ISO format
+  const iso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return iso[0];
+  // DD/MM/YYYY or DD-MM-YYYY
+  const dmy = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+  // MM/DD/YYYY (US format — Meta sometimes uses this)
+  const mdy = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const m = parseInt(mdy[1]), d = parseInt(mdy[2]);
+    // Heuristic: if first number > 12, it's DD/MM/YYYY (already handled above)
+    if (m <= 12) return `${mdy[3]}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+  // "mes DD, YYYY" or "DD mes YYYY" (Spanish month names)
+  const MESES = {ene:'01',feb:'02',mar:'03',abr:'04',may:'05',jun:'06',jul:'07',ago:'08',sep:'09',oct:'10',nov:'11',dic:'12',
+                  jan:'01',apr:'04',aug:'08',dec:'12'};
+  const spMonth = cleaned.match(/(\w{3})\w*\s+(\d{1,2}),?\s+(\d{4})/i);
+  if (spMonth) {
+    const mm = MESES[spMonth[1].toLowerCase().substring(0,3)];
+    if (mm) return `${spMonth[3]}-${mm}-${spMonth[2].padStart(2,'0')}`;
+  }
+  const spDay = cleaned.match(/(\d{1,2})\s+de?\s*(\w{3})\w*\s+(\d{4})/i);
+  if (spDay) {
+    const mm = MESES[spDay[2].toLowerCase().substring(0,3)];
+    if (mm) return `${spDay[3]}-${mm}-${spDay[1].padStart(2,'0')}`;
+  }
+  return null;
+}
+
+function detectMetaCSV(text) {
+  const lower = text.toLowerCase();
+  return (lower.includes('importe') || lower.includes('amount'))
+    && (lower.includes('transacci') || lower.includes('transaction') || lower.includes('m\u00e9todo de pago') || lower.includes('metodo de pago'));
+}
+
+router.post("/meta-ads/upload", wrap(async (req, res) => {
+  const { csv, periodo: periodoOverride, manual_rate } = req.body;
+  if (!csv) return res.status(400).json({ error: "csv text required" });
+
+  if (!detectMetaCSV(csv)) {
+    return res.status(400).json({ error: "No se reconoce como CSV de Meta Ads. Se esperan columnas: Fecha, ID de transaccion, Importe (USD)." });
+  }
+
+  const { metadata, transactions } = parseMetaCSV(csv);
+  if (transactions.length === 0) {
+    return res.status(400).json({ error: "CSV de Meta vacio o sin transacciones reconocidas", metadata });
+  }
+
+  // Derive periodo from first transaction date or use override
+  const firstDate = transactions[0]?.fecha;
+  const periodo = periodoOverride || (firstDate ? firstDate.substring(0, 7) : new Date().toISOString().substring(0, 7));
+
+  // If manual_rate provided, override the exchange rate for all transactions
+  if (manual_rate) {
+    for (const tx of transactions) {
+      tx._manualRate = parseFloat(manual_rate);
+    }
+  }
+
+  const batchId = `meta-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const result = await insertMetaBilling(transactions, periodo, batchId, metadata.billingPeriod || '');
+
+  // Auto-sync to marketing_costs
+  await syncMetaBillingToMarketingCosts(periodo);
+
+  // Compute summary for response
+  const totalUsd = transactions.reduce((s, t) => s + t.amount_usd, 0);
+  res.json({
+    type: 'meta_ads_billing',
+    label: 'Meta Ads Billing',
+    ...result,
+    batchId,
+    periodo,
+    totalUsd: Math.round(totalUsd * 100) / 100,
+    metadata,
+  });
+}));
+
+router.get("/meta-ads/billing", wrap(async (req, res) => {
+  const periodo = req.query.periodo || null;
+  const limit = Math.min(parseInt(req.query.limit) || 500, 2000);
+  res.json(await getMetaBilling(periodo, limit));
+}));
+
+router.get("/meta-ads/summary", wrap(async (req, res) => {
+  res.json(await metaBillingSummary(req.query.year || null));
+}));
+
+router.get("/exchange-rates", wrap(async (req, res) => {
+  res.json(await getExchangeRates(req.query.month || null));
 }));
 
 export default router;
