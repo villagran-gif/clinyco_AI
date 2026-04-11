@@ -739,7 +739,7 @@
         <h3>Compras por tipo documento (SII) <select id="compras-tipo-periodo" onchange="loadComprasPorTipo(this.value)" style="font-size:.75rem;padding:.2rem;border-radius:4px;border:1px solid #cbd5e1"></select></h3>
         <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
           <table id="table-compras-tipo" role="grid" style="font-size:.75rem">
-            <thead><tr><th class="sortable" data-col="0" data-type="text">Tipo Doc</th><th class="sortable" data-col="1" data-type="num">Docs</th><th class="sortable" data-col="2" data-type="num">Exento</th><th class="sortable" data-col="3" data-type="num">Neto</th><th class="sortable" data-col="4" data-type="num">IVA Rec</th><th class="sortable" data-col="5" data-type="num">IVA No Rec</th><th class="sortable" data-col="6" data-type="num">IVA Uso Comun</th><th class="sortable" data-col="7" data-type="num">Total</th></tr></thead>
+            <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="text">Tipo Doc</th><th class="sortable" data-col="2" data-type="num">Docs</th><th class="sortable" data-col="3" data-type="num">Exento</th><th class="sortable" data-col="4" data-type="num">Neto</th><th class="sortable" data-col="5" data-type="num">IVA Rec</th><th class="sortable" data-col="6" data-type="num">IVA No Rec</th><th class="sortable" data-col="7" data-type="num">IVA Uso Comun</th><th class="sortable" data-col="8" data-type="num">Total</th></tr></thead>
             <tbody></tbody></table></div></div>
 
       <!-- Resumen Ventas mensual -->
@@ -755,7 +755,7 @@
         <h3>Ventas por tipo documento (SII) <select id="ventas-tipo-periodo" onchange="loadVentasPorTipo(this.value)" style="font-size:.75rem;padding:.2rem;border-radius:4px;border:1px solid #cbd5e1"></select></h3>
         <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
           <table id="table-ventas-tipo" role="grid" style="font-size:.75rem">
-            <thead><tr><th class="sortable" data-col="0" data-type="text">Tipo Doc</th><th class="sortable" data-col="1" data-type="num">Docs</th><th class="sortable" data-col="2" data-type="num">Exento</th><th class="sortable" data-col="3" data-type="num">Neto</th><th class="sortable" data-col="4" data-type="num">IVA</th><th class="sortable" data-col="5" data-type="num">Total</th></tr></thead>
+            <thead><tr><th class="sortable" data-col="0" data-type="text">Mes</th><th class="sortable" data-col="1" data-type="text">Tipo Doc</th><th class="sortable" data-col="2" data-type="num">Docs</th><th class="sortable" data-col="3" data-type="num">Exento</th><th class="sortable" data-col="4" data-type="num">Neto</th><th class="sortable" data-col="5" data-type="num">IVA</th><th class="sortable" data-col="6" data-type="num">Total</th></tr></thead>
             <tbody></tbody></table></div></div>
 
       <!-- Raw Compras -->
@@ -1782,8 +1782,9 @@ function makeSortable(tableId) {
 
       const nextAsc = !isAsc;
       rows.sort((a, b) => {
-        const aVal = a.cells[col]?.textContent?.trim() || '';
-        const bVal = b.cells[col]?.textContent?.trim() || '';
+        // Use data-sort attribute if present (for chronological month sorting)
+        const aVal = a.cells[col]?.dataset?.sort || a.cells[col]?.textContent?.trim() || '';
+        const bVal = b.cells[col]?.dataset?.sort || b.cells[col]?.textContent?.trim() || '';
         if (type === 'num') {
           const aNum = parseFloat(aVal.replace(/[$%.,]/g, '')) || 0;
           const bNum = parseFloat(bVal.replace(/[$%.,]/g, '')) || 0;
@@ -2325,8 +2326,7 @@ async function loadSIIData() {
 
     // Compras resumen mensual
     document.querySelector('#table-compras-resumen tbody').innerHTML = comprasRes.map(c => {
-      const mes = new Date(c.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
-      return `<tr><td>${mes}</td><td>${c.total_docs}</td><td>${fmtCLP(c.total_exento)}</td><td>${fmtCLP(c.total_neto)}</td><td>${fmtCLP(c.total_iva_rec)}</td><td>${fmtCLP(c.total_iva_no_rec)}</td><td style="font-weight:700">${fmtCLP(c.total_total)}</td></tr>`;
+      return `<tr><td data-sort="${c.month}">${mesLabel(c.month)}</td><td>${c.total_docs}</td><td>${fmtCLP(c.total_exento)}</td><td>${fmtCLP(c.total_neto)}</td><td>${fmtCLP(c.total_iva_rec)}</td><td>${fmtCLP(c.total_iva_no_rec)}</td><td style="font-weight:700">${fmtCLP(c.total_total)}</td></tr>`;
     }).join('') || '<tr><td colspan="7" style="text-align:center;color:#94a3b8">Sin datos. Sube un CSV de compras SII.</td></tr>';
     makeSortable('table-compras-resumen');
 
@@ -2340,8 +2340,7 @@ async function loadSIIData() {
 
     // Ventas resumen mensual
     document.querySelector('#table-ventas-resumen tbody').innerHTML = ventasRes.map(v => {
-      const mes = new Date(v.month).toLocaleDateString('es-CL',{year:'numeric',month:'short'});
-      return `<tr><td>${mes}</td><td>${v.total_docs}</td><td>${fmtCLP(v.total_exento)}</td><td>${fmtCLP(v.total_neto)}</td><td>${fmtCLP(v.total_iva)}</td><td style="font-weight:700">${fmtCLP(v.total_total)}</td></tr>`;
+      return `<tr><td data-sort="${v.month}">${mesLabel(v.month)}</td><td>${v.total_docs}</td><td>${fmtCLP(v.total_exento)}</td><td>${fmtCLP(v.total_neto)}</td><td>${fmtCLP(v.total_iva)}</td><td style="font-weight:700">${fmtCLP(v.total_total)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" style="text-align:center;color:#94a3b8">Sin datos. Sube un CSV de ventas SII.</td></tr>';
     makeSortable('table-ventas-resumen');
 
@@ -2370,6 +2369,13 @@ async function loadSIIData() {
   } catch (err) { /* SII data not critical */ }
 }
 
+function mesLabel(isoDate) {
+  if (!isoDate) return '—';
+  const d = new Date(isoDate);
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return `${meses[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 async function loadComprasPorTipo(periodo) {
   const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
   const DTE = {'33':'Factura Electronica','34':'Factura no Afecta/Exenta','39':'Boleta Electronica','41':'Boleta Exenta','46':'Factura Compra','52':'Guia Despacho','56':'Nota Debito','61':'Nota Credito'};
@@ -2377,8 +2383,8 @@ async function loadComprasPorTipo(periodo) {
     const data = await api(`/sii/compras-por-tipo?periodo=${periodo}`);
     document.querySelector('#table-compras-tipo tbody').innerHTML = data.map(r => {
       const nombre = DTE[r.tipo_doc] || r.tipo_doc || '—';
-      return `<tr><td>${nombre}(${r.tipo_doc})</td><td>${r.total_docs}</td><td>${fmtCLP(r.total_exento)}</td><td>${fmtCLP(r.total_neto)}</td><td>${fmtCLP(r.total_iva_rec)}</td><td>${fmtCLP(r.total_iva_no_rec)}</td><td>${fmtCLP(r.total_iva_uso_comun)}</td><td style="font-weight:700">${fmtCLP(r.total_total)}</td></tr>`;
-    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#94a3b8">Sin datos para este periodo</td></tr>';
+      return `<tr><td data-sort="${r.month||''}">${mesLabel(r.month)}</td><td>${nombre}(${r.tipo_doc})</td><td>${r.total_docs}</td><td>${fmtCLP(r.total_exento)}</td><td>${fmtCLP(r.total_neto)}</td><td>${fmtCLP(r.total_iva_rec)}</td><td>${fmtCLP(r.total_iva_no_rec)}</td><td>${fmtCLP(r.total_iva_uso_comun)}</td><td style="font-weight:700">${fmtCLP(r.total_total)}</td></tr>`;
+    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#94a3b8">Sin datos para este periodo</td></tr>';
     makeSortable('table-compras-tipo');
   } catch(e) {}
 }
@@ -2390,8 +2396,8 @@ async function loadVentasPorTipo(periodo) {
     const data = await api(`/sii/ventas-por-tipo?periodo=${periodo}`);
     document.querySelector('#table-ventas-tipo tbody').innerHTML = data.map(r => {
       const nombre = DTE[r.tipo_doc] || r.tipo_doc || '—';
-      return `<tr><td>${nombre}(${r.tipo_doc})</td><td>${r.total_docs}</td><td>${fmtCLP(r.total_exento)}</td><td>${fmtCLP(r.total_neto)}</td><td>${fmtCLP(r.total_iva)}</td><td style="font-weight:700">${fmtCLP(r.total_total)}</td></tr>`;
-    }).join('') || '<tr><td colspan="6" style="text-align:center;color:#94a3b8">Sin datos para este periodo</td></tr>';
+      return `<tr><td data-sort="${r.month||''}">${mesLabel(r.month)}</td><td>${nombre}(${r.tipo_doc})</td><td>${r.total_docs}</td><td>${fmtCLP(r.total_exento)}</td><td>${fmtCLP(r.total_neto)}</td><td>${fmtCLP(r.total_iva)}</td><td style="font-weight:700">${fmtCLP(r.total_total)}</td></tr>`;
+    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#94a3b8">Sin datos para este periodo</td></tr>';
     makeSortable('table-ventas-tipo');
   } catch(e) {}
 }
