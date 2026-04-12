@@ -6,7 +6,10 @@ import { pool } from "./db.js";
 // y los puntea en sell_deals_cache para correlacionar con el Observer.
 // ══════════════════════════════════════════════════════════════
 
-const SELL_TOKEN = process.env.ZENDESK_SELL_API_TOKEN || process.env.ZENDESK_API_TOKEN_SELL;
+const SELL_TOKEN =
+  process.env.ZENDESK_SELL_API_TOKEN ||
+  process.env.ZENDESK_API_TOKEN_SELL ||
+  process.env.ZENDESK_API_TOKEN;
 const SELL_BASE = "https://api.getbase.com/v2";
 const PER_PAGE = 100;
 const RATE_DELAY_MS = 120; // ~8 req/s — Sell permite 10 req/s
