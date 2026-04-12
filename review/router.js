@@ -49,6 +49,7 @@ import {
   getBusinessParams,
   updateBusinessParam,
   marketingKPIs,
+  computeBusinessKPIs,
   insertCompras,
   insertVentas,
   getCompras,
@@ -419,6 +420,11 @@ router.get("/marketing/kpis", wrap(async (req, res) => {
 
 router.get("/marketing/params", wrap(async (_req, res) => {
   res.json(await getBusinessParams());
+}));
+
+// Computed KPIs from actual data (boletas + facturas + deals + compras + marketing_costs)
+router.get("/marketing/kpis-computed", wrap(async (_req, res) => {
+  res.json(await computeBusinessKPIs());
 }));
 
 router.put("/marketing/params/:key", wrap(async (req, res) => {
