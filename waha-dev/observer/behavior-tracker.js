@@ -240,7 +240,7 @@ async function trackSalesSignalMetrics(conversationId, message) {
 
 // ── Aggregate metrics (recomputed every 5 messages) ──
 
-async function computeAggregateMetrics(conversationId) {
+export async function computeAggregateMetrics(conversationId) {
   const messages = await db.getConversationMessages(conversationId, 500);
   if (messages.length < 2) return;
 
