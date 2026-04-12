@@ -711,7 +711,9 @@
       <!-- Business params -->
       <div class="chart-box" style="margin-bottom:2rem">
         <h3>Parametros del negocio <a href="#kpi-ltv" style="font-size:.7rem;color:#2563eb">ver LTV</a></h3>
+        <p style="font-size:.7rem;color:#64748b;margin:.2rem 0 .6rem">Los valores <span style="background:#dcfce7;color:#166534;padding:.05rem .3rem;border-radius:3px;font-weight:600">auto</span> se calculan desde boletas + facturas SII + tratos Zendesk (match por RUT) + compras + costos marketing/sueldos. Haz click en <strong>usar</strong> para sobrescribir el valor manual.</p>
         <div id="params-container" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.85rem"></div>
+        <div id="params-meta" style="font-size:.65rem;color:#64748b;margin-top:.6rem;padding-top:.5rem;border-top:1px dashed #e2e8f0"></div>
       </div>
       <!-- Raw costs table -->
       <div class="chart-box" style="margin-bottom:2rem">
@@ -2204,11 +2206,12 @@ function ratingBadgeSimple(val, excellent, good) {
 async function loadMarketing() {
   const fmtCLP = n => n != null ? '$' + Number(n).toLocaleString('es-CL') : '—';
   try {
-    const [kpiData, costsByMonth, allCosts, dealsMonthly] = await Promise.all([
+    const [kpiData, costsByMonth, allCosts, dealsMonthly, computedKPIs] = await Promise.all([
       api('/marketing/kpis'),
       api('/marketing/costs-by-month'),
       api('/marketing/costs'),
       api('/marketing/deals-monthly'),
+      api('/marketing/kpis-computed').catch(() => null),
     ]);
 
     document.getElementById('mkt-loading').style.display = 'none';
@@ -2263,9 +2266,10 @@ async function loadMarketing() {
     window._mktAllCosts = allCosts;
     window._mktParams = params;
 
+    window._mktComputed = computedKPIs;
     renderMarketingCharts(costsByMonth, kpis, dealsMonthly);
     renderMarketingTables(allCosts, kpis, ltv, dealsMonthly, params);
-    renderBusinessParams(params);
+    renderBusinessParams(params, computedKPIs);
     setupCostForm();
     loadSIIData();
     loadMetaData();
@@ -2342,22 +2346,45 @@ function renderMarketingTables(allCosts, kpis, ltv, dealsMonthly, params) {
   makeSortable('table-mkt-kpis');
 }
 
-function renderBusinessParams(params) {
+function renderBusinessParams(params, computed) {
   const defs = [
-    {key:'avg_revenue_per_patient',label:'Ingreso por paciente (CLP)',link:'#kpi-ltv'},
-    {key:'gross_margin_pct',label:'Margen bruto (%)',link:'#kpi-ltv'},
-    {key:'monthly_churn_pct',label:'Churn mensual (%)',link:'#kpi-churn'},
-    {key:'avg_surgery_price',label:'Precio cirugia (CLP)',link:'#kpi-cac'},
-    {key:'revenue_growth_pct',label:'Crecimiento ingresos (%)',link:'#kpi-rule40'},
-    {key:'profit_margin_pct',label:'Margen ganancia neta (%)',link:'#kpi-rule40'},
+    {key:'avg_revenue_per_patient',label:'Ingreso por paciente (CLP)',link:'#kpi-ltv',fmt:'clp'},
+    {key:'gross_margin_pct',label:'Margen bruto (%)',link:'#kpi-ltv',fmt:'pct'},
+    {key:'monthly_churn_pct',label:'Churn mensual (%)',link:'#kpi-churn',fmt:'pct'},
+    {key:'avg_surgery_price',label:'Precio cirugia (CLP)',link:'#kpi-cac',fmt:'clp'},
+    {key:'revenue_growth_pct',label:'Crecimiento ingresos (%)',link:'#kpi-rule40',fmt:'pct'},
+    {key:'profit_margin_pct',label:'Margen ganancia neta (%)',link:'#kpi-rule40',fmt:'pct'},
   ];
+  const fmtVal = (v, t) => v == null ? '—' : (t === 'clp' ? '$' + Number(v).toLocaleString('es-CL') : v + '%');
   document.getElementById('params-container').innerHTML = defs.map(p => {
     const val = params[p.key] || 0;
+    const auto = computed ? computed[p.key] : null;
+    const autoStr = auto != null ? fmtVal(auto, p.fmt) : null;
+    const autoBadge = autoStr != null
+      ? `<div style="font-size:.65rem;margin-top:.25rem;display:flex;align-items:center;gap:.3rem">
+          <span style="background:#dcfce7;color:#166534;padding:.1rem .35rem;border-radius:3px;font-weight:600">auto</span>
+          <span style="color:#166534;font-weight:600">${autoStr}</span>
+          <button onclick="applyComputed('${p.key}',${auto})" title="Usar valor auto" style="margin-left:auto;background:#2563eb;color:#fff;border:none;border-radius:3px;padding:.1rem .35rem;cursor:pointer;font-size:.65rem">usar</button>
+        </div>`
+      : `<div style="font-size:.65rem;margin-top:.25rem;color:#94a3b8">sin datos</div>`;
     return `<div style="background:#f8fafc;border-radius:8px;padding:.6rem;border:1px solid #e2e8f0">
       <label style="font-size:.7rem;color:#64748b;display:block"><a href="${p.link}" style="color:#2563eb;text-decoration:none">${p.label}</a></label>
       <input type="number" value="${val}" data-param-key="${p.key}" style="width:130px;padding:.3rem;border:1px solid #cbd5e1;border-radius:4px;font-size:.85rem" onchange="updateParam('${p.key}',this.value)">
+      ${autoBadge}
     </div>`;
   }).join('');
+  if (computed && computed.meta) {
+    const m = computed.meta;
+    const metaEl = document.getElementById('params-meta');
+    if (metaEl) {
+      metaEl.innerHTML = `Ventana: últimos 12m · Pacientes: ${m.pacientes_12m||0} · Ingresos: $${Number(m.ingresos_12m||0).toLocaleString('es-CL')} · Cirugías match: ${m.cirugias_matched||0} · Opex: $${Number(m.opex_12m||0).toLocaleString('es-CL')}`;
+    }
+  }
+}
+
+async function applyComputed(key, value) {
+  await fetch(API_BASE+'/marketing/params/'+key,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:parseFloat(value)})});
+  window._marketingLoaded = false; loadMarketing();
 }
 
 function setupCostForm() {

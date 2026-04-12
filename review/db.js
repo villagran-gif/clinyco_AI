@@ -1114,7 +1114,7 @@ export async function marketingCostsByMonth(year = null) {
             sum(amount_clp) FILTER (WHERE source = 'other')::int AS other,
             sum(amount_clp)::int AS total
      FROM marketing_costs ${filter}
-     GROUP BY month ORDER BY month DESC`
+     GROUP BY month ORDER BY month ASC`
   );
   return rows;
 }
@@ -1145,7 +1145,7 @@ export async function dealsMonthlyForMarketing(year = null) {
               'CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO'
             ))::int AS exitosos
      FROM deals ${filter}
-     GROUP BY 1 ORDER BY 1 DESC`
+     GROUP BY 1 ORDER BY 1 ASC`
   );
   return rows;
 }
@@ -1188,9 +1188,155 @@ export async function marketingKPIs(year = null) {
        FROM deals GROUP BY 1
      ) d ON m.month = d.month
      ${filter}
-     ORDER BY m.month DESC`
+     ORDER BY m.month ASC`
   );
   return rows;
+}
+
+/**
+ * Compute all 6 business KPIs from actual data (boletas + facturas + deals + compras + marketing_costs).
+ * Window: últimos 12 meses (crecimiento: 12m actual vs 12m anteriores).
+ * RUT matching: normaliza a solo dígitos+K uppercase para unir boletas/facturas con deals.
+ */
+export async function computeBusinessKPIs() {
+  const pool = getPool();
+  const NR = `regexp_replace(upper(coalesce(rut_receptor,'')), '[^0-9K]', '', 'g')`;
+  const NC = `regexp_replace(upper(coalesce(rut_cliente,'')),  '[^0-9K]', '', 'g')`;
+  const ND = `regexp_replace(upper(coalesce(rut_normalizado,'')), '[^0-9K]', '', 'g')`;
+  const CLOSED = `pipeline_phase IN ('CERRADO OPERADO','CERRADO AGENDADO','CERRADO INSTALADO')`;
+
+  // 1. Ingreso por paciente — total ingresos 12m / pacientes únicos (por RUT)
+  const { rows: arpu } = await pool.query(`
+    WITH ventas AS (
+      SELECT ${NR} AS rut, monto_total FROM sii_ventas_boletas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months') AND monto_total > 0
+      UNION ALL
+      SELECT ${NC} AS rut, monto_total FROM sii_ventas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months') AND monto_total > 0
+    )
+    SELECT COALESCE(round(sum(monto_total)::numeric / NULLIF(count(DISTINCT rut), 0)), 0)::bigint AS avg_revenue_per_patient,
+           count(DISTINCT rut)::int AS pacientes,
+           COALESCE(sum(monto_total),0)::bigint AS ingresos_12m
+    FROM ventas WHERE rut <> ''
+  `);
+
+  // 2. Margen bruto % — (Ventas netas − Compras netas) / Ventas × 100
+  const { rows: gm } = await pool.query(`
+    WITH v AS (
+      SELECT COALESCE(sum(monto_neto),0) AS ventas FROM (
+        SELECT monto_neto FROM sii_ventas_boletas WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')
+        UNION ALL
+        SELECT monto_neto FROM sii_ventas         WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')
+      ) x
+    ),
+    c AS (SELECT COALESCE(sum(monto_neto),0) AS compras FROM sii_compras
+          WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months'))
+    SELECT CASE WHEN v.ventas > 0 THEN round(((v.ventas - c.compras)::numeric / v.ventas * 100), 1) ELSE 0 END AS gross_margin_pct,
+           v.ventas::bigint AS ventas_netas,
+           c.compras::bigint AS compras_netas
+    FROM v, c
+  `);
+
+  // 3. Churn mensual % — % pacientes que solo aparecen en 1 mes (no recurrentes) en últimos 12m
+  const { rows: ch } = await pool.query(`
+    WITH pac AS (
+      SELECT ${NR} AS rut, date_trunc('month', fecha_docto)::date AS mes FROM sii_ventas_boletas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')
+      UNION
+      SELECT ${NC} AS rut, date_trunc('month', fecha_docto)::date AS mes FROM sii_ventas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')
+    ),
+    counts AS (
+      SELECT rut, count(DISTINCT mes) AS meses FROM pac WHERE rut <> '' GROUP BY rut
+    )
+    SELECT CASE WHEN count(*) > 0
+                THEN round(100.0 * count(*) FILTER (WHERE meses = 1)::numeric / count(*), 1)
+                ELSE 0 END AS monthly_churn_pct,
+           count(*)::int AS total,
+           count(*) FILTER (WHERE meses = 1)::int AS unicos
+    FROM counts
+  `);
+
+  // 4. Precio cirugía — promedio boleta/factura cuyo RUT matches deal cerrado con cirugia
+  const { rows: cir } = await pool.query(`
+    WITH ruts_cirugia AS (
+      SELECT DISTINCT ${ND} AS rut FROM deals
+      WHERE ${CLOSED} AND cirugia IS NOT NULL AND cirugia <> ''
+    ),
+    ventas AS (
+      SELECT ${NR} AS rut, monto_total FROM sii_ventas_boletas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '24 months') AND monto_total > 0
+      UNION ALL
+      SELECT ${NC} AS rut, monto_total FROM sii_ventas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '24 months') AND monto_total > 0
+    )
+    SELECT COALESCE(round(avg(v.monto_total)), 0)::bigint AS avg_surgery_price,
+           count(*)::int AS cirugias_matched
+    FROM ventas v JOIN ruts_cirugia rc ON v.rut = rc.rut
+    WHERE v.rut <> ''
+  `);
+
+  // 5. Crecimiento ingresos % — 12m actual vs 12m anteriores (YoY)
+  const { rows: gr } = await pool.query(`
+    WITH ventas AS (
+      SELECT fecha_docto, monto_total FROM sii_ventas_boletas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '24 months')
+      UNION ALL
+      SELECT fecha_docto, monto_total FROM sii_ventas
+      WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '24 months')
+    )
+    SELECT
+      COALESCE(sum(monto_total) FILTER (WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')), 0)::bigint AS actual,
+      COALESCE(sum(monto_total) FILTER (WHERE fecha_docto <  (CURRENT_DATE - INTERVAL '12 months')
+                                          AND fecha_docto >= (CURRENT_DATE - INTERVAL '24 months')), 0)::bigint AS anterior
+    FROM ventas
+  `);
+  const actual12   = Number(gr[0].actual   || 0);
+  const anterior12 = Number(gr[0].anterior || 0);
+  const revenue_growth_pct = anterior12 > 0
+    ? Math.round((actual12 - anterior12) / anterior12 * 1000) / 10
+    : 0;
+
+  // 6. Margen ganancia neta % — (Ventas − Compras − Marketing − Sueldos) / Ventas × 100
+  const { rows: np } = await pool.query(`
+    WITH v AS (
+      SELECT COALESCE(sum(monto_neto),0) AS ventas FROM (
+        SELECT monto_neto FROM sii_ventas_boletas WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')
+        UNION ALL
+        SELECT monto_neto FROM sii_ventas         WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')
+      ) x
+    ),
+    c AS (SELECT COALESCE(sum(monto_neto),0) AS compras FROM sii_compras
+          WHERE fecha_docto >= (CURRENT_DATE - INTERVAL '12 months')),
+    m AS (SELECT COALESCE(sum(amount_clp),0) AS opex FROM marketing_costs
+          WHERE month >= date_trunc('month', CURRENT_DATE - INTERVAL '12 months')::date)
+    SELECT CASE WHEN v.ventas > 0
+                THEN round(((v.ventas - c.compras - m.opex)::numeric / v.ventas * 100), 1)
+                ELSE 0 END AS profit_margin_pct,
+           m.opex::bigint AS opex
+    FROM v, c, m
+  `);
+
+  return {
+    avg_revenue_per_patient: Number(arpu[0].avg_revenue_per_patient),
+    gross_margin_pct:        Number(gm[0].gross_margin_pct),
+    monthly_churn_pct:       Number(ch[0].monthly_churn_pct),
+    avg_surgery_price:       Number(cir[0].avg_surgery_price),
+    revenue_growth_pct,
+    profit_margin_pct:       Number(np[0].profit_margin_pct),
+    meta: {
+      window: '12m',
+      pacientes_12m:      arpu[0].pacientes,
+      ingresos_12m:       Number(arpu[0].ingresos_12m),
+      ventas_netas_12m:   Number(gm[0].ventas_netas),
+      compras_netas_12m:  Number(gm[0].compras_netas),
+      churn_total:        ch[0].total,
+      churn_no_recur:     ch[0].unicos,
+      cirugias_matched:   cir[0].cirugias_matched,
+      ingresos_12m_prev:  anterior12,
+      opex_12m:           Number(np[0].opex),
+    }
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════
