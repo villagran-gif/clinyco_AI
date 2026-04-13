@@ -52,7 +52,17 @@ const OUTCOME_SCORES = {
   },
 };
 
-function inferPipelineKey(pipelineName) {
+function inferPipelineKey(pipelineId, pipelineName) {
+  // Mapping autoritativo por ID (estable ante renames)
+  const ID_MAP = {
+    1290779: "bariatrica", // Pipeline Cirugía Bariátricas
+    4823817: "balon",      // Pipeline Balones
+    4959507: "plastica",   // Pipeline Cirugía Plastica
+    5049979: "general",    // Pipeline Cirugía General
+  };
+  if (pipelineId != null && ID_MAP[pipelineId]) return ID_MAP[pipelineId];
+
+  // Fallback por nombre
   const p = String(pipelineName || "").toLowerCase();
   if (p.includes("bari") || p.includes("⚖")) return "bariatrica";
   if (p.includes("bal") || p.includes("🎈")) return "balon";
@@ -218,7 +228,7 @@ async function main() {
 
     const stageName = stage?.name || "";
     const pipelineName = pipeline?.name || "";
-    const pipelineKey = inferPipelineKey(pipelineName);
+    const pipelineKey = inferPipelineKey(pipelineId, pipelineName);
     const outcomeScore = getOutcomeScore(pipelineKey, stageName);
     const category = stageCategory(stageName, outcomeScore);
     const isClosedWon = category === "won";
