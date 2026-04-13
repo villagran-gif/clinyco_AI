@@ -19,50 +19,16 @@ if (!SELL_TOKEN) {
   process.exit(1);
 }
 
-// ── Outcome scoring (copia del db.js principal) ──
-const OUTCOME_SCORES = {
-  bariatrica: {
-    "CERRADO OPERADO": 100, "CERRADO EN RECUPERACION": 90,
-    "CERRADO AGENDADO": 80, "CERRADO PRESUPUESTO APROBADO": 70,
-    "CERRADO EVALUADO": 60, "CERRADO PRESUPUESTADO": 50,
-    "EXAMENES ENVIADOS": 40, "EN EVALUACION": 30,
-    "CONTACTADO": 20, "CANDIDATOS": 10,
-    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0,
-  },
-  balon: {
-    "CERRADO INSTALADO": 100, "CERRADO AGENDADO": 80,
-    "CERRADO PRESUPUESTO APROBADO": 70, "CERRADO EVALUADO": 60,
-    "CERRADO PRESUPUESTADO": 50, "EXAMENES ENVIADOS": 40,
-    "EN EVALUACION": 30, "CONTACTADO": 20, "CANDIDATOS": 10,
-    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0,
-  },
-  plastica: {
-    "CERRADO OPERADO": 100, "CERRADO AGENDADO": 80,
-    "CERRADO PRESUPUESTO APROBADO": 70, "CERRADO EVALUADO": 60,
-    "CERRADO PRESUPUESTADO": 50, "EXAMENES ENVIADOS": 40,
-    "EN EVALUACION": 30, "CONTACTADO": 20, "CANDIDATO": 10,
-    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0,
-  },
-  general: {
-    "CERRADO OPERADO": 100, "CERRADO AGENDADO": 80,
-    "CERRADO PRESUPUESTO APROBADO": 70, "CERRADO EVALUADO": 60,
-    "CERRADO PRESUPUESTADO": 50, "EXAMENES ENVIADOS": 40,
-    "EN EVALUACION": 30, "CONTACTADO": 20, "CANDIDATOS": 10,
-    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0,
-  },
+// ── Pipeline ID → internal key (autoritativo) ──
+const PIPELINE_ID_MAP = {
+  1290779: "bariatrica", // Pipeline Cirugía Bariátricas
+  4823817: "balon",      // Pipeline Balones
+  4959507: "plastica",   // Pipeline Cirugía Plástica
+  5049979: "general",    // Pipeline Cirugía General
 };
 
 function inferPipelineKey(pipelineId, pipelineName) {
-  // Mapping autoritativo por ID (estable ante renames)
-  const ID_MAP = {
-    1290779: "bariatrica", // Pipeline Cirugía Bariátricas
-    4823817: "balon",      // Pipeline Balones
-    4959507: "plastica",   // Pipeline Cirugía Plastica
-    5049979: "general",    // Pipeline Cirugía General
-  };
-  if (pipelineId != null && ID_MAP[pipelineId]) return ID_MAP[pipelineId];
-
-  // Fallback por nombre
+  if (pipelineId != null && PIPELINE_ID_MAP[pipelineId]) return PIPELINE_ID_MAP[pipelineId];
   const p = String(pipelineName || "").toLowerCase();
   if (p.includes("bari") || p.includes("⚖")) return "bariatrica";
   if (p.includes("bal") || p.includes("🎈")) return "balon";
@@ -70,16 +36,21 @@ function inferPipelineKey(pipelineId, pipelineName) {
   return "general";
 }
 
-function getOutcomeScore(pipelineKey, phase) {
-  const map = OUTCOME_SCORES[pipelineKey] || OUTCOME_SCORES.general;
-  return map[String(phase || "").toUpperCase()] ?? null;
+// ── Sell stage.category → nuestro stage_category ──
+// Fuente autoritativa: Sell clasifica cada stage en uno de:
+//   incoming | in_progress | won | lost | unqualified
+function mapStageCategory(sellCategory) {
+  const c = String(sellCategory || "").toLowerCase();
+  if (c === "won") return "won";
+  if (c === "lost" || c === "unqualified") return "lost";
+  return "open"; // incoming, in_progress, o desconocido
 }
 
-function stageCategory(stageName, outcomeScore) {
-  const up = String(stageName || "").toUpperCase();
-  if (up.startsWith("CERRADO") && outcomeScore != null && outcomeScore >= 50) return "won";
-  if (["SIN RESPUESTA", "SUSPENDIDO", "DESCALIFICADO"].includes(up)) return "lost";
-  return "open";
+// outcome_score = 100 si won, 0 si lost, likelihood del stage si open.
+function computeOutcomeScore(ourCategory, stageLikelihood) {
+  if (ourCategory === "won") return 100;
+  if (ourCategory === "lost") return 0;
+  return stageLikelihood != null ? Number(stageLikelihood) : null;
 }
 
 // ── Teléfono normalizer: deja solo dígitos, asegura prefijo 56 para chilenos ──
@@ -229,8 +200,8 @@ async function main() {
     const stageName = stage?.name || "";
     const pipelineName = pipeline?.name || "";
     const pipelineKey = inferPipelineKey(pipelineId, pipelineName);
-    const outcomeScore = getOutcomeScore(pipelineKey, stageName);
-    const category = stageCategory(stageName, outcomeScore);
+    const category = mapStageCategory(stage?.category);
+    const outcomeScore = computeOutcomeScore(category, stage?.likelihood);
     const isClosedWon = category === "won";
     if (isClosedWon) won++;
 
