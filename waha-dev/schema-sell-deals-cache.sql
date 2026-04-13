@@ -61,6 +61,14 @@ CREATE INDEX IF NOT EXISTS sell_deals_cache_pipeline_id_idx
 CREATE INDEX IF NOT EXISTS sell_deals_cache_stage_id_idx
   ON sell_deals_cache (stage_id);
 
+-- ── Migración idempotente: agregar columnas de colaborador si no existen ──
+-- (En deploys nuevos las columnas ya vienen del CREATE TABLE, pero en deploys
+--  existentes el CREATE TABLE IF NOT EXISTS es no-op, así que necesitamos ALTERs.)
+ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_1 text;
+ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_2 text;
+ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_3 text;
+
+-- Los índices van DESPUÉS de los ALTER para que las columnas existan.
 CREATE INDEX IF NOT EXISTS sell_deals_cache_colab1_idx
   ON sell_deals_cache (lower(colaborador_1))
   WHERE colaborador_1 IS NOT NULL;
@@ -72,8 +80,3 @@ CREATE INDEX IF NOT EXISTS sell_deals_cache_colab2_idx
 CREATE INDEX IF NOT EXISTS sell_deals_cache_colab3_idx
   ON sell_deals_cache (lower(colaborador_3))
   WHERE colaborador_3 IS NOT NULL;
-
--- Migración idempotente para agregar columnas en instalaciones existentes
-ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_1 text;
-ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_2 text;
-ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_3 text;
