@@ -14,11 +14,13 @@ CREATE TABLE IF NOT EXISTS sell_deals_cache (
   contact_email        text,
 
   deal_name            text,
+  stage_id             bigint,         -- ID único de stage en Sell (estable ante renames)
   stage_name           text,           -- "CERRADO OPERADO", "CONTACTADO", etc.
   stage_category       text,           -- 'won' | 'lost' | 'open' (derivado)
   is_closed_won        boolean,        -- stage empieza con "CERRADO" y score >= 50
   outcome_score        integer,        -- 0-100 via getOutcomeScore()
 
+  pipeline_id          bigint,         -- ID único de pipeline en Sell
   pipeline_name        text,           -- "Bariátrica", "Balón", "Plástica"
   pipeline_key         text,           -- 'bariatrica' | 'balon' | 'plastica' | 'general'
 
@@ -45,3 +47,9 @@ CREATE INDEX IF NOT EXISTS sell_deals_cache_stage_idx
 
 CREATE INDEX IF NOT EXISTS sell_deals_cache_updated_idx
   ON sell_deals_cache (updated_at_sell DESC);
+
+CREATE INDEX IF NOT EXISTS sell_deals_cache_pipeline_id_idx
+  ON sell_deals_cache (pipeline_id);
+
+CREATE INDEX IF NOT EXISTS sell_deals_cache_stage_id_idx
+  ON sell_deals_cache (stage_id);

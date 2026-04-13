@@ -212,11 +212,11 @@ async function main() {
     await pool.query(
       `INSERT INTO sell_deals_cache (
          deal_id, contact_id, contact_name, contact_phone, contact_phone_raw, contact_email,
-         deal_name, stage_name, stage_category, is_closed_won, outcome_score,
-         pipeline_name, pipeline_key, value, currency,
+         deal_name, stage_id, stage_name, stage_category, is_closed_won, outcome_score,
+         pipeline_id, pipeline_name, pipeline_key, value, currency,
          owner_id, owner_name, created_at_sell, updated_at_sell, last_synced_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now()
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, now()
        )
        ON CONFLICT (deal_id) DO UPDATE SET
          contact_id=EXCLUDED.contact_id,
@@ -225,10 +225,12 @@ async function main() {
          contact_phone_raw=EXCLUDED.contact_phone_raw,
          contact_email=EXCLUDED.contact_email,
          deal_name=EXCLUDED.deal_name,
+         stage_id=EXCLUDED.stage_id,
          stage_name=EXCLUDED.stage_name,
          stage_category=EXCLUDED.stage_category,
          is_closed_won=EXCLUDED.is_closed_won,
          outcome_score=EXCLUDED.outcome_score,
+         pipeline_id=EXCLUDED.pipeline_id,
          pipeline_name=EXCLUDED.pipeline_name,
          pipeline_key=EXCLUDED.pipeline_key,
          value=EXCLUDED.value,
@@ -246,10 +248,12 @@ async function main() {
         phoneRaw,
         contact?.email || null,
         deal.name || null,
+        deal.stage_id || null,
         stageName,
         category,
         isClosedWon,
         outcomeScore,
+        deal.pipeline_id || null,
         pipelineName,
         pipelineKey,
         deal.value == null ? null : Number(deal.value),
