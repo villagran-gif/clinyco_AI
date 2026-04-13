@@ -28,7 +28,14 @@ CREATE TABLE IF NOT EXISTS sell_deals_cache (
   currency             text,
 
   owner_id             bigint,
-  owner_name           text,           -- nombre del comercial dueño del deal
+  owner_name           text,           -- nombre del comercial dueño del deal (NO sirve para atribución)
+
+  -- Atribución real del negocio (Sell custom_fields "Colaborador N (PIPELINE)")
+  -- Los nombres son strings libres (ej: "Gabriela", "Danitza", "Carolin Cornejo")
+  -- Se matchean contra agent_waha_sessions.agent_name por nombre normalizado.
+  colaborador_1        text,           -- CAPTACIÓN — primer contacto con el lead
+  colaborador_2        text,           -- SEGUIMIENTO — KPI real de venta (nurturing + conversión)
+  colaborador_3        text,           -- CIERRE — operacional (puede ser el mismo del 2)
 
   created_at_sell      timestamptz,
   updated_at_sell      timestamptz,
@@ -53,3 +60,20 @@ CREATE INDEX IF NOT EXISTS sell_deals_cache_pipeline_id_idx
 
 CREATE INDEX IF NOT EXISTS sell_deals_cache_stage_id_idx
   ON sell_deals_cache (stage_id);
+
+CREATE INDEX IF NOT EXISTS sell_deals_cache_colab1_idx
+  ON sell_deals_cache (lower(colaborador_1))
+  WHERE colaborador_1 IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS sell_deals_cache_colab2_idx
+  ON sell_deals_cache (lower(colaborador_2))
+  WHERE colaborador_2 IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS sell_deals_cache_colab3_idx
+  ON sell_deals_cache (lower(colaborador_3))
+  WHERE colaborador_3 IS NOT NULL;
+
+-- Migración idempotente para agregar columnas en instalaciones existentes
+ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_1 text;
+ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_2 text;
+ALTER TABLE sell_deals_cache ADD COLUMN IF NOT EXISTS colaborador_3 text;

@@ -53,6 +53,28 @@ function computeOutcomeScore(ourCategory, stageLikelihood) {
   return stageLikelihood != null ? Number(stageLikelihood) : null;
 }
 
+// ── Colaboradores por pipeline ──
+// Los nombres de los custom_fields varían entre pipelines. Balón incluso
+// tiene un punto raro ("Colaborador 1. (BALON)"). Mapeo explícito para robustez.
+const COLAB_KEYS = {
+  bariatrica: ["Colaborador 1 (BAR)", "Colaborador 2 (BAR)", "Colaborador 3 (BAR)"],
+  plastica:   ["Colaborador 1 (PLASTICA)", "Colaborador 2 (PLASTICA)", null],
+  general:    ["Colaborador 1 (GENERAL)", "Colaborador 2 (GENERAL)", null],
+  balon:      ["Colaborador 1. (BALON)", "Colaborador 2 (BALON)", null],
+};
+
+function extractColaboradores(customFields, pipelineKey) {
+  const keys = COLAB_KEYS[pipelineKey] || [null, null, null];
+  const pick = (k) => {
+    if (!k || !customFields) return null;
+    const v = customFields[k];
+    if (v == null) return null;
+    const s = String(v).trim();
+    return s ? s : null;
+  };
+  return { c1: pick(keys[0]), c2: pick(keys[1]), c3: pick(keys[2]) };
+}
+
 // ── Teléfono normalizer: deja solo dígitos, asegura prefijo 56 para chilenos ──
 function normalizePhone(raw) {
   if (!raw) return null;
@@ -209,14 +231,18 @@ async function main() {
     const phoneRaw = contact?.mobile || contact?.phone || null;
     const phone = normalizePhone(phoneRaw);
 
+    // Colaboradores 1/2/3 (captación / seguimiento / cierre) según pipeline_key
+    const { c1, c2, c3 } = extractColaboradores(deal.custom_fields, pipelineKey);
+
     await pool.query(
       `INSERT INTO sell_deals_cache (
          deal_id, contact_id, contact_name, contact_phone, contact_phone_raw, contact_email,
          deal_name, stage_id, stage_name, stage_category, is_closed_won, outcome_score,
          pipeline_id, pipeline_name, pipeline_key, value, currency,
-         owner_id, owner_name, created_at_sell, updated_at_sell, last_synced_at
+         owner_id, owner_name, colaborador_1, colaborador_2, colaborador_3,
+         created_at_sell, updated_at_sell, last_synced_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, now()
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24, now()
        )
        ON CONFLICT (deal_id) DO UPDATE SET
          contact_id=EXCLUDED.contact_id,
@@ -237,6 +263,9 @@ async function main() {
          currency=EXCLUDED.currency,
          owner_id=EXCLUDED.owner_id,
          owner_name=EXCLUDED.owner_name,
+         colaborador_1=EXCLUDED.colaborador_1,
+         colaborador_2=EXCLUDED.colaborador_2,
+         colaborador_3=EXCLUDED.colaborador_3,
          created_at_sell=EXCLUDED.created_at_sell,
          updated_at_sell=EXCLUDED.updated_at_sell,
          last_synced_at=now()`,
@@ -260,6 +289,9 @@ async function main() {
         deal.currency || null,
         deal.owner_id || null,
         owner?.name || null,
+        c1,
+        c2,
+        c3,
         deal.created_at || null,
         deal.updated_at || null,
       ]
@@ -275,11 +307,15 @@ async function main() {
       count(*) FILTER (WHERE is_closed_won) AS won,
       count(*) FILTER (WHERE stage_category = 'lost') AS lost,
       count(*) FILTER (WHERE stage_category = 'open') AS open,
-      count(DISTINCT contact_phone) FILTER (WHERE contact_phone IS NOT NULL) AS unique_phones
+      count(DISTINCT contact_phone) FILTER (WHERE contact_phone IS NOT NULL) AS unique_phones,
+      count(*) FILTER (WHERE colaborador_1 IS NOT NULL) AS with_c1,
+      count(*) FILTER (WHERE colaborador_2 IS NOT NULL) AS with_c2,
+      count(*) FILTER (WHERE colaborador_3 IS NOT NULL) AS with_c3
     FROM sell_deals_cache
   `);
   const s = rows[0];
   console.log(`[sync-sell] Listo: ${upserted} deals synced, ${won} won, ${s.lost} lost, ${s.open} open, ${s.unique_phones} phones únicos`);
+  console.log(`[sync-sell] Colaboradores: c1(captación)=${s.with_c1}  c2(seguimiento)=${s.with_c2}  c3(cierre)=${s.with_c3}`);
   await pool.end();
 }
 
