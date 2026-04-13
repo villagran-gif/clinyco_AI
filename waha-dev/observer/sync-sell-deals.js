@@ -188,12 +188,31 @@ async function main() {
   const contactMap = await fetchContactsByIds(contactIds);
   console.log(`[sync-sell]   contactos únicos=${contactIds.length} resueltos=${contactMap.size}`);
 
+  // Print one deal sample so we can see the custom_fields shape
+  if (deals.length) {
+    const sample = deals.find((d) => d.custom_fields && Object.keys(d.custom_fields).length) || deals[0];
+    console.log("[sync-sell] === sample deal shape ===");
+    console.log(JSON.stringify({
+      id: sample.id,
+      name: sample.name,
+      stage_id: sample.stage_id,
+      pipeline_id: sample.pipeline_id,
+      owner_id: sample.owner_id,
+      custom_fields: sample.custom_fields,
+      // primeras 3 keys del resto para ver estructura
+      _keys: Object.keys(sample),
+    }, null, 2));
+    console.log("[sync-sell] === end sample ===");
+  }
+
   console.log("[sync-sell] 4/5 — upsert a sell_deals_cache");
   let upserted = 0;
   let won = 0;
   for (const deal of deals) {
     const stage = stageMap.get(deal.stage_id);
-    const pipeline = pipelineMap.get(deal.pipeline_id);
+    // Pipeline_id comes from the stage (unique per pipeline), not from the deal payload
+    const pipelineId = stage?.pipeline_id ?? deal.pipeline_id ?? null;
+    const pipeline = pipelineId ? pipelineMap.get(pipelineId) : null;
     const contact = contactMap.get(deal.contact_id);
     const owner = userMap.get(deal.owner_id);
 
@@ -253,7 +272,7 @@ async function main() {
         category,
         isClosedWon,
         outcomeScore,
-        deal.pipeline_id || null,
+        pipelineId,
         pipelineName,
         pipelineKey,
         deal.value == null ? null : Number(deal.value),
