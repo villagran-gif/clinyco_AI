@@ -75,7 +75,8 @@ function extractColaboradores(customFields, pipelineKey) {
   return { c1: pick(keys[0]), c2: pick(keys[1]), c3: pick(keys[2]) };
 }
 
-// ── Teléfono normalizer: deja solo dígitos, asegura prefijo 56 para chilenos ──
+// ── Teléfono normalizer: E.164 canónico con prefijo '+' ──
+// Compatible con agent_direct_conversations.client_phone (que viene con '+').
 function normalizePhone(raw) {
   if (!raw) return null;
   let digits = String(raw).replace(/[^\d]/g, "");
@@ -86,7 +87,7 @@ function normalizePhone(raw) {
   if (digits.length === 9 && digits.startsWith("9")) digits = "56" + digits;
   // Some landline: 8 digits → prepend 562
   if (digits.length === 8) digits = "562" + digits;
-  return digits;
+  return "+" + digits;
 }
 
 async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
