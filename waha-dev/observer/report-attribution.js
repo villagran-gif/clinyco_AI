@@ -170,116 +170,139 @@ async function main() {
   //    y MQS de agent_direct_messages (solo sobre convs donde son el c2 del deal)
   // ─────────────────────────────────────────────────────────────────
   console.log("## SEGUIMIENTO × WAHA — outcomes + behavior (solo agentes con sesión activa)\n");
+  console.log("  Dos vistas por agente:");
+  console.log("    (A) TODAS sus convs WAHA con algún deal en Sell (regardless de rol)");
+  console.log("    (B) SOLO convs donde el agente es c2 del deal (más precisa pero N chico)\n");
 
   for (const b of seguimiento) {
     if (!b.matched) continue;
-    const sessionName = b.display; // b.key actually holds session_name when matched
     const agent = wahaAgents.find((a) => a.agent_name === b.display);
     if (!agent) continue;
 
-    // Todas las convs de este agente cuyo contact_phone matchea un deal donde
-    // el agente es colaborador_2. Así filtramos ruido (leads de otros c2).
-    const attribQ = await pool.query(`
-      WITH my_c2_deals AS (
-        SELECT contact_phone
-        FROM sell_deals_cache
-        WHERE colaborador_2 IS NOT NULL
-          AND (
-            lower(unaccent(colaborador_2)) = lower(unaccent($2))
-            OR lower(unaccent(colaborador_2)) = split_part(lower(unaccent($2)), ' ', 1)
-            OR split_part(lower(unaccent(colaborador_2)), ' ', 1) = split_part(lower(unaccent($2)), ' ', 1)
-          )
-          AND contact_phone IS NOT NULL
-      )
-      SELECT
-        count(DISTINCT adc.id) AS convs,
-        count(DISTINCT adc.id) FILTER (WHERE sdc.is_closed_won) AS convs_won,
-        count(DISTINCT adc.id) FILTER (WHERE sdc.stage_category = 'lost') AS convs_lost,
-        count(adm.id) FILTER (WHERE adm.direction = 'agent_to_client') AS agent_msgs,
-        avg(adm.mqs_composite) FILTER (WHERE adm.direction = 'agent_to_client') AS mqs,
-        avg(char_length(adm.body)) FILTER (WHERE adm.direction = 'agent_to_client') AS msg_len,
-        count(abm.id) FILTER (WHERE abm.metric_type = 'buying_signal') AS buying,
-        count(abm.id) FILTER (WHERE abm.metric_type = 'commitment_signal') AS commit,
-        count(abm.id) FILTER (WHERE abm.metric_type = 'objection_signal') AS objection
-      FROM agent_direct_conversations adc
-      JOIN my_c2_deals mcd ON mcd.contact_phone = adc.client_phone
-      JOIN sell_deals_cache sdc ON sdc.contact_phone = adc.client_phone
-      LEFT JOIN agent_direct_messages adm ON adm.conversation_id = adc.id
-      LEFT JOIN agent_behavior_metrics abm ON abm.conversation_id = adc.id
-      WHERE adc.session_name = $1
-    `, [agent.session_name, agent.agent_name]).catch(async (err) => {
-      // Si unaccent no está instalado en Render, fallback sin unaccent
-      if (!/unaccent/i.test(err.message)) throw err;
-      return pool.query(`
-        WITH my_c2_deals AS (
-          SELECT contact_phone FROM sell_deals_cache
-          WHERE colaborador_2 IS NOT NULL
-            AND (lower(colaborador_2) = lower($2)
-              OR split_part(lower(colaborador_2), ' ', 1) = split_part(lower($2), ' ', 1))
-            AND contact_phone IS NOT NULL
-        )
+    // Helper: stats de un SET de conversation_ids, sin join multiplicador
+    async function statsForConvs(convIds) {
+      if (!convIds.length) return { agent_msgs: 0, mqs: null, msg_len: null, buying: 0, commit: 0, objection: 0 };
+      const msg = await pool.query(`
         SELECT
-          count(DISTINCT adc.id) AS convs,
-          count(DISTINCT adc.id) FILTER (WHERE sdc.is_closed_won) AS convs_won,
-          count(DISTINCT adc.id) FILTER (WHERE sdc.stage_category = 'lost') AS convs_lost,
-          count(adm.id) FILTER (WHERE adm.direction = 'agent_to_client') AS agent_msgs,
-          avg(adm.mqs_composite) FILTER (WHERE adm.direction = 'agent_to_client') AS mqs,
-          avg(char_length(adm.body)) FILTER (WHERE adm.direction = 'agent_to_client') AS msg_len,
-          count(abm.id) FILTER (WHERE abm.metric_type = 'buying_signal') AS buying,
-          count(abm.id) FILTER (WHERE abm.metric_type = 'commitment_signal') AS commit,
-          count(abm.id) FILTER (WHERE abm.metric_type = 'objection_signal') AS objection
-        FROM agent_direct_conversations adc
-        JOIN my_c2_deals mcd ON mcd.contact_phone = adc.client_phone
-        JOIN sell_deals_cache sdc ON sdc.contact_phone = adc.client_phone
-        LEFT JOIN agent_direct_messages adm ON adm.conversation_id = adc.id
-        LEFT JOIN agent_behavior_metrics abm ON abm.conversation_id = adc.id
-        WHERE adc.session_name = $1
-      `, [agent.session_name, agent.agent_name]);
-    });
-    const a = attribQ.rows[0];
+          count(*) AS agent_msgs,
+          avg(mqs_composite) AS mqs,
+          avg(char_length(body)) AS msg_len
+        FROM agent_direct_messages
+        WHERE conversation_id = ANY($1) AND direction = 'agent_to_client'
+      `, [convIds]);
+      const sig = await pool.query(`
+        SELECT
+          count(*) FILTER (WHERE metric_type = 'buying_signal')     AS buying,
+          count(*) FILTER (WHERE metric_type = 'commitment_signal') AS "commit",
+          count(*) FILTER (WHERE metric_type = 'objection_signal')  AS objection
+        FROM agent_behavior_metrics
+        WHERE conversation_id = ANY($1)
+      `, [convIds]);
+      return { ...msg.rows[0], ...sig.rows[0] };
+    }
 
-    const decided = Number(a.convs_won) + Number(a.convs_lost);
-    const convWin = decided > 0 ? Number(a.convs_won) / decided : null;
+    // (A) TODAS las convs del agente que cruzan con algún deal Sell
+    const allConvsRes = await pool.query(`
+      SELECT DISTINCT adc.id, adc.client_phone, sdc.is_closed_won, sdc.stage_category, sdc.colaborador_2
+      FROM agent_direct_conversations adc
+      JOIN sell_deals_cache sdc ON sdc.contact_phone = adc.client_phone
+      WHERE adc.session_name = $1
+    `, [agent.session_name]);
+    const allConvIds = [...new Set(allConvsRes.rows.map((r) => r.id))];
+    const allWon = new Set(allConvsRes.rows.filter((r) => r.is_closed_won).map((r) => r.id)).size;
+    const allLost = new Set(allConvsRes.rows.filter((r) => r.stage_category === "lost").map((r) => r.id)).size;
+
+    // (B) Solo las convs donde el agente es c2 del deal
+    const c2ConvsRes = await pool.query(`
+      SELECT DISTINCT adc.id, sdc.is_closed_won, sdc.stage_category
+      FROM agent_direct_conversations adc
+      JOIN sell_deals_cache sdc ON sdc.contact_phone = adc.client_phone
+      WHERE adc.session_name = $1
+        AND sdc.colaborador_2 IS NOT NULL
+        AND (lower(sdc.colaborador_2) = lower($2)
+          OR split_part(lower(sdc.colaborador_2), ' ', 1) = split_part(lower($2), ' ', 1))
+    `, [agent.session_name, agent.agent_name]);
+    const c2ConvIds = [...new Set(c2ConvsRes.rows.map((r) => r.id))];
+    const c2Won = new Set(c2ConvsRes.rows.filter((r) => r.is_closed_won).map((r) => r.id)).size;
+    const c2Lost = new Set(c2ConvsRes.rows.filter((r) => r.stage_category === "lost").map((r) => r.id)).size;
+
+    const allStats = await statsForConvs(allConvIds);
+    const c2Stats = await statsForConvs(c2ConvIds);
+
+    const allDecided = allWon + allLost;
+    const c2Decided = c2Won + c2Lost;
 
     console.log(`### ${b.display}   (session ${agent.session_name})`);
-    console.log(`  Sell c2:            ${b.deals} deals → ${b.won} won / ${b.lost} lost / ${b.open} open  (win ${b.win_rate != null ? (b.win_rate * 100).toFixed(1) + "%" : "—"} de decididos)`);
-    console.log(`  WAHA convs:         ${a.convs} total, matched-as-c2: ${a.convs}  (won=${a.convs_won} lost=${a.convs_lost} → win ${convWin != null ? (convWin * 100).toFixed(1) + "%" : "—"})`);
-    console.log(`  Mensajes agente:    ${a.agent_msgs}  |  MQS: ${fmt(a.mqs)}  |  msg_len avg: ${fmt(a.msg_len, 0)}ch`);
-    console.log(`  Señales:            buying=${a.buying}  commit=${a.commit}  objection=${a.objection}`);
+    console.log(`  Sell c2 total:   ${b.deals} deals → ${b.won} won / ${b.lost} lost / ${b.open} open  (win ${b.win_rate != null ? (b.win_rate * 100).toFixed(1) + "%" : "—"} de decididos)`);
+    console.log(`  (A) TODAS sus convs WAHA × Sell:`);
+    console.log(`        convs=${allConvIds.length}  won=${allWon}  lost=${allLost}  open=${allConvIds.length - allDecided}  (win ${pct(allWon, allDecided)})`);
+    console.log(`        msgs=${allStats.agent_msgs}  MQS=${fmt(allStats.mqs)}  msg_len=${fmt(allStats.msg_len, 0)}ch  buying=${allStats.buying}  commit=${allStats.commit}  objection=${allStats.objection}`);
+    console.log(`  (B) Solo convs donde él/ella es c2:`);
+    console.log(`        convs=${c2ConvIds.length}  won=${c2Won}  lost=${c2Lost}  open=${c2ConvIds.length - c2Decided}  (win ${pct(c2Won, c2Decided)})`);
+    console.log(`        msgs=${c2Stats.agent_msgs}  MQS=${fmt(c2Stats.mqs)}  msg_len=${fmt(c2Stats.msg_len, 0)}ch  buying=${c2Stats.buying}  commit=${c2Stats.commit}  objection=${c2Stats.objection}`);
     console.log();
   }
 
   // ─────────────────────────────────────────────────────────────────
-  // 4. MQS correlation con win/loss — SOLO en convs con c2 atribuido
+  // 4. MQS correlation con win/loss — dos vistas (amplia + estricta)
+  //    Agregamos a nivel conv primero para evitar join multiplicador.
   // ─────────────────────────────────────────────────────────────────
-  console.log("## MQS avg — WON vs LOST (convs con c2 atribuido a WAHA agent)\n");
-  const mqsQ = await pool.query(`
-    SELECT
-      sdc.is_closed_won,
-      sdc.stage_category,
-      count(DISTINCT adc.id) AS convs,
-      avg(adm.mqs_composite) FILTER (WHERE adm.direction = 'agent_to_client') AS mqs,
-      avg(adm.mqs_information_quality) FILTER (WHERE adm.direction = 'agent_to_client') AS info,
-      avg(adm.mqs_problem_solving) FILTER (WHERE adm.direction = 'agent_to_client') AS problem,
-      avg(adm.mqs_understanding) FILTER (WHERE adm.direction = 'agent_to_client') AS under,
-      avg(adm.mqs_clarity) FILTER (WHERE adm.direction = 'agent_to_client') AS clarity
-    FROM sell_deals_cache sdc
-    JOIN agent_direct_conversations adc ON adc.client_phone = sdc.contact_phone
-    JOIN agent_direct_messages adm ON adm.conversation_id = adc.id
-    WHERE sdc.stage_category IN ('won', 'lost')
-      AND sdc.colaborador_2 IS NOT NULL
-    GROUP BY sdc.is_closed_won, sdc.stage_category
-    ORDER BY sdc.is_closed_won DESC
-  `);
-  console.log(`  ${pad("Outcome", 10)} ${rpad("Convs", 6)} ${rpad("MQS", 6)} ${rpad("Info", 6)} ${rpad("Prob", 6)} ${rpad("Under", 7)} ${rpad("Clar", 6)}`);
-  console.log(`  ${"─".repeat(60)}`);
-  for (const r of mqsQ.rows) {
-    const label = r.is_closed_won ? "WON" : "LOST";
-    console.log(
-      `  ${pad(label, 10)} ${rpad(r.convs, 6)} ${rpad(fmt(r.mqs), 6)} ${rpad(fmt(r.info), 6)} ${rpad(fmt(r.problem), 6)} ${rpad(fmt(r.under), 7)} ${rpad(fmt(r.clarity), 6)}`
-    );
+  async function mqsByOutcome(filterC2) {
+    return pool.query(`
+      WITH conv_deal AS (
+        SELECT DISTINCT ON (adc.id)
+          adc.id AS conv_id,
+          sdc.is_closed_won
+        FROM agent_direct_conversations adc
+        JOIN sell_deals_cache sdc ON sdc.contact_phone = adc.client_phone
+        WHERE sdc.stage_category IN ('won','lost')
+          ${filterC2 ? "AND sdc.colaborador_2 IS NOT NULL" : ""}
+        ORDER BY adc.id, sdc.updated_at_sell DESC NULLS LAST
+      ),
+      conv_mqs AS (
+        SELECT conversation_id AS conv_id,
+               avg(mqs_composite)           AS mqs,
+               avg(mqs_information_quality) AS info,
+               avg(mqs_problem_solving)     AS problem,
+               avg(mqs_understanding)       AS under_,
+               avg(mqs_clarity)             AS clarity,
+               avg(char_length(body))       AS msg_len
+        FROM agent_direct_messages
+        WHERE direction = 'agent_to_client' AND mqs_composite IS NOT NULL
+        GROUP BY conversation_id
+      )
+      SELECT cd.is_closed_won,
+             count(*)         AS convs,
+             avg(cm.mqs)      AS mqs,
+             avg(cm.info)     AS info,
+             avg(cm.problem)  AS problem,
+             avg(cm.under_)   AS under_,
+             avg(cm.clarity)  AS clarity,
+             avg(cm.msg_len)  AS msg_len
+      FROM conv_deal cd
+      LEFT JOIN conv_mqs cm ON cm.conv_id = cd.conv_id
+      GROUP BY cd.is_closed_won
+      ORDER BY cd.is_closed_won DESC
+    `);
   }
-  console.log();
+
+  console.log("## MQS avg — WON vs LOST\n");
+  for (const scope of [
+    { label: "(A) Todas las convs WAHA con deal decidido",        filter: false },
+    { label: "(B) Solo convs con c2 atribuido (N chico)",         filter: true },
+  ]) {
+    console.log(`  ${scope.label}`);
+    const q = await mqsByOutcome(scope.filter);
+    console.log(`  ${pad("Outcome", 8)} ${rpad("Convs", 6)} ${rpad("MQS", 6)} ${rpad("Info", 6)} ${rpad("Prob", 6)} ${rpad("Under", 7)} ${rpad("Clar", 6)} ${rpad("MsgLen", 7)}`);
+    console.log(`  ${"─".repeat(70)}`);
+    for (const r of q.rows) {
+      const label = r.is_closed_won ? "WON" : "LOST";
+      console.log(
+        `  ${pad(label, 8)} ${rpad(r.convs, 6)} ${rpad(fmt(r.mqs), 6)} ${rpad(fmt(r.info), 6)} ${rpad(fmt(r.problem), 6)} ${rpad(fmt(r.under_), 7)} ${rpad(fmt(r.clarity), 6)} ${rpad(fmt(r.msg_len, 0), 7)}`
+      );
+    }
+    console.log();
+  }
 
   await pool.end();
 }
