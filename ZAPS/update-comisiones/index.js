@@ -9,22 +9,14 @@
  *   3. Resolve agent name from last_stage_change_by_id.
  *   4. Reformat FECHA DE CIRUGÍA (DD-MM-YYYY → YYYY-MM-DD),
  *      added_at / updated_at / *Fecha Hito 1* (ISO → YYYY-MM-DD).
- *   5. Upsert a row in the "Comisiones" Google Sheet, keyed by deal id (col A).
- *      - updateCells     → written on every run (live deal state)
- *      - insertOnlyCells → commission codes (J..O), written once so humans can edit them
- *   6. Write back to the Sell Deal: WhatsApp link, normalized RUT, commission codes.
- *   7. Write normalized RUT to the Sell Contact linked to the deal.
+ *   5. Write back to the Sell Deal: WhatsApp link, normalized RUT, commission codes.
+ *   6. Write normalized RUT to the Sell Contact linked to the deal.
  *
  * Env vars:
  *   SELL_ACCESS_TOKEN (or ZENDESK_SELL_API_TOKEN / ZENDESK_API_TOKEN_SELL)
- *   GOOGLE_SERVICE_ACCOUNT_EMAIL
- *   GOOGLE_PRIVATE_KEY
- *   COMISIONES_SHEET_ID   (optional, defaults to the Zap's hardcoded id)
- *   COMISIONES_SHEET_GID  (optional, defaults to the Zap's hardcoded gid)
  */
 
 import * as sell from "../_shared/sell-client.js";
-import * as sheets from "../_shared/sheets-client.js";
 import {
   normalizeRut,
   resolvePipelineName,
@@ -34,7 +26,6 @@ import {
   whatsappLink
 } from "../_shared/normalize.js";
 
-// Fixed commission codes (literal constants from the original Zap).
 export const COMMISSION_CODES = {
   ComisionBAR1: "8001",
   ComisionBAR2: "5002",
@@ -43,24 +34,6 @@ export const COMMISSION_CODES = {
   ComisionBAR5: "6005",
   ComisionBAR6: "6006"
 };
-
-const SHEET_SPREADSHEET_ID =
-  process.env.COMISIONES_SHEET_ID || "1LaChp4TmV88-M6cLEnlvxImrxDKscLZBAdOFa6gb_sc";
-const SHEET_GID = process.env.COMISIONES_SHEET_GID || "1997956572";
-
-/**
- * @param {object} deal  - payload from Zendesk Sell "deal_updated" webhook (deal object).
- * @param {object} [opts]
- * @param {boolean} [opts.dryRun=false]  - Skip all network writes; log planned actions.
- * @param {Console} [opts.logger=console]
- * @returns {Promise<{
- *   sheetRow: number|null,
- *   sheetInserted: boolean,
- *   dealUpdated: boolean,
- *   contactUpdated: boolean,
- *   normalized: { rut: string, pipelineName: string, stageName: string, agentName: string }
- * }>}
- */
 export async function handleUpdateComisiones(deal, opts = {}) {
   const { dryRun = false, logger = console } = opts;
   if (!deal || typeof deal !== "object") {
@@ -113,53 +86,7 @@ export async function handleUpdateComisiones(deal, opts = {}) {
     source.custom_fields?.["*Fecha Hito 1* (agregado el)"]
   );
 
-  // -- Step 5: build Google Sheet cells
-  const updateCells = {
-    A: String(dealId || ""),
-    B: source.name || deal.name || "",
-    D: pipelineName,
-    E: stageName,
-    F: fechaCirugiaYmd,
-    G: source.custom_fields?.Colaborador1 || "",
-    H: source.custom_fields?.Colaborador2 || "",
-    I: source.custom_fields?.Colaborador3 || "",
-    P: fechaHito1Ymd,
-    R: source.custom_fields?.["FECHA DE CIRUGÍA"] || "",
-    V: updatedAtYmd
-  };
-  const insertOnlyCells = {
-    J: COMMISSION_CODES.ComisionBAR1,
-    K: COMMISSION_CODES.ComisionBAR2,
-    L: COMMISSION_CODES.ComisionBAR3,
-    M: COMMISSION_CODES.ComisionBAR4,
-    N: COMMISSION_CODES.ComisionBAR5,
-    O: COMMISSION_CODES.ComisionBAR6
-  };
-
-  let sheetResult = { rowNumber: null, inserted: false };
-  if (dryRun) {
-    logger.info("[update-comisiones:dry-run] would upsert sheet row", {
-      keyValue: String(dealId || ""),
-      updateCells,
-      insertOnlyCells
-    });
-  } else {
-    const tabName = await sheets.resolveTabName({
-      spreadsheetId: SHEET_SPREADSHEET_ID,
-      gid: SHEET_GID
-    });
-    sheetResult = await sheets.upsertRowByKey({
-      spreadsheetId: SHEET_SPREADSHEET_ID,
-      tabName,
-      lookupColumn: "A",
-      keyValue: String(dealId || ""),
-      updateCells,
-      insertOnlyCells,
-      maxRows: 2000
-    });
-  }
-
-  // -- Step 6: write back to Sell deal
+  // -- Step 5: write back to Sell deal
   const dealPatch = {
     custom_fields: {
       WhatsApp_Contactar_LINK: whatsappLink(source.custom_fields?.Telefono),
@@ -188,7 +115,7 @@ export async function handleUpdateComisiones(deal, opts = {}) {
     dealUpdated = true;
   }
 
-  // -- Step 7: write RUT_normalizado to contact
+  // -- Step 6: write RUT_normalizado to contact
   let contactUpdated = false;
   if (rutNormalized && contactId) {
     const contactPatch = { custom_fields: { RUT_normalizado: rutNormalized } };
@@ -201,8 +128,6 @@ export async function handleUpdateComisiones(deal, opts = {}) {
   }
 
   return {
-    sheetRow: sheetResult.rowNumber,
-    sheetInserted: sheetResult.inserted,
     dealUpdated,
     contactUpdated,
     normalized: { rut: rutNormalized, pipelineName, stageName, agentName }
