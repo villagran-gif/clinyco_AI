@@ -26,6 +26,7 @@ import { sellFetch } from "./_shared/sell-client.js";
 import { handleUpdateComisiones } from "./update-comisiones/index.js";
 import { handleNormalizeRutOnDealCreate } from "./rut-normalizado-crear-trato/index.js";
 import { handleNormalizeRutOnContactCreate } from "./zendesksell-normaliza-rut-al-crear-contacto/index.js";
+import { handleMetaConversionLead } from "./meta-conversion-leads/index.js";
 
 const INTERVAL_MS = Number(process.env.ZAPS_POLL_INTERVAL_MS) || 120_000;
 const PER_PAGE = 100;
@@ -113,6 +114,11 @@ async function pollNewDeals() {
       processed++;
     } catch (err) {
       console.error(`[zaps-poller] rut-normalizado-trato deal ${deal.id} failed:`, err.message);
+    }
+    try {
+      await handleMetaConversionLead(deal);
+    } catch (err) {
+      console.error(`[zaps-poller] meta-conversion-leads deal ${deal.id} failed:`, err.message);
     }
   }
   if (processed) console.log(`[zaps-poller] ${processed} new deals processed`);

@@ -25,6 +25,7 @@ import express from "express";
 import { handleUpdateComisiones } from "../update-comisiones/index.js";
 import { handleNormalizeRutOnContactCreate } from "../zendesksell-normaliza-rut-al-crear-contacto/index.js";
 import { handleNormalizeRutOnDealCreate } from "../rut-normalizado-crear-trato/index.js";
+import { handleMetaConversionLead } from "../meta-conversion-leads/index.js";
 
 const router = express.Router();
 
@@ -72,7 +73,7 @@ router.use(checkSecret);
 router.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    zaps: ["update-comisiones", "normaliza-rut-contacto", "rut-normalizado-trato"],
+    zaps: ["update-comisiones", "normaliza-rut-contacto", "rut-normalizado-trato", "meta-conversion-leads"],
     secretEnabled: Boolean((process.env.ZAPS_WEBHOOK_SECRET || "").trim())
   });
 });
@@ -80,5 +81,6 @@ router.get("/health", (_req, res) => {
 router.post("/update-comisiones", wrap("update-comisiones", handleUpdateComisiones));
 router.post("/normaliza-rut-contacto", wrap("normaliza-rut-contacto", handleNormalizeRutOnContactCreate));
 router.post("/rut-normalizado-trato", wrap("rut-normalizado-trato", handleNormalizeRutOnDealCreate));
+router.post("/meta-conversion-leads", wrap("meta-conversion-leads", handleMetaConversionLead));
 
 export default router;
