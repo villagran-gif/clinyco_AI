@@ -6,6 +6,9 @@
  *   2. Fetches deals created since the last poll  → handleNormalizeRutOnDealCreate
  *   3. Fetches contacts created since the last poll → handleNormalizeRutOnContactCreate
  *
+ * The Sell v2 API does NOT support date-range query params on list endpoints,
+ * so we fetch the most recent page sorted by date desc and filter client-side.
+ *
  * Dedup: since our own handlers update the deal (writing RUT_normalizado,
  * commission codes, etc.), that changes `updated_at` and would make the deal
  * reappear in the next poll. We keep a cooldown map of recently processed IDs
@@ -66,14 +69,15 @@ async function fetchPage(path) {
 
 async function pollUpdatedDeals() {
   const since = lastDealUpdate || ago(INTERVAL_MS + 30_000);
-  const path = `/deals?sort_by=updated_at:desc&per_page=${PER_PAGE}&filter[updated_at][gte]=${encodeURIComponent(since)}`;
+  const path = `/deals?sort_by=updated_at:desc&per_page=${PER_PAGE}`;
   const deals = await fetchPage(path);
 
-  if (!deals.length) return;
+  const recent = deals.filter((d) => d.updated_at && d.updated_at > since);
+  if (!recent.length) return;
 
   let processed = 0;
   let skipped = 0;
-  for (const deal of deals) {
+  for (const deal of recent) {
     const key = `deal:${deal.id}`;
     if (shouldSkip(key)) { skipped++; continue; }
     try {
@@ -88,12 +92,12 @@ async function pollUpdatedDeals() {
     console.log(`[zaps-poller] updated deals: ${processed} processed, ${skipped} skipped (cooldown)`);
   }
 
-  lastDealUpdate = deals[0].updated_at || new Date().toISOString();
+  lastDealUpdate = recent[0].updated_at || new Date().toISOString();
 }
 
 async function pollNewDeals() {
   const since = lastDealCreate || ago(INTERVAL_MS + 30_000);
-  const path = `/deals?sort_by=created_at:desc&per_page=${PER_PAGE}&filter[created_at][gte]=${encodeURIComponent(since)}`;
+  const path = `/deals?sort_by=created_at:desc&per_page=${PER_PAGE}`;
   const deals = await fetchPage(path);
 
   const newDeals = deals.filter((d) => d.created_at && d.created_at > since);
@@ -118,7 +122,7 @@ async function pollNewDeals() {
 
 async function pollNewContacts() {
   const since = lastContactCreate || ago(INTERVAL_MS + 30_000);
-  const path = `/contacts?sort_by=created_at:desc&per_page=${PER_PAGE}&filter[created_at][gte]=${encodeURIComponent(since)}`;
+  const path = `/contacts?sort_by=created_at:desc&per_page=${PER_PAGE}`;
   const contacts = await fetchPage(path);
 
   const newContacts = contacts.filter((c) => c.created_at && c.created_at > since);
