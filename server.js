@@ -47,6 +47,7 @@ import {
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
+import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
 import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
 import {
   searchSlotsViaApi,
@@ -6457,4 +6458,5 @@ app.listen(PORT, () => {
   } else {
     console.log(`Medinet: local execution (no MEDINET_WORKER_URL configured)`);
   }
+  startZapsPoller();
 });
