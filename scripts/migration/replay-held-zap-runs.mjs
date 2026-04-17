@@ -268,6 +268,10 @@ async function main() {
     console.log(`\n[replay] held[${idx}]  (zap=${run.object_id} ${ZAP_MAP[run.object_id]}, date=${run.date}):`);
     console.log(JSON.stringify(run, null, 2));
     const reco = extractTriggerEntity(run);
+    if (String(run.object_id) === "331401022" && reco?.body?.entity_original_id) {
+      reco.body.id = reco.body.entity_original_id;
+      console.log(`\n[replay] remapped id -> entity_original_id (${reco.body.id})`);
+    }
     console.log(`\n[replay] reconstructed trigger body (source=${reco?.source || "none"}):`);
     console.log(JSON.stringify(reco?.body ?? null, null, 2));
     return;
@@ -309,6 +313,13 @@ async function main() {
       console.error(line);
       appendLog(opts.log, { idx: i, run_id: r.id, date: r.date, object_id: r.object_id, endpoint, status: "no_payload" });
       continue;
+    }
+
+    // For Update Comisiones (331401022) the flattened `id` is a composite
+    // string like "194354425_2026-04-16T21:17:53Z" — the real Sell deal ID
+    // lives in `entity_original_id`.
+    if (String(r.object_id) === "331401022" && reco.body.entity_original_id) {
+      reco.body.id = reco.body.entity_original_id;
     }
     const headers = { "Content-Type": "application/json" };
     if (opts.secret) headers["X-Zap-Secret"] = opts.secret;
