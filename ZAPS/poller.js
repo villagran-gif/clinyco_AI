@@ -66,7 +66,7 @@ async function fetchPage(path) {
 
 async function pollUpdatedDeals() {
   const since = lastDealUpdate || ago(INTERVAL_MS + 30_000);
-  const path = `/deals?sort_by=updated_at:desc&per_page=${PER_PAGE}&updated_since=${encodeURIComponent(since)}`;
+  const path = `/deals?sort_by=updated_at:desc&per_page=${PER_PAGE}&filter[updated_at][gte]=${encodeURIComponent(since)}`;
   const deals = await fetchPage(path);
 
   if (!deals.length) return;
@@ -93,7 +93,7 @@ async function pollUpdatedDeals() {
 
 async function pollNewDeals() {
   const since = lastDealCreate || ago(INTERVAL_MS + 30_000);
-  const path = `/deals?sort_by=created_at:desc&per_page=${PER_PAGE}&created_since=${encodeURIComponent(since)}`;
+  const path = `/deals?sort_by=created_at:desc&per_page=${PER_PAGE}&filter[created_at][gte]=${encodeURIComponent(since)}`;
   const deals = await fetchPage(path);
 
   const newDeals = deals.filter((d) => d.created_at && d.created_at > since);
@@ -118,7 +118,7 @@ async function pollNewDeals() {
 
 async function pollNewContacts() {
   const since = lastContactCreate || ago(INTERVAL_MS + 30_000);
-  const path = `/contacts?sort_by=created_at:desc&per_page=${PER_PAGE}&created_since=${encodeURIComponent(since)}`;
+  const path = `/contacts?sort_by=created_at:desc&per_page=${PER_PAGE}&filter[created_at][gte]=${encodeURIComponent(since)}`;
   const contacts = await fetchPage(path);
 
   const newContacts = contacts.filter((c) => c.created_at && c.created_at > since);
