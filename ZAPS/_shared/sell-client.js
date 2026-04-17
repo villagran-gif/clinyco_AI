@@ -67,6 +67,12 @@ export async function updateDeal(dealId, patch) {
   return data.data || data;
 }
 
+/** Fetch a contact by numeric id. */
+export async function getContact(contactId) {
+  const data = await sellFetch(`/contacts/${contactId}`);
+  return data.data || data;
+}
+
 /** PUT /v2/contacts/:id — patch is a partial contact object. */
 export async function updateContact(contactId, patch) {
   const data = await sellFetch(`/contacts/${contactId}`, { method: "PUT", body: { data: patch } });
