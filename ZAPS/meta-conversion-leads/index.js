@@ -5,18 +5,18 @@
  * Trigger : Zendesk Sell "New Deal"
  * Effects :
  *   1. Read contact_id from the deal.
- *   2. Fetch the contact from Sell to get phone / mobile.
- *   3. Hash the phone (SHA-256) per Facebook requirements.
- *   4. POST a "Lead" event to Facebook Conversions API.
+ *   2. Hash the contact_id (SHA-256) per Facebook requirements.
+ *   3. POST a "Lead" event to Facebook Conversions API.
+ *
+ * The original Zapier zap sends contact_id as phone_number directly
+ * (not the actual phone). We replicate the exact same behavior.
  *
  * Env vars:
  *   META_ACCESS_TOKEN          — Facebook Conversions API long-lived token (required)
  *   META_PIXEL_ID              — override pixel (default: 1513925433070873)
- *   SELL_ACCESS_TOKEN           — Zendesk Sell token (shared)
  */
 
 import { createHash } from "node:crypto";
-import * as sell from "../_shared/sell-client.js";
 
 const PIXEL_ID = process.env.META_PIXEL_ID || "1513925433070873";
 const GRAPH_API_VERSION = "v21.0";
@@ -31,15 +31,6 @@ function getMetaToken() {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function normalizePhone(raw) {
-  if (!raw) return null;
-  let phone = String(raw).replace(/[\s\-().]/g, "");
-  if (phone.startsWith("+")) return phone;
-  if (phone.startsWith("56") && phone.length >= 10) return `+${phone}`;
-  if (phone.length === 9) return `+56${phone}`;
-  return phone.startsWith("+") ? phone : `+${phone}`;
 }
 
 /**
@@ -64,14 +55,7 @@ export async function handleMetaConversionLead(deal, opts = {}) {
     return { sent: false, skipped: "no contact_id on deal" };
   }
 
-  const contact = await sell.getContact(contactId);
-  const phone = normalizePhone(contact.mobile || contact.phone);
-  if (!phone) {
-    logger.warn(`[meta-conversion-leads] deal ${dealId} contact ${contactId} has no phone`);
-    return { sent: false, skipped: "contact has no phone number" };
-  }
-
-  const hashedPhone = sha256(phone);
+  const hashedPhone = sha256(String(contactId));
 
   const eventPayload = {
     data: [
@@ -85,8 +69,6 @@ export async function handleMetaConversionLead(deal, opts = {}) {
         custom_data: {
           lifecycle_stage_name: "Lead",
           lead_event_source: "Zendesk Sell",
-          deal_id: dealId,
-          contact_id: contactId,
         },
       },
     ],
@@ -94,7 +76,7 @@ export async function handleMetaConversionLead(deal, opts = {}) {
 
   if (dryRun) {
     logger.info(`[meta-conversion-leads:dry-run] would POST to pixel ${PIXEL_ID}`, eventPayload);
-    return { sent: false, dryRun: true, phone: phone.slice(0, 4) + "***", dealId };
+    return { sent: false, dryRun: true, contactId, dealId };
   }
 
   const token = getMetaToken();
@@ -113,7 +95,7 @@ export async function handleMetaConversionLead(deal, opts = {}) {
 
   const result = JSON.parse(body);
   logger.log(
-    `[meta-conversion-leads] deal ${dealId} → Lead event sent, events_received: ${result.events_received ?? "?"}`
+    `[meta-conversion-leads] deal ${dealId} contact ${contactId} → Lead event sent, events_received: ${result.events_received ?? "?"}`
   );
 
   return { sent: true, dealId, contactId, eventsReceived: result.events_received };
