@@ -53,6 +53,10 @@ services:
       #   WAHA_GOWS_DEVICE_HISTORY_SYNC=FULL
       # Leaving FULL_SYNC=true to pull as much history as WhatsApp allows.
       - WAHA_GOWS_DEVICE_FULL_SYNC=true
+      # ── LID → phone number remap (WAHA 2026.3) ─────────────────────
+      # Without this, call/message payloads expose WhatsApp's internal
+      # LID (random-looking 15-digit id) instead of the real phone.
+      - WAHA_DEVICE_REMAP_LID=true
       # ── Storage isolation (WAHA 2026.3) ────────────────────────────
       - WAHA_NAMESPACE=clinyco-plus-test
       # ── Reduce bandwidth during test — no media download ───────────
