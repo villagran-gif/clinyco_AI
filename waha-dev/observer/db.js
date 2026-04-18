@@ -1,6 +1,11 @@
 import pg from "pg";
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const DATABASE_SSL = String(process.env.DATABASE_SSL || "false").toLowerCase() === "true";
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: DATABASE_SSL ? { rejectUnauthorized: false } : false
+});
 
 pool.on("error", (err) => {
   console.error("[db] Unexpected pool error:", err.message);
