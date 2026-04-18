@@ -385,6 +385,131 @@ export async function whatsappMetrics(conversationId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  WAHA — Sentiment feedback & accuracy (HITL pipeline)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Insert or update a human sentiment correction */
+export async function insertSentimentFeedback({ messageId, humanLabel, humanScore, correctedBy, rationale }) {
+  const p = getPool();
+  const { rows: [msg] } = await p.query(
+    `SELECT text_sentiment_score, sentiment_model FROM agent_direct_messages WHERE id = $1`,
+    [messageId]
+  );
+  if (!msg) return null;
+  const { rows } = await p.query(
+    `INSERT INTO waha_sentiment_feedback
+       (message_id, predicted_score, predicted_model, human_label, human_score, corrected_by, rationale)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (message_id, corrected_by) DO UPDATE SET
+       human_label = EXCLUDED.human_label,
+       human_score = EXCLUDED.human_score,
+       rationale = EXCLUDED.rationale
+     RETURNING *`,
+    [messageId, msg.text_sentiment_score || 0, msg.sentiment_model || "keyword-v1",
+     humanLabel, humanScore, correctedBy, rationale]
+  );
+  return rows[0];
+}
+
+/** Accuracy metrics: global, confusion matrix, weekly drift, top disagreements */
+export async function whatsappSentimentAccuracy(days = 30) {
+  const p = getPool();
+
+  const { rows: [summary] } = await p.query(`
+    SELECT
+      COUNT(*)::int AS total_gold,
+      COUNT(*) FILTER (WHERE
+        CASE WHEN f.human_label = 'positive' THEN m.text_sentiment_score > 0.1
+             WHEN f.human_label = 'negative' THEN m.text_sentiment_score < -0.1
+             ELSE m.text_sentiment_score BETWEEN -0.1 AND 0.1 END
+      )::int AS correct,
+      COUNT(*) FILTER (WHERE m.sentiment_confidence < 0.7)::int AS low_confidence_total
+    FROM waha_sentiment_feedback f
+    JOIN agent_direct_messages m ON m.id = f.message_id
+    WHERE f.created_at >= now() - ($1 || ' days')::interval
+  `, [days]);
+
+  const { rows: confusion } = await p.query(`
+    SELECT
+      f.human_label,
+      CASE WHEN m.text_sentiment_score > 0.1 THEN 'positive'
+           WHEN m.text_sentiment_score < -0.1 THEN 'negative'
+           ELSE 'neutral' END AS predicted_label,
+      COUNT(*)::int AS count
+    FROM waha_sentiment_feedback f
+    JOIN agent_direct_messages m ON m.id = f.message_id
+    WHERE f.created_at >= now() - ($1 || ' days')::interval
+    GROUP BY 1, 2
+    ORDER BY 1, 2
+  `, [days]);
+
+  const { rows: drift } = await p.query(`
+    SELECT
+      date_trunc('week', f.created_at)::date AS week,
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE
+        CASE WHEN f.human_label = 'positive' THEN m.text_sentiment_score > 0.1
+             WHEN f.human_label = 'negative' THEN m.text_sentiment_score < -0.1
+             ELSE m.text_sentiment_score BETWEEN -0.1 AND 0.1 END
+      )::int AS correct
+    FROM waha_sentiment_feedback f
+    JOIN agent_direct_messages m ON m.id = f.message_id
+    WHERE f.created_at >= now() - ($1 || ' days')::interval
+    GROUP BY 1 ORDER BY 1
+  `, [days]);
+
+  const { rows: topErrors } = await p.query(`
+    SELECT f.message_id, LEFT(m.body, 120) AS body_preview,
+           m.text_sentiment_score AS predicted_score,
+           m.sentiment_model,
+           f.human_label, f.human_score, f.rationale,
+           f.corrected_by, f.created_at
+    FROM waha_sentiment_feedback f
+    JOIN agent_direct_messages m ON m.id = f.message_id
+    WHERE f.created_at >= now() - ($1 || ' days')::interval
+      AND NOT (
+        CASE WHEN f.human_label = 'positive' THEN m.text_sentiment_score > 0.1
+             WHEN f.human_label = 'negative' THEN m.text_sentiment_score < -0.1
+             ELSE m.text_sentiment_score BETWEEN -0.1 AND 0.1 END
+      )
+    ORDER BY ABS(m.text_sentiment_score - COALESCE(f.human_score, 0)) DESC
+    LIMIT 10
+  `, [days]);
+
+  return { summary, confusion, drift, topErrors };
+}
+
+/** Low-confidence messages queue for HITL review */
+export async function whatsappLowConfidence(limit = 50) {
+  const { rows } = await getPool().query(`
+    SELECT m.id, LEFT(m.body, 200) AS body_preview,
+           m.text_sentiment_score, m.sentiment_model, m.sentiment_confidence,
+           m.sentiment_rationale, m.sent_at,
+           c.client_phone,
+           EXISTS(SELECT 1 FROM waha_sentiment_feedback f WHERE f.message_id = m.id) AS has_feedback
+    FROM agent_direct_messages m
+    JOIN agent_direct_conversations c ON c.id = m.conversation_id
+    WHERE m.body IS NOT NULL AND LENGTH(m.body) > 10
+      AND (m.sentiment_confidence < 0.7 OR m.sentiment_confidence IS NULL)
+    ORDER BY m.sentiment_confidence ASC NULLS FIRST, m.sent_at DESC
+    LIMIT $1
+  `, [limit]);
+  return rows;
+}
+
+/** Gold samples for few-shot (used by sentiment-llm.js) */
+export async function getGoldSamplesForFewShot(limit = 15) {
+  const { rows } = await getPool().query(`
+    SELECT f.human_label, f.human_score, f.rationale, m.body
+    FROM waha_sentiment_feedback f
+    JOIN agent_direct_messages m ON m.id = f.message_id
+    ORDER BY f.created_at DESC
+    LIMIT $1
+  `, [limit]);
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  ZENDESK — Patient messages (conversation_messages)
 //  Sentiment analysis of what PATIENTS say to bot/agents
 // ═══════════════════════════════════════════════════════════════════

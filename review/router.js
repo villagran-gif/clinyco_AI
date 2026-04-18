@@ -18,6 +18,9 @@ import {
   whatsappSignals,
   whatsappAgents,
   whatsappMetrics,
+  insertSentimentFeedback,
+  whatsappSentimentAccuracy,
+  whatsappLowConfidence,
   zendeskSentiment,
   zendeskSignals,
   zendeskSentimentDetail,
@@ -211,6 +214,46 @@ router.get(
     const id = parseInt(req.params.conversationId);
     if (!id) return res.status(400).json({ error: "invalid conversationId" });
     res.json(await whatsappMetrics(id));
+  })
+);
+
+// ── WAHA sentiment feedback & accuracy ──
+
+router.post(
+  "/whatsapp/sentiment-feedback",
+  wrap(async (req, res) => {
+    const { messageId, humanLabel, humanScore, rationale } = req.body || {};
+    if (!messageId || !humanLabel) {
+      return res.status(400).json({ error: "messageId and humanLabel required" });
+    }
+    if (!["positive", "neutral", "negative"].includes(humanLabel)) {
+      return res.status(400).json({ error: "humanLabel must be positive/neutral/negative" });
+    }
+    const result = await insertSentimentFeedback({
+      messageId: parseInt(messageId),
+      humanLabel,
+      humanScore: humanScore != null ? parseFloat(humanScore) : null,
+      correctedBy: req.query.user || "dashboard",
+      rationale: rationale || null,
+    });
+    if (!result) return res.status(404).json({ error: "message not found" });
+    res.json(result);
+  })
+);
+
+router.get(
+  "/whatsapp/sentiment-accuracy",
+  wrap(async (req, res) => {
+    const days = Math.min(parseInt(req.query.days) || 30, 365);
+    res.json(await whatsappSentimentAccuracy(days));
+  })
+);
+
+router.get(
+  "/whatsapp/sentiment-low-confidence",
+  wrap(async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    res.json(await whatsappLowConfidence(limit));
   })
 );
 

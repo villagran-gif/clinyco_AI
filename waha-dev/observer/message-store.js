@@ -1,5 +1,5 @@
 import * as db from "./db.js";
-import { analyzeMessage } from "./behavior-tracker.js";
+import { analyzeMessage } from "../../analysis/sentiment.js";
 
 /**
  * Process and store a WAHA message.
@@ -16,8 +16,9 @@ export async function save(conversation, wahaPayload, direction) {
   const pushName = wahaPayload.pushName || wahaPayload._data?.notifyName || null;
   const wahaMessageId = wahaPayload.id || wahaPayload._data?.id?._serialized || null;
 
-  // Run per-message analysis (emoji, sentiment, signals, temporal)
-  const analysis = await analyzeMessage(body, sentAt);
+  // Run per-message analysis (emoji, sentiment, signals)
+  const useLLM = process.env.SENTIMENT_LLM_ENABLED === "true";
+  const analysis = await analyzeMessage(body, db.getEmojiSentimentBatch, { useLLM });
 
   const message = await db.insertMessage({
     conversationId: conversation.id,
@@ -43,6 +44,10 @@ export async function save(conversation, wahaPayload, direction) {
     hourOfDay: sentAt.getHours(),
     dayOfWeek: sentAt.getDay(),
     sentAt,
+    sentimentModel: analysis.sentimentModel,
+    sentimentConfidence: analysis.sentimentConfidence,
+    sentimentRationale: analysis.sentimentRationale,
+    analysisVersion: analysis.analysisVersion,
   });
 
   if (!message) {

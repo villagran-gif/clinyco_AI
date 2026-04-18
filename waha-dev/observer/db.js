@@ -94,7 +94,8 @@ export async function insertMessage({
   pushName, rawJson, bodyClean, bodyTextOnly, emojiList, emojiCount,
   emojiSentimentAvg, emojiSentimentMin, emojiSentimentMax,
   textSentimentScore, wordCount, hasQuestion, hasUrl, detectedSignals,
-  hourOfDay, dayOfWeek, sentAt
+  hourOfDay, dayOfWeek, sentAt,
+  sentimentModel, sentimentConfidence, sentimentRationale, analysisVersion,
 }) {
   const { rows } = await pool.query(
     `INSERT INTO agent_direct_messages (
@@ -102,13 +103,16 @@ export async function insertMessage({
        push_name, raw_json, body_clean, body_text_only, emoji_list, emoji_count,
        emoji_sentiment_avg, emoji_sentiment_min, emoji_sentiment_max,
        text_sentiment_score, word_count, has_question, has_url, detected_signals,
-       hour_of_day, day_of_week, sent_at
+       hour_of_day, day_of_week, sent_at,
+       sentiment_model, sentiment_confidence, sentiment_rationale,
+       sentiment_scored_at, analysis_version
      ) VALUES (
        $1, $2, $3, $4, $5, $6,
        $7, $8, $9, $10, $11, $12,
        $13, $14, $15,
        $16, $17, $18, $19, $20,
-       $21, $22, $23
+       $21, $22, $23,
+       $24, $25, $26, now(), $27
      )
      ON CONFLICT (waha_message_id) WHERE waha_message_id IS NOT NULL
      DO NOTHING
@@ -118,10 +122,11 @@ export async function insertMessage({
       pushName, rawJson, bodyClean, bodyTextOnly, emojiList, emojiCount,
       emojiSentimentAvg, emojiSentimentMin, emojiSentimentMax,
       textSentimentScore, wordCount, hasQuestion, hasUrl, detectedSignals,
-      hourOfDay, dayOfWeek, sentAt
+      hourOfDay, dayOfWeek, sentAt,
+      sentimentModel, sentimentConfidence, sentimentRationale, analysisVersion,
     ]
   );
-  return rows[0] || null; // null if dedup
+  return rows[0] || null;
 }
 
 // ── Behavior Metrics ──
