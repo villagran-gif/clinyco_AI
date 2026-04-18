@@ -129,6 +129,73 @@ export async function insertMessage({
   return rows[0] || null;
 }
 
+// ── Agent Direct Calls ──
+
+export async function upsertCallReceived({
+  callId, conversationId, sessionName, clientPhone, direction,
+  isVideo, receivedAt, hourOfDay, dayOfWeek, rawJson,
+}) {
+  const { rows } = await pool.query(
+    `INSERT INTO agent_direct_calls
+       (call_id, conversation_id, session_name, client_phone, direction,
+        is_video, received_at, status, hour_of_day, day_of_week, raw_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'ringing', $8, $9, $10)
+     ON CONFLICT (call_id) DO UPDATE SET
+       conversation_id = COALESCE(agent_direct_calls.conversation_id, EXCLUDED.conversation_id),
+       updated_at = now()
+     RETURNING *`,
+    [callId, conversationId, sessionName, clientPhone, direction,
+     isVideo, receivedAt, hourOfDay, dayOfWeek, rawJson]
+  );
+  return rows[0];
+}
+
+export async function updateCallAccepted(callId, acceptedAt) {
+  const { rows } = await pool.query(
+    `UPDATE agent_direct_calls SET
+       accepted_at = $2,
+       ring_seconds = EXTRACT(EPOCH FROM ($2 - received_at))::INTEGER,
+       status = 'answered',
+       updated_at = now()
+     WHERE call_id = $1
+     RETURNING *`,
+    [callId, acceptedAt]
+  );
+  return rows[0] || null;
+}
+
+export async function updateCallRejected(callId, endedAt, byClient) {
+  const { rows } = await pool.query(
+    `UPDATE agent_direct_calls SET
+       ended_at = $2,
+       ring_seconds = EXTRACT(EPOCH FROM ($2 - received_at))::INTEGER,
+       status = CASE WHEN $3 THEN 'rejected' ELSE 'missed' END,
+       updated_at = now()
+     WHERE call_id = $1
+     RETURNING *`,
+    [callId, endedAt, byClient]
+  );
+  return rows[0] || null;
+}
+
+export async function updateCallEnded(callId, endedAt) {
+  const { rows } = await pool.query(
+    `UPDATE agent_direct_calls SET
+       ended_at = $2,
+       duration_seconds = CASE
+         WHEN accepted_at IS NOT NULL
+           THEN EXTRACT(EPOCH FROM ($2 - accepted_at))::INTEGER
+         ELSE duration_seconds
+       END,
+       status = CASE WHEN status = 'answered' THEN 'ended' ELSE status END,
+       updated_at = now()
+     WHERE call_id = $1
+     RETURNING *`,
+    [callId, endedAt]
+  );
+  return rows[0] || null;
+}
+
 // ── Behavior Metrics ──
 
 export async function insertMetric(conversationId, metricType, metricValue, contextJson = null) {

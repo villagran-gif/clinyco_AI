@@ -10,7 +10,8 @@ services:
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
       - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
       - WHATSAPP_HOOK_URL=http://observer:3001/waha-webhook
-      - WHATSAPP_HOOK_EVENTS=message,session.status
+      # call.accepted only emitted by NOWEB/GOWS (WAHA Plus); WEBJS sends received+rejected.
+      - WHATSAPP_HOOK_EVENTS=message,session.status,call.received,call.accepted,call.rejected
     volumes:
       - waha_sessions:/app/.sessions
     networks:

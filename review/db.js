@@ -510,6 +510,71 @@ export async function getGoldSamplesForFewShot(limit = 15) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  WAHA CALLS — best time to call analytics
+// ═══════════════════════════════════════════════════════════════════
+
+/** Global summary: totals, answer rate, avg ring/duration, outbound vs inbound */
+export async function whatsappCallsSummary(days = 90) {
+  const { rows } = await getPool().query(`
+    SELECT
+      COUNT(*)::int                                                        AS total_calls,
+      COUNT(*) FILTER (WHERE status IN ('answered','ended'))::int          AS answered,
+      COUNT(*) FILTER (WHERE status = 'rejected')::int                     AS rejected,
+      COUNT(*) FILTER (WHERE status = 'missed')::int                       AS missed,
+      COUNT(*) FILTER (WHERE direction = 'agent_to_client')::int           AS outbound,
+      COUNT(*) FILTER (WHERE direction = 'client_to_agent')::int           AS inbound,
+      COUNT(*) FILTER (WHERE is_video)::int                                AS video_calls,
+      ROUND(AVG(ring_seconds) FILTER (WHERE ring_seconds IS NOT NULL), 1)  AS avg_ring_seconds,
+      ROUND(AVG(duration_seconds) FILTER (WHERE duration_seconds > 0), 1)  AS avg_duration_seconds
+    FROM agent_direct_calls
+    WHERE received_at >= now() - ($1 || ' days')::interval
+  `, [days]);
+  return rows[0] || {};
+}
+
+/** Heatmap: answer rate by hour_of_day × day_of_week (outbound calls only — "best time to call a client") */
+export async function whatsappCallsBestTime(days = 90) {
+  const { rows } = await getPool().query(`
+    SELECT
+      day_of_week,
+      hour_of_day,
+      COUNT(*)::int                                                 AS attempts,
+      COUNT(*) FILTER (WHERE status IN ('answered','ended'))::int   AS answered,
+      ROUND(
+        100.0 * COUNT(*) FILTER (WHERE status IN ('answered','ended'))
+        / NULLIF(COUNT(*), 0),
+      1) AS answer_rate_pct,
+      ROUND(AVG(duration_seconds) FILTER (WHERE duration_seconds > 0), 1) AS avg_duration_seconds
+    FROM agent_direct_calls
+    WHERE direction = 'agent_to_client'
+      AND received_at >= now() - ($1 || ' days')::interval
+      AND hour_of_day IS NOT NULL
+      AND day_of_week IS NOT NULL
+    GROUP BY day_of_week, hour_of_day
+    ORDER BY day_of_week, hour_of_day
+  `, [days]);
+  return rows;
+}
+
+/** Recent call log for drill-down */
+export async function whatsappCallsRecent(limit = 50) {
+  const { rows } = await getPool().query(`
+    SELECT c.id, c.call_id, c.direction, c.is_video, c.status,
+           c.received_at, c.accepted_at, c.ended_at,
+           c.ring_seconds, c.duration_seconds, c.hour_of_day, c.day_of_week,
+           c.client_phone, c.outcome_proxy,
+           conv.customer_id,
+           cust.nombres AS customer_nombres, cust.apellidos AS customer_apellidos
+    FROM agent_direct_calls c
+    LEFT JOIN agent_direct_conversations conv ON conv.id = c.conversation_id
+    LEFT JOIN customers cust ON cust.id = conv.customer_id
+    ORDER BY c.received_at DESC
+    LIMIT $1
+  `, [limit]);
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  ZENDESK — Patient messages (conversation_messages)
 //  Sentiment analysis of what PATIENTS say to bot/agents
 // ═══════════════════════════════════════════════════════════════════

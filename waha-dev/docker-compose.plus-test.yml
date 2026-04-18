@@ -1,0 +1,71 @@
+## TEST harness for WAHA Plus + NOWEB engine
+##
+## Goal: validate with a secondary phone number whether WAHA Plus
+## with the NOWEB (Baileys-based) engine:
+##   1) Loads 3+ months of historical chats and calls on session start.
+##   2) Emits ALL call webhook events (call.received, call.accepted,
+##      call.rejected) required to measure "best time to call".
+##
+## Usage (on VPS, isolated from prod):
+##   1) Export license: `export WAHA_LICENSE_KEY=...`
+##   2) Add a TEST phone number (not the production one).
+##   3) `docker compose -f docker-compose.plus-test.yml up -d`
+##   4) Visit dashboard → scan QR with TEST phone.
+##   5) After session loads, tail observer logs for `[webhook] call.*`.
+##   6) If history >= 3 months visible in the WAHA dashboard and all
+##      three call events hit the webhook → we promote WAHA Plus to
+##      prod (see docker-compose.yml).
+##
+## This file runs on a DIFFERENT port (3002) so it doesn't collide
+## with the production WAHA (port 3000).
+##
+services:
+  waha-plus:
+    image: devlikeapro/waha-plus:latest
+    container_name: clinyco-waha-plus-test
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      - WAHA_LICENSE_KEY=${WAHA_LICENSE_KEY}
+      - WHATSAPP_API_KEY=${WAHA_PLUS_TEST_API_KEY}
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
+      # NOWEB engine — Baileys-based, supports call.accepted + history load
+      - WHATSAPP_DEFAULT_ENGINE=NOWEB
+      # NOWEB history window — max supported by engine (default 60, 'full' pulls as far back as WA keeps)
+      - WHATSAPP_DOWNLOAD_MEDIA=false
+      - WHATSAPP_START_SESSION=default
+      # All events we want validated in the test
+      - WHATSAPP_HOOK_URL=http://observer-test:3001/waha-webhook
+      - WHATSAPP_HOOK_EVENTS=message,message.any,session.status,call.received,call.accepted,call.rejected
+    volumes:
+      - waha_plus_test_sessions:/app/.sessions
+    networks:
+      - clinyco-plus-test
+    restart: unless-stopped
+
+  observer-test:
+    build: ./observer
+    container_name: clinyco-observer-plus-test
+    ports:
+      - "127.0.0.1:3003:3001"
+    env_file:
+      - .env
+    environment:
+      - DEFAULT_SESSION_NAME=plus-test
+      - DEFAULT_AGENT_NAME=Agente Plus Test
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - clinyco-plus-test
+    depends_on:
+      - waha-plus
+    restart: unless-stopped
+
+volumes:
+  waha_plus_test_sessions:
+
+networks:
+  clinyco-plus-test:
+    driver: bridge

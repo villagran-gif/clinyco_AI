@@ -21,6 +21,9 @@ import {
   insertSentimentFeedback,
   whatsappSentimentAccuracy,
   whatsappLowConfidence,
+  whatsappCallsSummary,
+  whatsappCallsBestTime,
+  whatsappCallsRecent,
   zendeskSentiment,
   zendeskSignals,
   zendeskSentimentDetail,
@@ -254,6 +257,32 @@ router.get(
   wrap(async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     res.json(await whatsappLowConfidence(limit));
+  })
+);
+
+// ── Calls analytics (best time to call) ──
+
+router.get(
+  "/whatsapp/calls-summary",
+  wrap(async (req, res) => {
+    const days = Math.min(parseInt(req.query.days) || 90, 365);
+    res.json(await whatsappCallsSummary(days));
+  })
+);
+
+router.get(
+  "/whatsapp/calls-best-time",
+  wrap(async (req, res) => {
+    const days = Math.min(parseInt(req.query.days) || 90, 365);
+    res.json(await whatsappCallsBestTime(days));
+  })
+);
+
+router.get(
+  "/whatsapp/calls-recent",
+  wrap(async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    res.json(await whatsappCallsRecent(limit));
   })
 );
 
