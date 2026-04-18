@@ -68,7 +68,9 @@ services:
     restart: unless-stopped
 
   observer-test:
-    build: ./observer
+    build:
+      context: ..
+      dockerfile: waha-dev/observer/Dockerfile
     container_name: clinyco-observer-plus-test
     ports:
       - "127.0.0.1:3003:3001"
