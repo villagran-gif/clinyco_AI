@@ -46,6 +46,7 @@ import {
 } from "./eugenia/index.js";
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
+import { createSupportClient } from "./support-client/index.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
@@ -2288,7 +2289,7 @@ async function syncLeadScoreToSupport(state, conversationId) {
     const scoreSyncKey = `${supportUserId}:${leadScoreSummary}:${leadScoreDetail}:${LEAD_SCORE_INFO_URL || ""}`;
     if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
 
-    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
+    await supportClient.put(`/api/v2/users/${supportUserId}.json`, {
       user: {
         user_fields: userFields
       }
@@ -3502,154 +3503,9 @@ function getZendeskSupportAuthHeader() {
   return `Basic ${Buffer.from(`${ZENDESK_SUPPORT_EMAIL}/token:${ZENDESK_SUPPORT_TOKEN}`).toString("base64")}`;
 }
 
-async function zendeskSupportGet(path, params = {}) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== null && value !== undefined && value !== "") {
-      url.searchParams.set(key, value);
-    }
-  }
-
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    }
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-async function zendeskSupportPost(path, body = {}) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body || {})
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-async function zendeskSupportPut(path, body = {}) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
-  const response = await fetch(url.toString(), {
-    method: "PUT",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body || {})
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-async function zendeskSupportGetByUrl(url) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const parsedUrl = new URL(String(url || ""));
-  const expectedHost = `${ZENDESK_SUBDOMAIN}.zendesk.com`;
-  if (parsedUrl.host !== expectedHost) {
-    throw new Error(`Unexpected Zendesk host: ${parsedUrl.host}`);
-  }
-
-  const response = await fetch(parsedUrl.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    }
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
+// Routed through support-client (SUPPORT_BACKEND env var, default "zendesk"
+// preserves current behaviour verbatim).
+const supportClient = createSupportClient();
 
 function extractConversationIdFromUnknown(node, seen = new Set()) {
   if (!node || typeof node !== "object") {
@@ -3694,7 +3550,7 @@ async function fetchZendeskTicketAudits(ticketId) {
   const audits = [];
 
   while (nextUrl) {
-    const payload = await zendeskSupportGetByUrl(nextUrl);
+    const payload = await supportClient.getByUrl(nextUrl);
     const rows = Array.isArray(payload?.audits) ? payload.audits : [];
     audits.push(...rows);
     nextUrl = payload?.next_page || null;
@@ -3735,7 +3591,7 @@ async function resolveConversationIdFromZendeskTicket(ticketId) {
 async function searchSupportByEmail(email) {
   if (!email) return [];
   const query = `type:user ${email}`;
-  const data = await zendeskSupportGet("/api/v2/users/search.json", { query });
+  const data = await supportClient.get("/api/v2/users/search.json", { query });
   return Array.isArray(data?.users) ? data.users : [];
 }
 
@@ -3744,7 +3600,7 @@ async function searchSupportByPhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return [];
   const query = `role:end-user phone:*${digits}`;
-  const data = await zendeskSupportGet("/api/v2/search.json", { query });
+  const data = await supportClient.get("/api/v2/search.json", { query });
   return Array.isArray(data?.results) ? data.results.filter((item) => item?.result_type === "user") : [];
 }
 
@@ -3752,7 +3608,7 @@ async function searchSupportByName(name) {
   if (!name) return [];
   const query = normalizeSpaces(name);
   if (!query) return [];
-  const data = await zendeskSupportGet("/api/v2/users/search.json", { query });
+  const data = await supportClient.get("/api/v2/users/search.json", { query });
   return Array.isArray(data?.users) ? data.users : [];
 }
 
@@ -3762,7 +3618,7 @@ async function searchTicketsForUserIds(userIds) {
 
   for (const userId of uniqueIds) {
     try {
-      const data = await zendeskSupportGet("/api/v2/search.json", {
+      const data = await supportClient.get("/api/v2/search.json", {
         query: `type:ticket requester_id:${userId}`,
         sort_by: "updated_at",
         sort_order: "desc"
@@ -3966,13 +3822,13 @@ function buildZendeskSyncPayloadFromState(state, info) {
 
 async function getZendeskUser(userId) {
   if (!userId) return null;
-  const data = await zendeskSupportGet(`/api/v2/users/${userId}.json`);
+  const data = await supportClient.get(`/api/v2/users/${userId}.json`);
   return data?.user || null;
 }
 
 async function listZendeskUserIdentities(userId) {
   if (!userId) return [];
-  const data = await zendeskSupportGet(`/api/v2/users/${userId}/identities.json`);
+  const data = await supportClient.get(`/api/v2/users/${userId}/identities.json`);
   return Array.isArray(data?.identities) ? data.identities : [];
 }
 
@@ -3980,7 +3836,7 @@ async function createZendeskUserIdentity(userId, identity, options = {}) {
   if (!userId || !identity?.type || !identity?.value) {
     return null;
   }
-  const data = await zendeskSupportPost(`/api/v2/users/${userId}/identities.json`, {
+  const data = await supportClient.post(`/api/v2/users/${userId}/identities.json`, {
     identity,
     ...options
   });
@@ -3991,7 +3847,7 @@ async function updateZendeskUser(userId, user) {
   if (!userId || !user || typeof user !== "object") {
     return null;
   }
-  const data = await zendeskSupportPut(`/api/v2/users/${userId}.json`, { user });
+  const data = await supportClient.put(`/api/v2/users/${userId}.json`, { user });
   return data?.user || null;
 }
 
@@ -4795,7 +4651,7 @@ app.post("/ticket-assigned", async (req, res) => {
         ticketId: ticketId || state.identity?.zendeskTicketId || null,
         state,
         resolverDecision: resolverForNote,
-        zendeskSupportPut,
+        zendeskSupportPut: supportClient.put,
         logger: console
       });
     } catch (eugeniaErr) {
@@ -4847,7 +4703,7 @@ app.post("/ticket-updated", async (req, res) => {
       ticketId,
       audits,
       state,
-      zendeskSupportPut,
+      zendeskSupportPut: supportClient.put,
       logger: console
     });
 
@@ -5014,7 +4870,7 @@ app.post("/messages", async (req, res) => {
           ticketId: state.identity?.zendeskTicketId || null,
           state,
           resolverDecision: resolverForMutedPatient,
-          zendeskSupportPut,
+          zendeskSupportPut: supportClient.put,
           logger: console
         });
       } catch (eugeniaErr) {
