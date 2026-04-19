@@ -563,6 +563,8 @@ export async function whatsappCallsRecent(limit = 50) {
            c.received_at, c.accepted_at, c.ended_at,
            c.ring_seconds, c.duration_seconds, c.hour_of_day, c.day_of_week,
            c.client_phone, c.outcome_proxy,
+           COALESCE(c.source, 'waha') AS source,
+           c.contact_name, c.client_lid,
            conv.customer_id,
            cust.nombres AS customer_nombres, cust.apellidos AS customer_apellidos
     FROM agent_direct_calls c
@@ -572,6 +574,80 @@ export async function whatsappCallsRecent(limit = 50) {
     LIMIT $1
   `, [limit]);
   return rows;
+}
+
+// ── Mac Desktop call import ──
+
+export async function importMacCalls(calls, agentPhone) {
+  const p = getPool();
+  let inserted = 0;
+  let skipped = 0;
+  let lidMapsCreated = 0;
+
+  for (const call of calls) {
+    const {
+      call_id, direction, client_phone, client_lid, contact_name,
+      is_video, is_missed, duration_seconds, status, received_at,
+      hour_of_day, day_of_week,
+    } = call;
+
+    if (!call_id) { skipped++; continue; }
+
+    // Upsert LID → phone mapping if both present
+    if (client_lid && client_phone) {
+      const { rowCount } = await p.query(`
+        INSERT INTO whatsapp_lid_phone_map (lid, phone, source, full_name)
+        VALUES ($1, $2, 'mac-desktop', $3)
+        ON CONFLICT (lid) DO UPDATE SET
+          phone = EXCLUDED.phone,
+          full_name = COALESCE(EXCLUDED.full_name, whatsapp_lid_phone_map.full_name),
+          updated_at = now()
+      `, [client_lid, client_phone, contact_name || null]);
+      if (rowCount > 0) lidMapsCreated++;
+    }
+
+    // Try to find matching conversation
+    let conversationId = null;
+    if (client_phone) {
+      const { rows: convRows } = await p.query(
+        `SELECT id FROM agent_direct_conversations WHERE client_phone = $1 LIMIT 1`,
+        [client_phone]
+      );
+      if (convRows[0]) conversationId = convRows[0].id;
+    }
+
+    // Compute accepted_at and ended_at from duration
+    const receivedDt = new Date(received_at);
+    let acceptedAt = null;
+    let endedAt = null;
+    if (status === 'ended' && duration_seconds > 0) {
+      acceptedAt = receivedDt;
+      endedAt = new Date(receivedDt.getTime() + duration_seconds * 1000);
+    }
+
+    const sessionName = agentPhone ? `mac:${agentPhone}` : 'mac:unknown';
+
+    const { rowCount } = await p.query(`
+      INSERT INTO agent_direct_calls
+        (call_id, conversation_id, session_name, client_phone, direction,
+         is_video, received_at, accepted_at, ended_at,
+         duration_seconds, status, hour_of_day, day_of_week,
+         source, contact_name, client_lid)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+              'mac-desktop', $14, $15)
+      ON CONFLICT (call_id) DO NOTHING
+    `, [
+      call_id, conversationId, sessionName, client_phone || '', direction,
+      is_video, receivedDt, acceptedAt, endedAt,
+      duration_seconds || null, status, hour_of_day, day_of_week,
+      contact_name || null, client_lid || null,
+    ]);
+
+    if (rowCount > 0) inserted++;
+    else skipped++;
+  }
+
+  return { inserted, skipped, lidMapsCreated, total: calls.length };
 }
 
 // ═══════════════════════════════════════════════════════════════════

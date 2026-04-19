@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.clinyco.call-extractor</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/python3</string>
+		<string>REPLACE_WITH_FULL_PATH/tools/mac-call-extractor/extract.py</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>MAC_CALLS_API_URL</key>
+		<string>https://clinyco-ai.onrender.com/api/review/mac-calls-import</string>
+		<key>MAC_CALLS_API_KEY</key>
+		<string>REPLACE_WITH_API_KEY</string>
+		<key>MAC_AGENT_PHONE</key>
+		<string>+56987297033</string>
+	</dict>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>StandardOutPath</key>
+	<string>/tmp/clinyco-call-extractor.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/clinyco-call-extractor.log</string>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>

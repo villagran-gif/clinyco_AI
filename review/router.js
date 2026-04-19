@@ -24,6 +24,7 @@ import {
   whatsappCallsSummary,
   whatsappCallsBestTime,
   whatsappCallsRecent,
+  importMacCalls,
   zendeskSentiment,
   zendeskSignals,
   zendeskSentimentDetail,
@@ -283,6 +284,30 @@ router.get(
   wrap(async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     res.json(await whatsappCallsRecent(limit));
+  })
+);
+
+// ── Mac Desktop call import (outbound calls not visible to WAHA) ──
+
+const MAC_CALLS_API_KEY = process.env.MAC_CALLS_API_KEY || "";
+
+router.post(
+  "/mac-calls-import",
+  wrap(async (req, res) => {
+    const auth = req.headers.authorization || "";
+    const token = auth.replace(/^Bearer\s+/i, "");
+    if (!MAC_CALLS_API_KEY || token !== MAC_CALLS_API_KEY) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    const { calls, agentPhone } = req.body || {};
+    if (!Array.isArray(calls) || calls.length === 0) {
+      return res.status(400).json({ error: "calls array required" });
+    }
+    if (calls.length > 500) {
+      return res.status(400).json({ error: "max 500 calls per request" });
+    }
+    const result = await importMacCalls(calls, agentPhone || "");
+    res.json(result);
   })
 );
 

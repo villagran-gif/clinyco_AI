@@ -19,11 +19,28 @@ function normalizePhone(raw) {
 }
 
 /**
+ * Detect WhatsApp LID (Local Identifier) — an internal opaque ID
+ * that replaced phone numbers in some webhook payloads.
+ * LIDs: 15-digit numbers not starting with valid country codes.
+ */
+function isLid(chatId) {
+  if (!chatId) return false;
+  if (chatId.includes("@lid")) return true;
+  const digits = chatId.replace(/\D/g, "");
+  return digits.length === 15 && !digits.startsWith("56");
+}
+
+/**
  * Extract the client phone from a WAHA chatId.
  * chatId format: "56912345678@c.us" or "56912345678@s.whatsapp.net"
+ * Returns null for LID-format chatIds to prevent DB pollution.
  */
 function extractPhoneFromChatId(chatId) {
   if (!chatId) return null;
+  if (isLid(chatId)) {
+    console.warn(`[customer-matcher] Detected LID chatId, skipping: ${chatId}`);
+    return null;
+  }
   const raw = chatId.split("@")[0];
   return normalizePhone(raw);
 }
@@ -76,4 +93,4 @@ export async function findOrCreateConversation(sessionName, chatId) {
   return conversation;
 }
 
-export { normalizePhone, extractPhoneFromChatId };
+export { normalizePhone, extractPhoneFromChatId, isLid };
