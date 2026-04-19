@@ -35,7 +35,7 @@ function setup({ withSatellite = true } = {}) {
 
 test("mirror GET returns Zendesk response and mirrors to satellite", async () => {
   const { client, calls } = setup();
-  const data = await client.supportGet("/api/v2/users/42.json");
+  const data = await client.get("/api/v2/users/42.json");
   assert.deepEqual(data, ZENDESK_FIXTURES.user);
 
   // Drain any pending microtasks from the background mirror call.
@@ -51,7 +51,7 @@ test("mirror GET returns Zendesk response and mirrors to satellite", async () =>
 
 test("mirror PUT returns Zendesk response and mirrors to satellite", async () => {
   const { client, calls } = setup();
-  await client.supportPut("/api/v2/users/42.json", {
+  await client.put("/api/v2/users/42.json", {
     user: { user_fields: { rut: "13580388-K" } }
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -67,7 +67,7 @@ test("mirror PUT returns Zendesk response and mirrors to satellite", async () =>
 
 test("mirror backend works even when satellite creds are missing", async () => {
   const { client, calls } = setup({ withSatellite: false });
-  const data = await client.supportGet("/api/v2/users/42.json");
+  const data = await client.get("/api/v2/users/42.json");
   assert.deepEqual(data, ZENDESK_FIXTURES.user);
 
   await new Promise((resolve) => setImmediate(resolve));
@@ -78,7 +78,7 @@ test("mirror backend works even when satellite creds are missing", async () => {
 
 test("mirror supportGetByUrl only hits the primary", async () => {
   const { client, calls } = setup();
-  await client.supportGetByUrl("https://clinyco.zendesk.com/api/v2/users/42.json?page=2");
+  await client.getByUrl("https://clinyco.zendesk.com/api/v2/users/42.json?page=2");
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(calls.length, 1);

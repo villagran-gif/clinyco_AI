@@ -17,7 +17,7 @@ test("zendesk backend composes subdomain URL and Basic auth", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.user);
 
-  const data = await client.supportGet("/api/v2/users/42.json");
+  const data = await client.get("/api/v2/users/42.json");
   assert.deepEqual(data, ZENDESK_FIXTURES.user);
 
   const call = fetchStub.calls[0];
@@ -32,7 +32,7 @@ test("zendesk supportGet serializes non-empty params only", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.userSearch);
 
-  await client.supportGet("/api/v2/users/search.json", {
+  await client.get("/api/v2/users/search.json", {
     query: 'email:"jane@example.com"',
     page: 1,
     blank: "",
@@ -53,7 +53,7 @@ test("zendesk supportPost sends JSON body", async () => {
   fetchStub.replyJson(ZENDESK_FIXTURES.ticket);
 
   const body = { ticket: { subject: "Hola", requester_id: 42 } };
-  const data = await client.supportPost("/api/v2/tickets.json", body);
+  const data = await client.post("/api/v2/tickets.json", body);
   assert.deepEqual(data, ZENDESK_FIXTURES.ticket);
 
   const call = fetchStub.calls[0];
@@ -67,7 +67,7 @@ test("zendesk supportPut sends JSON body", async () => {
   fetchStub.replyJson(ZENDESK_FIXTURES.ticket);
 
   const body = { ticket: { status: "solved", comment: { body: "done", public: false } } };
-  await client.supportPut("/api/v2/tickets/7001.json", body);
+  await client.put("/api/v2/tickets/7001.json", body);
 
   const call = fetchStub.calls[0];
   assert.equal(call.method, "PUT");
@@ -79,28 +79,28 @@ test("zendesk supportGetByUrl validates host", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.ticketAudits);
 
-  await client.supportGetByUrl("https://clinyco.zendesk.com/api/v2/tickets/7001/audits.json?page=2");
+  await client.getByUrl("https://clinyco.zendesk.com/api/v2/tickets/7001/audits.json?page=2");
   assert.equal(
     fetchStub.calls[0].url,
     "https://clinyco.zendesk.com/api/v2/tickets/7001/audits.json?page=2"
   );
 
   await assert.rejects(
-    client.supportGetByUrl("https://evil.example.com/api/v2/users/42.json"),
+    client.getByUrl("https://evil.example.com/api/v2/users/42.json"),
     /Unexpected Zendesk host/
   );
 });
 
 test("zendesk backend throws on missing config", async () => {
   const { client } = makeClient({ ZENDESK_SUBDOMAIN: "" });
-  await assert.rejects(client.supportGet("/api/v2/users/1.json"), /Missing ZENDESK_SUBDOMAIN/);
+  await assert.rejects(client.get("/api/v2/users/1.json"), /Missing ZENDESK_SUBDOMAIN/);
 
   const client2 = createZendeskBackend({
     env: { ZENDESK_SUBDOMAIN: "clinyco" },
     fetch: makeFetchStub()
   });
   await assert.rejects(
-    client2.supportGet("/api/v2/users/1.json"),
+    client2.get("/api/v2/users/1.json"),
     /Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN/
   );
 });
@@ -109,7 +109,7 @@ test("zendesk backend surfaces HTTP errors with body", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.reply(422, { error: "RecordInvalid" });
   await assert.rejects(
-    client.supportPut("/api/v2/users/42.json", { user: { email: "bad" } }),
+    client.put("/api/v2/users/42.json", { user: { email: "bad" } }),
     /Zendesk Support request failed: 422/
   );
 });

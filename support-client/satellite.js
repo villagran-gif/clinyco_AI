@@ -50,7 +50,7 @@ export function createSatelliteBackend({ env = process.env, fetch = globalThis.f
     };
   }
 
-  async function supportGet(path, params = {}) {
+  async function get(path, params = {}) {
     const cfg = readConfig(env);
     requireConfig(cfg);
     const url = composeUrl(cfg.baseUrl, path);
@@ -66,7 +66,7 @@ export function createSatelliteBackend({ env = process.env, fetch = globalThis.f
     return parseResponse(response);
   }
 
-  async function supportPost(path, body = {}) {
+  async function post(path, body = {}) {
     const cfg = readConfig(env);
     requireConfig(cfg);
     const url = composeUrl(cfg.baseUrl, path);
@@ -78,7 +78,7 @@ export function createSatelliteBackend({ env = process.env, fetch = globalThis.f
     return parseResponse(response);
   }
 
-  async function supportPut(path, body = {}) {
+  async function put(path, body = {}) {
     const cfg = readConfig(env);
     requireConfig(cfg);
     const url = composeUrl(cfg.baseUrl, path);
@@ -90,7 +90,7 @@ export function createSatelliteBackend({ env = process.env, fetch = globalThis.f
     return parseResponse(response);
   }
 
-  async function supportGetByUrl(rawUrl) {
+  async function getByUrl(rawUrl) {
     const cfg = readConfig(env);
     requireConfig(cfg);
     const parsed = new URL(String(rawUrl || ""));
@@ -106,9 +106,9 @@ export function createSatelliteBackend({ env = process.env, fetch = globalThis.f
 
   return {
     backend: "satellite",
-    supportGet,
-    supportPost,
-    supportPut,
-    supportGetByUrl
+    get,
+    post,
+    put,
+    getByUrl
   };
 }

@@ -17,7 +17,7 @@ test("satellite supportGet composes base URL with X-API-Key", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.user);
 
-  const data = await client.supportGet("/api/v2/users/42.json");
+  const data = await client.get("/api/v2/users/42.json");
   assert.deepEqual(data, ZENDESK_FIXTURES.user);
 
   const call = fetchStub.calls[0];
@@ -36,7 +36,7 @@ test("satellite supportGet serializes params (empty-value skipping)", async () =
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.userSearch);
 
-  await client.supportGet("/api/v2/users/search.json", {
+  await client.get("/api/v2/users/search.json", {
     query: 'email:"jane@example.com"',
     page: 1,
     blank: "",
@@ -57,7 +57,7 @@ test("satellite supportPost sends JSON body", async () => {
   fetchStub.replyJson(ZENDESK_FIXTURES.ticket);
 
   const body = { ticket: { subject: "Hola", requester_id: 42 } };
-  await client.supportPost("/api/v2/tickets", body);
+  await client.post("/api/v2/tickets", body);
 
   const call = fetchStub.calls[0];
   assert.equal(call.method, "POST");
@@ -72,7 +72,7 @@ test("satellite supportPut accepts .json suffix (middleware strips it)", async (
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.ticket);
 
-  await client.supportPut("/api/v2/tickets/7001.json", {
+  await client.put("/api/v2/tickets/7001.json", {
     ticket: { status: "solved" }
   });
 
@@ -88,7 +88,7 @@ test("satellite supportGetByUrl validates host", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.replyJson(ZENDESK_FIXTURES.ticketAudits);
 
-  await client.supportGetByUrl(
+  await client.getByUrl(
     "https://sell-medinet-backend.onrender.com/support/api/v2/tickets/7001/audits?page=2"
   );
   assert.equal(
@@ -97,7 +97,7 @@ test("satellite supportGetByUrl validates host", async () => {
   );
 
   await assert.rejects(
-    client.supportGetByUrl("https://clinyco.zendesk.com/api/v2/users/42.json"),
+    client.getByUrl("https://clinyco.zendesk.com/api/v2/users/42.json"),
     /Unexpected satellite host/
   );
 });
@@ -108,7 +108,7 @@ test("satellite backend requires base URL and API key", async () => {
     fetch: makeFetchStub()
   });
   await assert.rejects(
-    noBase.supportGet("/api/v2/users/1"),
+    noBase.get("/api/v2/users/1"),
     /Missing SUPPORT_SATELLITE_BASE_URL/
   );
 
@@ -117,7 +117,7 @@ test("satellite backend requires base URL and API key", async () => {
     fetch: makeFetchStub()
   });
   await assert.rejects(
-    noKey.supportGet("/api/v2/users/1"),
+    noKey.get("/api/v2/users/1"),
     /Missing SUPPORT_SATELLITE_API_KEY/
   );
 });
@@ -126,7 +126,7 @@ test("satellite backend surfaces HTTP errors with body", async () => {
   const { client, fetchStub } = makeClient();
   fetchStub.reply(404, { error: "RecordNotFound" });
   await assert.rejects(
-    client.supportGet("/api/v2/users/99999"),
+    client.get("/api/v2/users/99999"),
     /Support satellite request failed: 404/
   );
 });

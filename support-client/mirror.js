@@ -45,23 +45,23 @@ export function createMirrorBackend({ env = process.env, fetch = globalThis.fetc
 
   return {
     backend: "mirror",
-    async supportGet(path, params) {
-      const result = await primary.supportGet(path, params);
-      mirror("supportGet", [path, params]);
+    async get(path, params) {
+      const result = await primary.get(path, params);
+      mirror("get", [path, params]);
       return result;
     },
-    async supportPost(path, body) {
-      const result = await primary.supportPost(path, body);
-      mirror("supportPost", [path, body]);
+    async post(path, body) {
+      const result = await primary.post(path, body);
+      mirror("post", [path, body]);
       return result;
     },
-    async supportPut(path, body) {
-      const result = await primary.supportPut(path, body);
-      mirror("supportPut", [path, body]);
+    async put(path, body) {
+      const result = await primary.put(path, body);
+      mirror("put", [path, body]);
       return result;
     },
-    async supportGetByUrl(url) {
-      return primary.supportGetByUrl(url);
+    async getByUrl(url) {
+      return primary.getByUrl(url);
     }
   };
 }

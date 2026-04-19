@@ -42,7 +42,7 @@ test("contract: GET /api/v2/users/:id returns { user: {...} }", async () => {
   const pair = makePair();
   await assertSameShape(
     pair,
-    (b) => b.supportGet("/api/v2/users/42.json"),
+    (b) => b.get("/api/v2/users/42.json"),
     ZENDESK_FIXTURES.user
   );
 });
@@ -51,7 +51,7 @@ test("contract: GET /api/v2/users/:id/identities returns { identities, count, ..
   const pair = makePair();
   await assertSameShape(
     pair,
-    (b) => b.supportGet("/api/v2/users/42/identities.json"),
+    (b) => b.get("/api/v2/users/42/identities.json"),
     ZENDESK_FIXTURES.identities
   );
 });
@@ -64,7 +64,7 @@ test("contract: POST /api/v2/users/:id/identities returns { identity } envelope"
   await assertSameShape(
     pair,
     (b) =>
-      b.supportPost("/api/v2/users/42/identities.json", {
+      b.post("/api/v2/users/42/identities.json", {
         identity: { type: "email", value: "new@example.com" }
       }),
     response
@@ -76,7 +76,7 @@ test("contract: PUT /api/v2/users/:id returns { user } envelope", async () => {
   await assertSameShape(
     pair,
     (b) =>
-      b.supportPut("/api/v2/users/42.json", {
+      b.put("/api/v2/users/42.json", {
         user: { user_fields: { rut: "13580388-K" } }
       }),
     ZENDESK_FIXTURES.user
@@ -88,7 +88,7 @@ test("contract: GET /api/v2/users/search?query=... returns { users, count, next_
   await assertSameShape(
     pair,
     (b) =>
-      b.supportGet("/api/v2/users/search.json", {
+      b.get("/api/v2/users/search.json", {
         query: 'email:"jane@example.com"'
       }),
     ZENDESK_FIXTURES.userSearch
@@ -100,7 +100,7 @@ test("contract: POST /api/v2/tickets returns { ticket, audit } envelope", async 
   await assertSameShape(
     pair,
     (b) =>
-      b.supportPost("/api/v2/tickets.json", {
+      b.post("/api/v2/tickets.json", {
         ticket: {
           subject: "Hola",
           comment: { body: "hola", public: false },
@@ -116,7 +116,7 @@ test("contract: GET /api/v2/tickets/:id returns { ticket }", async () => {
   const pair = makePair();
   await assertSameShape(
     pair,
-    (b) => b.supportGet("/api/v2/tickets/7001.json"),
+    (b) => b.get("/api/v2/tickets/7001.json"),
     { ticket: ZENDESK_FIXTURES.ticket.ticket }
   );
 });
@@ -126,7 +126,7 @@ test("contract: PUT /api/v2/tickets/:id returns { ticket, audit }", async () => 
   await assertSameShape(
     pair,
     (b) =>
-      b.supportPut("/api/v2/tickets/7001.json", {
+      b.put("/api/v2/tickets/7001.json", {
         ticket: {
           status: "solved",
           comment: { body: "done", public: false }
@@ -140,7 +140,7 @@ test("contract: GET /api/v2/tickets/:id/audits returns { audits, count, next_pag
   const pair = makePair();
   await assertSameShape(
     pair,
-    (b) => b.supportGet("/api/v2/tickets/7001/audits.json"),
+    (b) => b.get("/api/v2/tickets/7001/audits.json"),
     ZENDESK_FIXTURES.ticketAudits
   );
 });
@@ -149,7 +149,7 @@ test("contract: GET /api/v2/tickets/:id/comments returns { comments, count, ... 
   const pair = makePair();
   await assertSameShape(
     pair,
-    (b) => b.supportGet("/api/v2/tickets/7001/comments.json"),
+    (b) => b.get("/api/v2/tickets/7001/comments.json"),
     ZENDESK_FIXTURES.ticketComments
   );
 });
@@ -159,7 +159,7 @@ test("contract: GET /api/v2/search?query=type:ticket returns { results, count, .
   await assertSameShape(
     pair,
     (b) =>
-      b.supportGet("/api/v2/search.json", {
+      b.get("/api/v2/search.json", {
         query: "type:ticket status:open"
       }),
     ZENDESK_FIXTURES.searchTickets
@@ -178,8 +178,8 @@ test("contract: both backends send the same HTTP method and body for writes", as
       requester_id: 42
     }
   };
-  await pair.zendesk.supportPost("/api/v2/tickets.json", payload);
-  await pair.satellite.supportPost("/api/v2/tickets.json", payload);
+  await pair.zendesk.post("/api/v2/tickets.json", payload);
+  await pair.satellite.post("/api/v2/tickets.json", payload);
 
   assert.equal(pair.zStub.calls[0].method, pair.sStub.calls[0].method);
   assert.equal(pair.zStub.calls[0].body, pair.sStub.calls[0].body);
@@ -194,8 +194,8 @@ test("contract: query param serialization (empty/null skipping) matches", async 
   pair.sStub.replyJson(ZENDESK_FIXTURES.userSearch);
 
   const params = { query: "name:\"Jane\"", page: 1, blank: "", nullish: null };
-  await pair.zendesk.supportGet("/api/v2/users/search.json", params);
-  await pair.satellite.supportGet("/api/v2/users/search.json", params);
+  await pair.zendesk.get("/api/v2/users/search.json", params);
+  await pair.satellite.get("/api/v2/users/search.json", params);
 
   const zParams = new URL(pair.zStub.calls[0].url).searchParams;
   const sParams = new URL(pair.sStub.calls[0].url).searchParams;

@@ -11,10 +11,10 @@
 //   mirror              — dual-write to both, diff in support.sync_log (stub)
 //
 // All backends expose the same four functions:
-//   supportGet(path, params?) -> json
-//   supportPost(path, body)   -> json
-//   supportPut(path, body)    -> json
-//   supportGetByUrl(url)      -> json
+//   get(path, params?) -> json
+//   post(path, body)   -> json
+//   put(path, body)    -> json
+//   getByUrl(url)      -> json
 //
 // Paths use Zendesk form (e.g. "/api/v2/users/123.json"). The `.json` suffix
 // is accepted by both backends; the satellite middleware strips it.

@@ -43,7 +43,7 @@ async function parseResponse(response) {
 }
 
 export function createZendeskBackend({ env = process.env, fetch = globalThis.fetch } = {}) {
-  async function supportGet(path, params = {}) {
+  async function get(path, params = {}) {
     const cfg = readConfig(env);
     const header = requireConfig(cfg);
     const url = new URL(`https://${cfg.subdomain}${ZENDESK_HOST_SUFFIX}${path}`);
@@ -59,7 +59,7 @@ export function createZendeskBackend({ env = process.env, fetch = globalThis.fet
     return parseResponse(response);
   }
 
-  async function supportPost(path, body = {}) {
+  async function post(path, body = {}) {
     const cfg = readConfig(env);
     const header = requireConfig(cfg);
     const url = new URL(`https://${cfg.subdomain}${ZENDESK_HOST_SUFFIX}${path}`);
@@ -71,7 +71,7 @@ export function createZendeskBackend({ env = process.env, fetch = globalThis.fet
     return parseResponse(response);
   }
 
-  async function supportPut(path, body = {}) {
+  async function put(path, body = {}) {
     const cfg = readConfig(env);
     const header = requireConfig(cfg);
     const url = new URL(`https://${cfg.subdomain}${ZENDESK_HOST_SUFFIX}${path}`);
@@ -83,7 +83,7 @@ export function createZendeskBackend({ env = process.env, fetch = globalThis.fet
     return parseResponse(response);
   }
 
-  async function supportGetByUrl(rawUrl) {
+  async function getByUrl(rawUrl) {
     const cfg = readConfig(env);
     const header = requireConfig(cfg);
     const parsed = new URL(String(rawUrl || ""));
@@ -100,9 +100,9 @@ export function createZendeskBackend({ env = process.env, fetch = globalThis.fet
 
   return {
     backend: "zendesk",
-    supportGet,
-    supportPost,
-    supportPut,
-    supportGetByUrl
+    get,
+    post,
+    put,
+    getByUrl
   };
 }
