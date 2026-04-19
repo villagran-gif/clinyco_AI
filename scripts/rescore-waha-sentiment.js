@@ -47,7 +47,7 @@ async function main() {
   const start = Date.now();
 
   const { rows: pending } = await pool.query(
-    `SELECT id, body FROM agent_direct_messages
+    `SELECT id, body, sentiment_confidence AS old_confidence FROM agent_direct_messages
      WHERE (sentiment_confidence < $1 OR sentiment_model = 'keyword-v1')
        AND sent_at >= now() - ($2 || ' days')::interval
        AND body IS NOT NULL AND LENGTH(body) > 10
@@ -88,6 +88,7 @@ async function main() {
         ]
       );
 
+      totalOldConf += parseFloat(msg.old_confidence) || 0;
       totalNewConf += a.sentimentConfidence;
       processed++;
       changed++;
@@ -101,7 +102,7 @@ async function main() {
 
   const duration = ((Date.now() - start) / 1000).toFixed(1);
   const avgConfidenceDelta = changed > 0
-    ? ((totalNewConf / changed) - THRESHOLD).toFixed(3)
+    ? ((totalNewConf - totalOldConf) / changed).toFixed(3)
     : 0;
 
   const summary = { processed, changed, errors, avgConfidenceDelta, durationSeconds: parseFloat(duration) };
