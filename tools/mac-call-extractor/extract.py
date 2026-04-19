@@ -25,10 +25,65 @@ from pathlib import Path
 
 APPLE_EPOCH_OFFSET = 978307200  # seconds between 1970-01-01 and 2001-01-01
 
-WA_SHARED = Path.home() / "Library/Group Containers/group.net.whatsapp.WhatsApp.shared"
-CALL_DB = WA_SHARED / "CallHistory.sqlite"
-CONTACTS_DB = WA_SHARED / "ContactsV2.sqlite"
-STATE_FILE = Path(__file__).parent / ".last-extract-ts"
+# Candidate group containers for WhatsApp (personal) and WhatsApp Business.
+# We probe each in order and use the first one that has CallHistory.sqlite.
+CANDIDATE_CONTAINERS = [
+    "group.net.whatsapp.WhatsApp.shared",       # Personal WhatsApp (Mac App Store + direct)
+    "group.net.whatsapp.WhatsAppSMB.shared",    # WhatsApp Business (likely)
+    "group.net.whatsapp.WhatsAppBusiness.shared",
+    "group.net.whatsapp.family",                # Some newer builds
+]
+
+STATE_FILE = Path.home() / ".clinyco-call-extractor.ts"
+
+
+def find_wa_databases():
+    """Return (call_db, contacts_db, which_app) for the first container that exists.
+
+    Also tries a glob fallback so we catch any container we haven't seen yet.
+    """
+    base = Path.home() / "Library/Group Containers"
+
+    for name in CANDIDATE_CONTAINERS:
+        container = base / name
+        call_db = container / "CallHistory.sqlite"
+        contacts_db = container / "ContactsV2.sqlite"
+        if call_db.exists() and contacts_db.exists():
+            label = "business" if "SMB" in name or "Business" in name else "personal"
+            return call_db, contacts_db, f"{label} ({name})"
+
+    # Fallback: glob ALL whatsapp-related containers
+    matches = list(base.glob("*whatsapp*"))
+    for container in matches:
+        call_db = container / "CallHistory.sqlite"
+        contacts_db = container / "ContactsV2.sqlite"
+        if call_db.exists() and contacts_db.exists():
+            return call_db, contacts_db, f"detected ({container.name})"
+
+    return None, None, None
+
+
+def cmd_discover():
+    """Print all WhatsApp-related SQLite files on this Mac."""
+    base = Path.home() / "Library/Group Containers"
+    print(f"[discover] Scanning {base}")
+    if not base.exists():
+        print(f"[discover] Directory does not exist: {base}")
+        return
+    matches = list(base.glob("*whatsapp*"))
+    if not matches:
+        print("[discover] No WhatsApp containers found.")
+        print("[discover] Is WhatsApp (or WhatsApp Business) installed?")
+        return
+    for container in matches:
+        print(f"\n[discover] Container: {container.name}")
+        sqlite_files = list(container.glob("*.sqlite"))
+        if not sqlite_files:
+            print("  (no .sqlite files)")
+            continue
+        for f in sqlite_files:
+            size_kb = f.stat().st_size // 1024
+            print(f"  {f.name}  ({size_kb} KB)")
 
 API_URL = os.environ.get("MAC_CALLS_API_URL", "https://clinyco-ai.onrender.com/api/review/mac-calls-import")
 API_KEY = os.environ.get("MAC_CALL_IMPORT_SECRET", "")
@@ -51,15 +106,18 @@ def save_last_timestamp(ts):
 
 def extract_calls(since_apple_ts=0.0):
     """Extract calls from CallHistory.sqlite joined with ContactsV2.sqlite."""
-    if not CALL_DB.exists():
-        print(f"[extract] CallHistory.sqlite not found at {CALL_DB}")
-        return []
-    if not CONTACTS_DB.exists():
-        print(f"[extract] ContactsV2.sqlite not found at {CONTACTS_DB}")
+    call_db, contacts_db, which = find_wa_databases()
+    if not call_db:
+        print("[extract] No WhatsApp databases found.")
+        print("[extract] Run with --discover to see what's on this Mac.")
         return []
 
-    conn = sqlite3.connect(str(CALL_DB))
-    conn.execute(f"ATTACH '{CONTACTS_DB}' AS co")
+    print(f"[extract] Using {which}")
+    print(f"[extract]   calls:    {call_db}")
+    print(f"[extract]   contacts: {contacts_db}")
+
+    conn = sqlite3.connect(str(call_db))
+    conn.execute(f"ATTACH '{contacts_db}' AS co")
 
     query = """
     SELECT
@@ -171,6 +229,10 @@ def post_calls(calls):
 
 
 def main():
+    if "--discover" in sys.argv:
+        cmd_discover()
+        return
+
     dry_run = "--dry-run" in sys.argv
     since_apple = load_last_timestamp()
 
