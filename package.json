@@ -6,6 +6,8 @@
   "scripts": {
     "postinstall": "PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium",
     "start": "node server.js",
+    "test": "node --test tests/*.test.js tests/support-client/*.test.js",
+    "test:support-client": "node --test tests/support-client/*.test.js",
     "monitor:ai": "bash scripts/run-ai-observability.sh",
     "sync:knowledge": "node scripts/sync-knowledge-from-sheets.js",
     "preview:knowledge": "node scripts/preview-knowledge-row.js",
