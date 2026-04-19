@@ -14,12 +14,12 @@ openssl rand -hex 32
 
 ### 2. Add to Render env vars
 
-Add `MAC_CALLS_API_KEY=<the key>` to Render environment variables.
+`MAC_CALL_IMPORT_SECRET=<the key>` should already be set on Render.
 
 ### 3. Test (dry run)
 
 ```bash
-MAC_CALLS_API_KEY=<key> MAC_AGENT_PHONE=+56987297033 python3 extract.py --dry-run
+MAC_CALL_IMPORT_SECRET=<key> MAC_AGENT_PHONE=+56987297033 python3 extract.py --dry-run
 ```
 
 ### 4. Install LaunchAgent
@@ -27,7 +27,7 @@ MAC_CALLS_API_KEY=<key> MAC_AGENT_PHONE=+56987297033 python3 extract.py --dry-ru
 ```bash
 bash install.sh
 # Edit ~/Library/LaunchAgents/com.clinyco.call-extractor.plist
-# Replace REPLACE_WITH_API_KEY with your actual key
+# Replace REPLACE_WITH_SECRET with your actual secret
 launchctl load ~/Library/LaunchAgents/com.clinyco.call-extractor.plist
 ```
 
@@ -49,6 +49,6 @@ tail -f /tmp/clinyco-call-extractor.log
 
 | Var | Required | Description |
 |-----|----------|-------------|
-| `MAC_CALLS_API_KEY` | Yes | Bearer token for auth |
+| `MAC_CALL_IMPORT_SECRET` | Yes | Bearer token for auth |
 | `MAC_CALLS_API_URL` | No | Override server URL (default: Render) |
 | `MAC_AGENT_PHONE` | No | Agent's phone number (e.g., +56987297033) |

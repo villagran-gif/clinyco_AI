@@ -289,14 +289,14 @@ router.get(
 
 // ── Mac Desktop call import (outbound calls not visible to WAHA) ──
 
-const MAC_CALLS_API_KEY = process.env.MAC_CALLS_API_KEY || "";
+const MAC_CALL_IMPORT_SECRET = process.env.MAC_CALL_IMPORT_SECRET || "";
 
 router.post(
   "/mac-calls-import",
   wrap(async (req, res) => {
     const auth = req.headers.authorization || "";
     const token = auth.replace(/^Bearer\s+/i, "");
-    if (!MAC_CALLS_API_KEY || token !== MAC_CALLS_API_KEY) {
+    if (!MAC_CALL_IMPORT_SECRET || token !== MAC_CALL_IMPORT_SECRET) {
       return res.status(401).json({ error: "unauthorized" });
     }
     const { calls, agentPhone } = req.body || {};

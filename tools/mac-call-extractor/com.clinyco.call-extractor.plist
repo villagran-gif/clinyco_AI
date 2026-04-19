@@ -13,8 +13,8 @@
 	<dict>
 		<key>MAC_CALLS_API_URL</key>
 		<string>https://clinyco-ai.onrender.com/api/review/mac-calls-import</string>
-		<key>MAC_CALLS_API_KEY</key>
-		<string>REPLACE_WITH_API_KEY</string>
+		<key>MAC_CALL_IMPORT_SECRET</key>
+		<string>REPLACE_WITH_SECRET</string>
 		<key>MAC_AGENT_PHONE</key>
 		<string>+56987297033</string>
 	</dict>

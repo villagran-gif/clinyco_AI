@@ -3,8 +3,8 @@
 #
 # Usage:
 #   1. Generate an API key:  openssl rand -hex 32
-#   2. Add it to Render env vars as MAC_CALLS_API_KEY
-#   3. Edit the plist: replace REPLACE_WITH_API_KEY and REPLACE_WITH_FULL_PATH
+#   2. Add it to Render env vars as MAC_CALL_IMPORT_SECRET
+#   3. Edit the plist: replace REPLACE_WITH_SECRET and REPLACE_WITH_FULL_PATH
 #   4. Run:  bash install.sh
 
 set -euo pipefail
@@ -23,7 +23,7 @@ sed "s|REPLACE_WITH_FULL_PATH|$SCRIPT_DIR/../..|g" "$PLIST_SRC" > "$PLIST_DST"
 
 echo "Installed plist to $PLIST_DST"
 echo ""
-echo "IMPORTANT: Edit $PLIST_DST and replace REPLACE_WITH_API_KEY with your actual key."
+echo "IMPORTANT: Edit $PLIST_DST and replace REPLACE_WITH_SECRET with your actual secret."
 echo ""
 echo "Then load it:"
 echo "  launchctl load $PLIST_DST"

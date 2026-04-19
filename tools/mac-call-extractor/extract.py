@@ -10,7 +10,7 @@ Databases read (unencrypted):
   ~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/CallHistory.sqlite
   ~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite
 
-Auth: Bearer token via MAC_CALLS_API_KEY env var.
+Auth: Bearer token via MAC_CALL_IMPORT_SECRET env var.
 """
 
 import sqlite3
@@ -31,7 +31,8 @@ CONTACTS_DB = WA_SHARED / "ContactsV2.sqlite"
 STATE_FILE = Path(__file__).parent / ".last-extract-ts"
 
 API_URL = os.environ.get("MAC_CALLS_API_URL", "https://clinyco-ai.onrender.com/api/review/mac-calls-import")
-API_KEY = os.environ.get("MAC_CALLS_API_KEY", "")
+API_KEY = os.environ.get("MAC_CALL_IMPORT_SECRET", "")
+
 AGENT_PHONE = os.environ.get("MAC_AGENT_PHONE", "")
 
 
@@ -133,7 +134,7 @@ def extract_calls(since_apple_ts=0.0):
 def post_calls(calls):
     """POST calls to the Clinyco API."""
     if not API_KEY:
-        print("[extract] MAC_CALLS_API_KEY not set, skipping POST")
+        print("[extract] MAC_CALL_IMPORT_SECRET not set, skipping POST")
         return None
 
     payload = json.dumps({
