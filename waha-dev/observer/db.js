@@ -1,6 +1,11 @@
 import pg from "pg";
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const DATABASE_SSL = String(process.env.DATABASE_SSL || "false").toLowerCase() === "true";
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: DATABASE_SSL ? { rejectUnauthorized: false } : false
+});
 
 pool.on("error", (err) => {
   console.error("[db] Unexpected pool error:", err.message);
@@ -94,7 +99,8 @@ export async function insertMessage({
   pushName, rawJson, bodyClean, bodyTextOnly, emojiList, emojiCount,
   emojiSentimentAvg, emojiSentimentMin, emojiSentimentMax,
   textSentimentScore, wordCount, hasQuestion, hasUrl, detectedSignals,
-  hourOfDay, dayOfWeek, sentAt
+  hourOfDay, dayOfWeek, sentAt,
+  sentimentModel, sentimentConfidence, sentimentRationale, analysisVersion,
 }) {
   const { rows } = await pool.query(
     `INSERT INTO agent_direct_messages (
@@ -102,13 +108,16 @@ export async function insertMessage({
        push_name, raw_json, body_clean, body_text_only, emoji_list, emoji_count,
        emoji_sentiment_avg, emoji_sentiment_min, emoji_sentiment_max,
        text_sentiment_score, word_count, has_question, has_url, detected_signals,
-       hour_of_day, day_of_week, sent_at
+       hour_of_day, day_of_week, sent_at,
+       sentiment_model, sentiment_confidence, sentiment_rationale,
+       sentiment_scored_at, analysis_version
      ) VALUES (
        $1, $2, $3, $4, $5, $6,
        $7, $8, $9, $10, $11, $12,
        $13, $14, $15,
        $16, $17, $18, $19, $20,
-       $21, $22, $23
+       $21, $22, $23,
+       $24, $25, $26, now(), $27
      )
      ON CONFLICT (waha_message_id) WHERE waha_message_id IS NOT NULL
      DO NOTHING
@@ -118,10 +127,78 @@ export async function insertMessage({
       pushName, rawJson, bodyClean, bodyTextOnly, emojiList, emojiCount,
       emojiSentimentAvg, emojiSentimentMin, emojiSentimentMax,
       textSentimentScore, wordCount, hasQuestion, hasUrl, detectedSignals,
-      hourOfDay, dayOfWeek, sentAt
+      hourOfDay, dayOfWeek, sentAt,
+      sentimentModel, sentimentConfidence, sentimentRationale, analysisVersion,
     ]
   );
-  return rows[0] || null; // null if dedup
+  return rows[0] || null;
+}
+
+// ── Agent Direct Calls ──
+
+export async function upsertCallReceived({
+  callId, conversationId, sessionName, clientPhone, direction,
+  isVideo, receivedAt, hourOfDay, dayOfWeek, rawJson,
+}) {
+  const { rows } = await pool.query(
+    `INSERT INTO agent_direct_calls
+       (call_id, conversation_id, session_name, client_phone, direction,
+        is_video, received_at, status, hour_of_day, day_of_week, raw_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'ringing', $8, $9, $10)
+     ON CONFLICT (call_id) DO UPDATE SET
+       conversation_id = COALESCE(agent_direct_calls.conversation_id, EXCLUDED.conversation_id),
+       updated_at = now()
+     RETURNING *`,
+    [callId, conversationId, sessionName, clientPhone, direction,
+     isVideo, receivedAt, hourOfDay, dayOfWeek, rawJson]
+  );
+  return rows[0];
+}
+
+export async function updateCallAccepted(callId, acceptedAt) {
+  const { rows } = await pool.query(
+    `UPDATE agent_direct_calls SET
+       accepted_at = $2,
+       ring_seconds = EXTRACT(EPOCH FROM ($2 - received_at))::INTEGER,
+       status = 'answered',
+       updated_at = now()
+     WHERE call_id = $1
+     RETURNING *`,
+    [callId, acceptedAt]
+  );
+  return rows[0] || null;
+}
+
+export async function updateCallRejected(callId, endedAt, byClient) {
+  const { rows } = await pool.query(
+    `UPDATE agent_direct_calls SET
+       ended_at = $2,
+       ring_seconds = EXTRACT(EPOCH FROM ($2 - received_at))::INTEGER,
+       status = CASE WHEN $3 THEN 'rejected' ELSE 'missed' END,
+       updated_at = now()
+     WHERE call_id = $1
+     RETURNING *`,
+    [callId, endedAt, byClient]
+  );
+  return rows[0] || null;
+}
+
+export async function updateCallEnded(callId, endedAt) {
+  const { rows } = await pool.query(
+    `UPDATE agent_direct_calls SET
+       ended_at = $2,
+       duration_seconds = CASE
+         WHEN accepted_at IS NOT NULL
+           THEN EXTRACT(EPOCH FROM ($2 - accepted_at))::INTEGER
+         ELSE duration_seconds
+       END,
+       status = CASE WHEN status = 'answered' THEN 'ended' ELSE status END,
+       updated_at = now()
+     WHERE call_id = $1
+     RETURNING *`,
+    [callId, endedAt]
+  );
+  return rows[0] || null;
 }
 
 // ── Behavior Metrics ──

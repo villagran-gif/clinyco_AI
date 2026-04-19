@@ -60,6 +60,10 @@
     }
     .source-waha { background: #dbeafe; color: #1e40af; }
     .source-zendesk { background: #fef3c7; color: #92400e; }
+    .btn-sm { padding: 0.25rem 0.6rem; font-size: 0.8rem; border-radius: 4px; cursor: pointer; border: 1px solid #cbd5e1; background: #f8fafc; }
+    .btn-sm.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .btn-sm:hover { background: #e2e8f0; }
+    .btn-sm.active:hover { background: #1d4ed8; }
     .chart-row {
       display: grid; grid-template-columns: 1fr 1fr;
       gap: 1.5rem; margin-bottom: 2rem;
@@ -274,24 +278,113 @@
   <div id="tab-waha" class="tab-content">
     <div id="wa-loading" class="loading">Cargando datos WAHA...</div>
     <div id="wa-content" style="display:none">
-      <div class="chart-row">
-        <div class="chart-box">
-          <h3>Senales de venta por dia <span class="source-tag source-waha">WAHA</span> <button class="help-btn" onclick="showHelp('wa-signals')" title="Ayuda">?</button></h3>
-          <canvas id="chart-wa-signals"></canvas>
+      <!-- Sub-tabs: Sentiment | Precision -->
+      <div style="margin-bottom:1rem;display:flex;gap:.5rem">
+        <button class="btn-sm active" onclick="showWahaSubTab('sentiment',this)">Sentiment</button>
+        <button class="btn-sm" onclick="showWahaSubTab('precision',this)">Precision</button>
+        <button class="btn-sm" onclick="showWahaSubTab('calls',this)">Best time to call</button>
+      </div>
+
+      <!-- SUB-TAB: Sentiment (original) -->
+      <div id="wa-sub-sentiment">
+        <div class="chart-row">
+          <div class="chart-box">
+            <h3>Senales de venta por dia <span class="source-tag source-waha">WAHA</span> <button class="help-btn" onclick="showHelp('wa-signals')" title="Ayuda">?</button></h3>
+            <canvas id="chart-wa-signals"></canvas>
+          </div>
+          <div class="chart-box">
+            <h3>Conversaciones — Sentiment & Senales <button class="help-btn" onclick="showHelp('wa-conversations')" title="Ayuda">?</button></h3>
+            <div style="max-height:400px;overflow:auto">
+              <table id="table-wa-conversations" role="grid">
+                <thead><tr>
+                  <th class="sortable" data-col="0" data-type="text">Cliente</th>
+                  <th class="sortable" data-col="1" data-type="text">Agente</th>
+                  <th class="sortable" data-col="2" data-type="num">Msgs</th>
+                  <th class="sortable" data-col="3" data-type="num">Sent. texto</th>
+                  <th class="sortable" data-col="4" data-type="num">Sent. emoji</th>
+                  <th class="sortable" data-col="5" data-type="num">Buy</th>
+                  <th class="sortable" data-col="6" data-type="num">Obj</th>
+                  <th class="sortable" data-col="7" data-type="num">Commit</th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
         </div>
-        <div class="chart-box">
-          <h3>Conversaciones — Sentiment & Senales <button class="help-btn" onclick="showHelp('wa-conversations')" title="Ayuda">?</button></h3>
+      </div>
+
+      <!-- SUB-TAB: Precision (HITL + accuracy) -->
+      <div id="wa-sub-precision" style="display:none">
+        <div class="kpi-grid" id="kpi-precision"></div>
+        <div class="chart-row">
+          <div class="chart-box">
+            <h3>Accuracy semanal (drift)</h3>
+            <canvas id="chart-wa-drift"></canvas>
+          </div>
+          <div class="chart-box">
+            <h3>Confusion Matrix</h3>
+            <div id="wa-confusion-matrix" style="overflow:auto"></div>
+          </div>
+        </div>
+        <div class="chart-box" style="margin-top:1rem">
+          <h3>Top errores (desacuerdos modelo vs humano)</h3>
           <div style="max-height:400px;overflow:auto">
-            <table id="table-wa-conversations" role="grid">
+            <table id="table-wa-errors" role="grid">
               <thead><tr>
-                <th class="sortable" data-col="0" data-type="text">Cliente</th>
-                <th class="sortable" data-col="1" data-type="text">Agente</th>
-                <th class="sortable" data-col="2" data-type="num">Msgs</th>
-                <th class="sortable" data-col="3" data-type="num">Sent. texto</th>
-                <th class="sortable" data-col="4" data-type="num">Sent. emoji</th>
-                <th class="sortable" data-col="5" data-type="num">Buy</th>
-                <th class="sortable" data-col="6" data-type="num">Obj</th>
-                <th class="sortable" data-col="7" data-type="num">Commit</th>
+                <th>Mensaje</th>
+                <th>Score predicho</th>
+                <th>Modelo</th>
+                <th>Label humano</th>
+                <th>Razon</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="chart-box" style="margin-top:1rem">
+          <h3>Cola de revision (baja confianza) <button class="btn-sm" onclick="loadLowConfidence()">Refrescar</button></h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-wa-lowconf" role="grid">
+              <thead><tr>
+                <th>Mensaje</th>
+                <th>Score</th>
+                <th>Confianza</th>
+                <th>Modelo</th>
+                <th>Accion</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-TAB: Best time to call -->
+      <div id="wa-sub-calls" style="display:none">
+        <div class="kpi-grid" id="kpi-calls"></div>
+        <div class="chart-box" style="margin-top:1rem">
+          <h3>Heatmap: tasa de contestacion por dia y hora (llamadas salientes)
+            <button class="help-btn" onclick="showHelp('wa-calls-heatmap')" title="Ayuda">?</button>
+          </h3>
+          <div style="overflow:auto">
+            <div id="wa-calls-heatmap"></div>
+          </div>
+          <p style="margin-top:.5rem;color:#666;font-size:.85rem">
+            Verde mas intenso = mayor % contestacion. Celdas grises = sin intentos en ventana.
+            Intenta priorizar llamadas en celdas con >60% y >=3 intentos.
+          </p>
+        </div>
+        <div class="chart-box" style="margin-top:1rem">
+          <h3>Llamadas recientes <button class="btn-sm" onclick="loadCallsRecent()">Refrescar</button></h3>
+          <div style="max-height:400px;overflow:auto">
+            <table id="table-wa-calls" role="grid">
+              <thead><tr>
+                <th>Fecha</th>
+                <th>Cliente</th>
+                <th>Direccion</th>
+                <th>Estado</th>
+                <th>Ring (s)</th>
+                <th>Duracion (s)</th>
+                <th>Video</th>
               </tr></thead>
               <tbody></tbody>
             </table>
@@ -1489,6 +1582,202 @@ async function loadWaha() {
     document.getElementById("wa-content").style.display = "block";
     window._wahaLoaded = true;
   } catch (err) { document.getElementById("wa-loading").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`; }
+}
+
+// ── WAHA sub-tabs & precision panel ──
+
+function showWahaSubTab(tab, btn) {
+  document.getElementById("wa-sub-sentiment").style.display = tab === "sentiment" ? "block" : "none";
+  document.getElementById("wa-sub-precision").style.display = tab === "precision" ? "block" : "none";
+  document.getElementById("wa-sub-calls").style.display = tab === "calls" ? "block" : "none";
+  btn.parentElement.querySelectorAll(".btn-sm").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  if (tab === "precision" && !window._precisionLoaded) loadPrecision();
+  if (tab === "calls" && !window._callsLoaded) loadCalls();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API POST ${path}: ${res.status}`);
+  return res.json();
+}
+
+async function loadPrecision() {
+  try {
+    const data = await api("/whatsapp/sentiment-accuracy?days=90");
+    const s = data.summary;
+    const accuracy = s.total_gold > 0 ? Math.round((s.correct / s.total_gold) * 100) : 0;
+    document.getElementById("kpi-precision").innerHTML = `
+      <div class="kpi-card"><h4>Accuracy global</h4><p class="kpi-val">${accuracy}%</p><small>${s.correct}/${s.total_gold} correctos</small></div>
+      <div class="kpi-card"><h4>Gold samples</h4><p class="kpi-val">${s.total_gold}</p></div>
+      <div class="kpi-card"><h4>Baja confianza</h4><p class="kpi-val">${s.low_confidence_total}</p></div>
+    `;
+
+    // Drift chart
+    if (data.drift.length) {
+      new Chart(document.getElementById("chart-wa-drift"), {
+        type: "line",
+        data: {
+          labels: data.drift.map(d => d.week),
+          datasets: [{
+            label: "Accuracy %",
+            data: data.drift.map(d => d.total > 0 ? Math.round((d.correct / d.total) * 100) : null),
+            borderColor: "#2563eb", fill: false, tension: 0.3,
+          }]
+        },
+        options: { responsive: true, scales: { y: { min: 0, max: 100, beginAtZero: true } }, plugins: { legend: { display: false } } }
+      });
+    }
+
+    // Confusion matrix
+    const labels = ["positive", "neutral", "negative"];
+    let html = '<table role="grid" style="width:auto"><thead><tr><th></th>';
+    labels.forEach(l => html += `<th style="text-transform:capitalize">${l}</th>`);
+    html += '</tr></thead><tbody>';
+    for (const actual of labels) {
+      html += `<tr><td><strong style="text-transform:capitalize">${actual}</strong></td>`;
+      for (const pred of labels) {
+        const cell = data.confusion.find(c => c.human_label === actual && c.predicted_label === pred);
+        const val = cell ? cell.count : 0;
+        const bg = actual === pred ? '#dcfce7' : val > 0 ? '#fee2e2' : '';
+        html += `<td style="text-align:center;background:${bg}">${val}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById("wa-confusion-matrix").innerHTML = html;
+
+    // Top errors
+    document.querySelector("#table-wa-errors tbody").innerHTML = data.topErrors.map(e => `<tr>
+      <td title="${(e.body_preview||'').replace(/"/g,'&quot;')}">${shortText(e.body_preview, 60)}</td>
+      <td>${sentimentBadge(e.predicted_score)}</td>
+      <td><small>${e.sentiment_model || '?'}</small></td>
+      <td><strong>${e.human_label}</strong></td>
+      <td><small>${e.rationale || ''}</small></td>
+    </tr>`).join("");
+
+    await loadLowConfidence();
+    window._precisionLoaded = true;
+  } catch (err) {
+    document.getElementById("kpi-precision").innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
+  }
+}
+
+async function loadLowConfidence() {
+  try {
+    const rows = await api("/whatsapp/sentiment-low-confidence?limit=30");
+    document.querySelector("#table-wa-lowconf tbody").innerHTML = rows.map(r => `<tr>
+      <td title="${(r.body_preview||'').replace(/"/g,'&quot;')}">${shortText(r.body_preview, 60)}</td>
+      <td>${sentimentBadge(r.text_sentiment_score)}</td>
+      <td>${r.sentiment_confidence != null ? r.sentiment_confidence.toFixed(2) : '—'}</td>
+      <td><small>${r.sentiment_model || '?'}</small></td>
+      <td>${r.has_feedback ? '<span class="badge badge-green">Done</span>' :
+        `<button class="btn-sm" onclick="submitFeedback(${r.id},'positive',this)" title="Positivo">+</button>
+         <button class="btn-sm" onclick="submitFeedback(${r.id},'neutral',this)" title="Neutro">~</button>
+         <button class="btn-sm" onclick="submitFeedback(${r.id},'negative',this)" title="Negativo">-</button>`
+      }</td>
+    </tr>`).join("");
+  } catch (err) {
+    console.error("[low-confidence]", err);
+  }
+}
+
+async function submitFeedback(messageId, label, btn) {
+  try {
+    btn.disabled = true;
+    await apiPost("/whatsapp/sentiment-feedback", { messageId, humanLabel: label });
+    const row = btn.closest("tr");
+    row.querySelector("td:last-child").innerHTML = '<span class="badge badge-green">Done</span>';
+  } catch (err) {
+    alert("Error: " + err.message);
+    btn.disabled = false;
+  }
+}
+
+// ── Best time to call ──
+
+async function loadCalls() {
+  try {
+    const [summary, heatmap] = await Promise.all([
+      api("/whatsapp/calls-summary?days=90"),
+      api("/whatsapp/calls-best-time?days=90"),
+    ]);
+
+    const answerRate = summary.total_calls > 0
+      ? Math.round(100 * (summary.answered || 0) / summary.total_calls) : 0;
+    document.getElementById("kpi-calls").innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Llamadas (90d)</div><div class="kpi-value">${summary.total_calls || 0}</div></div>
+      <div class="kpi-card"><div class="kpi-label">% contestadas</div><div class="kpi-value">${answerRate}%</div></div>
+      <div class="kpi-card"><div class="kpi-label">Salientes</div><div class="kpi-value">${summary.outbound || 0}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Entrantes</div><div class="kpi-value">${summary.inbound || 0}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Duracion prom.</div><div class="kpi-value">${summary.avg_duration_seconds || 0}s</div></div>
+    `;
+
+    renderCallsHeatmap(heatmap);
+    await loadCallsRecent();
+    window._callsLoaded = true;
+  } catch (err) {
+    console.error("[calls]", err);
+    document.getElementById("kpi-calls").innerHTML =
+      `<div class="error-msg">Error: ${err.message}</div>`;
+  }
+}
+
+function renderCallsHeatmap(rows) {
+  const days = ["Dom","Lun","Mar","Mie","Jue","Vie","Sab"];
+  const grid = {};
+  for (let d = 0; d < 7; d++) grid[d] = {};
+  for (const r of rows) grid[r.day_of_week][r.hour_of_day] = r;
+
+  let html = '<table style="border-collapse:collapse;font-size:.75rem"><thead><tr><th></th>';
+  for (let h = 0; h < 24; h++) html += `<th style="padding:.2rem .3rem">${h}</th>`;
+  html += '</tr></thead><tbody>';
+  for (let d = 0; d < 7; d++) {
+    html += `<tr><td style="padding:.2rem .4rem;font-weight:600">${days[d]}</td>`;
+    for (let h = 0; h < 24; h++) {
+      const cell = grid[d][h];
+      if (!cell || cell.attempts < 1) {
+        html += '<td style="width:24px;height:22px;background:#f3f4f6;border:1px solid #fff" title="sin datos">&nbsp;</td>';
+      } else {
+        const pct = parseFloat(cell.answer_rate_pct) || 0;
+        const alpha = Math.max(0.1, pct / 100);
+        const bg = `rgba(34,197,94,${alpha})`;
+        const label = `${days[d]} ${h}:00 — ${pct}% (${cell.answered}/${cell.attempts})`;
+        html += `<td style="width:24px;height:22px;background:${bg};border:1px solid #fff;text-align:center" title="${label}">${cell.attempts}</td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById("wa-calls-heatmap").innerHTML = html;
+}
+
+async function loadCallsRecent() {
+  try {
+    const rows = await api("/whatsapp/calls-recent?limit=50");
+    const days = ["Dom","Lun","Mar","Mie","Jue","Vie","Sab"];
+    const tbody = document.querySelector("#table-wa-calls tbody");
+    tbody.innerHTML = rows.map(r => {
+      const when = r.received_at ? new Date(r.received_at).toLocaleString("es-CL") : "-";
+      const who = [r.customer_nombres, r.customer_apellidos].filter(Boolean).join(" ") || r.client_phone;
+      const dir = r.direction === "agent_to_client" ? "Saliente" : "Entrante";
+      return `<tr>
+        <td>${when}</td>
+        <td>${who}</td>
+        <td>${dir}</td>
+        <td><span class="badge">${r.status}</span></td>
+        <td>${r.ring_seconds ?? "-"}</td>
+        <td>${r.duration_seconds ?? "-"}</td>
+        <td>${r.is_video ? "Si" : ""}</td>
+      </tr>`;
+    }).join("");
+  } catch (err) {
+    console.error("[calls-recent]", err);
+  }
 }
 
 // ═══════════ ZENDESK ═══════════

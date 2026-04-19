@@ -1,7 +1,13 @@
 FROM node:20-alpine
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY . .
+
+COPY waha-dev/observer/package*.json ./
+RUN npm install --omit=dev
+
+COPY waha-dev/observer/ ./
+
+# Shared analyzers imported via ../../analysis/... at runtime.
+COPY analysis /analysis
+
 EXPOSE 3001
 CMD ["node", "server.js"]

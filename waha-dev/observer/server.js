@@ -3,6 +3,7 @@ import * as db from "./db.js";
 import { findOrCreateConversation } from "./customer-matcher.js";
 import { save as saveMessage } from "./message-store.js";
 import { onMessage as trackBehavior } from "./behavior-tracker.js";
+import { handleCallEvent } from "./call-store.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -47,6 +48,21 @@ app.post("/waha-webhook", async (req, res) => {
     const status = payload.status || "unknown";
     console.log(`[webhook] Session ${sessionName} status: ${status}`);
     return res.json({ ok: true, event: "session.status" });
+  }
+
+  // Call events — best time to call analytics
+  if (event && event.startsWith("call.")) {
+    try {
+      await db.ensureSession(sessionName, DEFAULT_AGENT, null);
+      const call = await handleCallEvent(event, payload, sessionName);
+      if (call) {
+        console.log(`[webhook] ${event} | call=#${call.id} | status=${call.status} | phone=${call.client_phone}`);
+      }
+      return res.json({ ok: true, event, callId: call?.id || null });
+    } catch (err) {
+      console.error(`[webhook] Error processing ${event}:`, err);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   }
 
   // Only process message events

@@ -1,10 +1,11 @@
 /**
  * analysis/sentiment.js — Shared sentiment analysis for all message sources.
- * Reuses the same logic as waha-dev/observer/behavior-tracker.js
- * but works with the main db.js pool (no observer dependency).
  *
- * Used by: server.js (Zendesk messages), review backfill scripts.
+ * Used by: server.js (Zendesk messages), waha-dev/observer (WAHA messages),
+ *          review backfill scripts, refill scripts.
  */
+
+export const ANALYSIS_VERSION = 2;
 
 // ── Regex patterns ──
 const EMOJI_RE = /\p{Emoji_Presentation}|\p{Emoji}\uFE0F/gu;
@@ -56,9 +57,12 @@ const NEGATIVE_WORDS = [
  * @param {string} body - Message text
  * @param {function} getEmojiSentimentBatch - async (emojis[]) => Map<emoji, {sentiment_score}>
  *   Pass null to skip emoji DB lookup (text-only analysis).
+ * @param {object} [opts]
+ * @param {boolean} [opts.useLLM=false] - Use LLM classifier (requires sentiment-llm.js)
+ * @param {function} [opts.getGoldSamples] - async () => gold samples for few-shot
  * @returns {object} Analysis results
  */
-export async function analyzeMessage(body, getEmojiSentimentBatch = null) {
+export async function analyzeMessage(body, getEmojiSentimentBatch = null, opts = {}) {
   const text = body || "";
 
   // ── Emoji extraction ──
@@ -67,6 +71,8 @@ export async function analyzeMessage(body, getEmojiSentimentBatch = null) {
   const emojiCount = emojiMatches.length;
 
   let emojiSentimentAvg = null;
+  let emojiSentimentMin = null;
+  let emojiSentimentMax = null;
   if (emojiList.length > 0 && getEmojiSentimentBatch) {
     const sentimentMap = await getEmojiSentimentBatch(emojiList);
     const scores = [];
@@ -76,10 +82,13 @@ export async function analyzeMessage(body, getEmojiSentimentBatch = null) {
     }
     if (scores.length > 0) {
       emojiSentimentAvg = scores.reduce((a, b) => a + b, 0) / scores.length;
+      emojiSentimentMin = Math.min(...scores);
+      emojiSentimentMax = Math.max(...scores);
     }
   }
 
   // ── Text sentiment ──
+  const bodyClean = text.replace(URL_RE, "").replace(/\s+/g, " ").trim();
   const bodyTextOnly = text.replace(EMOJI_RE, "").replace(URL_RE, "").replace(/\s+/g, " ").trim();
   const lowerText = bodyTextOnly.toLowerCase();
   const words = lowerText.split(/\s+/).filter(Boolean);
@@ -92,12 +101,13 @@ export async function analyzeMessage(body, getEmojiSentimentBatch = null) {
     if (NEGATIVE_WORDS.some((nw) => w.includes(nw))) negCount++;
   }
   const total = posCount + negCount;
-  const textSentimentScore = total > 0
+  let textSentimentScore = total > 0
     ? Math.round(((posCount - negCount) / total) * 1000) / 1000
     : 0;
 
-  // ── Question detection ──
+  // ── Question & URL detection ──
   const hasQuestion = QUESTION_RE.test(text);
+  const hasUrl = URL_RE.test(text);
 
   // ── Sales signals ──
   const detectedSignals = [];
@@ -108,13 +118,41 @@ export async function analyzeMessage(body, getEmojiSentimentBatch = null) {
   if (REFERRAL_SIGNALS.some((s) => lower.includes(s))) detectedSignals.push("referral_signal");
   if (URGENCY_SIGNALS.some((s) => lower.includes(s))) detectedSignals.push("urgency_signal");
 
+  let sentimentModel = "keyword-v1";
+  let sentimentConfidence = total > 0 ? 0.3 : 0.1;
+  let sentimentRationale = null;
+
+  if (opts.useLLM) {
+    try {
+      const { classifyWithLLM } = await import("./sentiment-llm.js");
+      const llmResult = await classifyWithLLM(bodyTextOnly, opts.getGoldSamples);
+      if (llmResult) {
+        textSentimentScore = llmResult.score;
+        sentimentModel = llmResult.model;
+        sentimentConfidence = llmResult.confidence;
+        sentimentRationale = llmResult.rationale;
+      }
+    } catch {
+      // LLM failed — keep keyword results as fallback
+    }
+  }
+
   return {
+    bodyClean,
+    bodyTextOnly,
     emojiList,
     emojiCount,
     emojiSentimentAvg,
+    emojiSentimentMin,
+    emojiSentimentMax,
     textSentimentScore,
     wordCount,
     hasQuestion,
+    hasUrl,
     detectedSignals,
+    sentimentModel,
+    sentimentConfidence,
+    sentimentRationale,
+    analysisVersion: ANALYSIS_VERSION,
   };
 }
