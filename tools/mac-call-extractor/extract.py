@@ -38,52 +38,80 @@ STATE_FILE = Path.home() / ".clinyco-call-extractor.ts"
 
 
 def find_wa_databases():
-    """Return (call_db, contacts_db, which_app) for the first container that exists.
+    """Return (call_db, contacts_db, which_app) for the first container with data.
 
-    Also tries a glob fallback so we catch any container we haven't seen yet.
+    Probes Group Containers AND per-app Containers (sandbox). A container is
+    valid only if it has BOTH CallHistory.sqlite and ContactsV2.sqlite.
     """
-    base = Path.home() / "Library/Group Containers"
+    roots = [
+        Path.home() / "Library/Group Containers",
+        Path.home() / "Library/Containers",
+    ]
 
-    for name in CANDIDATE_CONTAINERS:
-        container = base / name
-        call_db = container / "CallHistory.sqlite"
-        contacts_db = container / "ContactsV2.sqlite"
-        if call_db.exists() and contacts_db.exists():
-            label = "business" if "SMB" in name or "Business" in name else "personal"
-            return call_db, contacts_db, f"{label} ({name})"
+    # Try named candidates first
+    for root in roots:
+        if not root.exists():
+            continue
+        for name in CANDIDATE_CONTAINERS:
+            container = root / name
+            if not container.exists():
+                continue
+            call_db = next(container.rglob("CallHistory.sqlite"), None)
+            contacts_db = next(container.rglob("ContactsV2.sqlite"), None)
+            if call_db and contacts_db:
+                label = "business" if "SMB" in name or "Business" in name else "personal"
+                return call_db, contacts_db, f"{label} ({name})"
 
-    # Fallback: glob ALL whatsapp-related containers
-    matches = list(base.glob("*whatsapp*"))
-    for container in matches:
-        call_db = container / "CallHistory.sqlite"
-        contacts_db = container / "ContactsV2.sqlite"
-        if call_db.exists() and contacts_db.exists():
-            return call_db, contacts_db, f"detected ({container.name})"
+    # Fallback: glob ANY whatsapp-related container that has both DBs
+    for root in roots:
+        if not root.exists():
+            continue
+        for container in list(root.glob("*whatsapp*")) + list(root.glob("*WhatsApp*")):
+            call_db = next(container.rglob("CallHistory.sqlite"), None)
+            contacts_db = next(container.rglob("ContactsV2.sqlite"), None)
+            if call_db and contacts_db:
+                return call_db, contacts_db, f"detected ({container.name})"
 
     return None, None, None
 
 
 def cmd_discover():
-    """Print all WhatsApp-related SQLite files on this Mac."""
-    base = Path.home() / "Library/Group Containers"
-    print(f"[discover] Scanning {base}")
-    if not base.exists():
-        print(f"[discover] Directory does not exist: {base}")
-        return
-    matches = list(base.glob("*whatsapp*"))
-    if not matches:
-        print("[discover] No WhatsApp containers found.")
-        print("[discover] Is WhatsApp (or WhatsApp Business) installed?")
-        return
-    for container in matches:
-        print(f"\n[discover] Container: {container.name}")
-        sqlite_files = list(container.glob("*.sqlite"))
-        if not sqlite_files:
-            print("  (no .sqlite files)")
+    """Print all WhatsApp-related SQLite files on this Mac.
+
+    Checks both ~/Library/Group Containers/ (shared between app variants)
+    and ~/Library/Containers/ (per-app sandbox, used by WhatsApp Business
+    in some installs).
+    """
+    roots = [
+        Path.home() / "Library/Group Containers",
+        Path.home() / "Library/Containers",
+    ]
+    any_found = False
+    for base in roots:
+        print(f"\n[discover] Scanning {base}")
+        if not base.exists():
+            print("  (directory does not exist)")
             continue
-        for f in sqlite_files:
-            size_kb = f.stat().st_size // 1024
-            print(f"  {f.name}  ({size_kb} KB)")
+        matches = list(base.glob("*whatsapp*")) + list(base.glob("*WhatsApp*"))
+        matches = sorted(set(matches))
+        if not matches:
+            print("  (no WhatsApp entries)")
+            continue
+        for container in matches:
+            print(f"\n  Container: {container.name}")
+            sqlite_files = list(container.rglob("*.sqlite"))
+            if not sqlite_files:
+                print("    (no .sqlite files)")
+                continue
+            any_found = True
+            for f in sqlite_files:
+                size_kb = f.stat().st_size // 1024
+                rel = f.relative_to(container)
+                print(f"    {rel}  ({size_kb} KB)")
+    if not any_found:
+        print("\n[discover] No .sqlite files found anywhere.")
+        print("[discover] If WhatsApp is installed, grant Terminal Full Disk Access:")
+        print("[discover]   System Settings → Privacy & Security → Full Disk Access → +Terminal")
 
 API_URL = os.environ.get("MAC_CALLS_API_URL", "https://clinyco-ai.onrender.com/api/review/mac-calls-import")
 API_KEY = os.environ.get("MAC_CALL_IMPORT_SECRET", "")
