@@ -45,6 +45,7 @@ import {
   onTicketAuditsObserved as onEugeniaTicketAuditsObserved
 } from "./eugenia/index.js";
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
+import * as telemedicine from "./telemedicine/index.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
@@ -477,6 +478,11 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
 
       if (melaniaResult?.success) {
         console.log("[medinet-booking] path=melania | SUCCESS id=", melaniaResult.appointmentId);
+        if (telemedicine.TELEMEDICINE_BRANCH_IDS.includes(Number(slot?.branchId))) {
+          telemedicine.onBookingSuccess({ bookingResult: melaniaResult, patientData, slot })
+            .then((r) => console.log("[telemedicine] onBookingSuccess:", r))
+            .catch((err) => console.warn("[telemedicine] onBookingSuccess failed:", err.message));
+        }
         return melaniaResult;
       }
       if (melaniaResult) {

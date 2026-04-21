@@ -14,6 +14,7 @@
     "zendesk:export:good": "node scripts/zendesk/export-conversation-log.cjs tickets_buenos_resueltos.csv",
     "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv",
     "start:medinet-worker": "node workers/medinet-worker.js",
+    "start:telemedicine-worker": "node workers/telemedicine-reminder-worker.js",
     "outcomes:sync": "node scripts/sync-outcomes.js",
     "zap:update-comisiones": "node ZAPS/update-comisiones/run.js",
     "zap:normaliza-rut-contacto": "node ZAPS/zendesksell-normaliza-rut-al-crear-contacto/run.js",
