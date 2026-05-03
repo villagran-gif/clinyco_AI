@@ -1,13 +1,10 @@
 {
   "mcpServers": {
-    "meta-ads": {
-      "command": "npx",
-      "args": ["-y", "@gomarble-ai/facebook-ads-mcp-server"],
-      "env": {
-        "META_ACCESS_TOKEN": "${META_ACCESS_TOKEN}",
-        "META_APP_ID": "${META_APP_ID}",
-        "META_APP_SECRET": "${META_APP_SECRET}",
-        "META_AD_ACCOUNT_ID": "${META_AD_ACCOUNT_ID}"
+    "metaads-composio": {
+      "transport": "http",
+      "url": "${COMPOSIO_MCP_URL}",
+      "headers": {
+        "X-API-Key": "${COMPOSIO_API_KEY}"
       }
     }
   }
