@@ -19,14 +19,14 @@ async function request(url, options = {}) {
   return body;
 }
 
-export async function ensureContact({ tiktokUserId, name, avatarUrl }) {
+export async function ensureContact({ sourceId, name, avatarUrl, identifier }) {
   return request(publicUrl('/contacts'), {
     method: 'POST',
     body: JSON.stringify({
-      source_id: tiktokUserId,
-      name: name || `TikTok ${tiktokUserId}`,
+      source_id: sourceId,
+      name,
       avatar_url: avatarUrl,
-      identifier: `tiktok:${tiktokUserId}`,
+      identifier,
     }),
   });
 }
