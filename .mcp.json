@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "metaads-composio": {
+      "type": "http",
+      "url": "${COMPOSIO_MCP_URL}",
+      "headers": {
+        "X-CONSUMER-API-KEY": "${COMPOSIO_API_KEY}"
+      }
+    }
+  }
+}
