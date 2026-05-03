@@ -47,6 +47,7 @@ import {
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
+import { registerTikTokBridge } from "./bridges/tiktok-chatwoot/index.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
 import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
 import {
@@ -63,6 +64,7 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/review", reviewRouter);
 app.use("/zaps", zapsRouter);
+registerTikTokBridge(app);
 
 app.use((req, res, next) => {
   if (req.path.startsWith("/debug")) {
