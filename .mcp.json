@@ -4,7 +4,7 @@
       "transport": "http",
       "url": "${COMPOSIO_MCP_URL}",
       "headers": {
-        "X-API-Key": "${COMPOSIO_API_KEY}"
+        "X-CONSUMER-API-KEY": "${COMPOSIO_API_KEY}"
       }
     }
   }
