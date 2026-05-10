@@ -8,17 +8,25 @@ function formatDate(d) {
 }
 
 // Medinet response fields vary; pick what we need tolerantly.
+// Real shape from /api-public/schedule/appointment/all-appointments/:
+//   { id, hora: "HH:MM", fecha: "YYYY/MM/DD" (slashes!), duracion,
+//     tipo, tipo_id, especialidad_nombre,
+//     estado: { id, nombre },
+//     sucursal: { id, nombre },
+//     paciente: { run, nombres, paterno, materno, telefono, telefono_2, prevision, email },
+//     profesional: { run, nombres, paterno, materno } }   ← no .id field
 function normalize(raw, branchId) {
   if (!raw) return null;
   const medinetId = raw.id || raw.appointment_id || raw.cita_id;
   if (!medinetId) return null;
 
-  const date = raw.date || raw.fecha || raw.data_dia || raw.dataDia;
+  const rawDate = raw.date || raw.fecha || raw.data_dia || raw.dataDia;
+  // Medinet returns "YYYY/MM/DD" — Date() needs "YYYY-MM-DD".
+  const date = rawDate ? String(rawDate).replace(/\//g, "-") : null;
   const time = raw.time || raw.hora;
   let startsAt = raw.starts_at || raw.datetime_start;
   if (!startsAt && date && time) {
-    const iso = `${date}T${String(time).slice(0, 5)}:00-04:00`;
-    startsAt = iso;
+    startsAt = `${date}T${String(time).slice(0, 5)}:00-04:00`;
   }
   if (!startsAt) return null;
 
@@ -33,15 +41,17 @@ function normalize(raw, branchId) {
       [patient.nombres || patient.first_name, patient.paterno || patient.last_name, patient.materno || patient.maiden_name]
         .filter(Boolean)
         .join(" ") || patient.display || null,
-    whatsappPhone: patient.phone || patient.telefono || patient.celular || raw.patient_phone || null,
+    whatsappPhone: patient.phone || patient.telefono || patient.celular || patient.telefono_2 || raw.patient_phone || null,
     email: patient.email || raw.patient_email || null,
+    // Medinet polling payload only carries professional.run, not numeric id.
+    // Realtime hook (server.js) does provide professional.id.
     professionalId: professional.id || raw.professional_id || null,
     professionalName:
       [professional.nombres || professional.first_name, professional.paterno || professional.last_name]
         .filter(Boolean)
         .join(" ") || professional.display || null,
     professionalPhone: professional.phone || professional.telefono || null,
-    specialty: (raw.specialty || raw.especialidad || professional.especialidad || "").toString() || null,
+    specialty: (raw.specialty || raw.especialidad || raw.especialidad_nombre || professional.especialidad || "").toString() || null,
     startsAt,
     durationMinutes: raw.duration || raw.duracion || null,
     source: "polling",
