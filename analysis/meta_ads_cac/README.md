@@ -4,21 +4,36 @@ Calcula el **CAC real** cruzando los leads de Meta Ads con los deals
 cerrados en Zendesk Sell. Compara con el CPL reportado por Meta para
 entender la brecha entre "alguien dejó datos" y "alguien pagó".
 
+## 🆕 Estrategia Multi-Capa (May 2026)
+
+El análisis ahora usa **tres fuentes de datos** para máxima cobertura:
+
+| Capa | Fuente | Script | Estado |
+|------|--------|--------|--------|
+| **1** | FacebookLeads (Zendesk Sell) | `analyze_cac_facebookleads.py` | ✅ Completado |
+| **2** | Zendesk Support (message history) | `analyze_cac_zendesk_support.py` | ✅ Nuevo |
+| **3** | Conversions API tracking | (futuro) | ⏳ Planeado |
+
+Ver `ZENDESK_SUPPORT_MATCHING.md` para detalles sobre cómo se complementan las capas.
+
 ## Estructura
 
 ```
 analysis/meta_ads_cac/
-├─ analyze_cac.py        # Script principal (pandas + rapidfuzz + requests)
-├─ requirements.txt      # Dependencias Python
-├─ README.md             # Este archivo
-└─ out/                  # Generado por el script (gitignored)
-   ├─ reporte_cac.xlsx       # Multi-sheet: resumen + matches + breakdowns
-   ├─ matches.csv
-   ├─ leads_no_convertidos.csv
-   ├─ deals_sin_lead.csv
-   ├─ anomalias.csv
-   ├─ RESUMEN_EJECUTIVO.md   # Para compartir
-   └─ metrics.json
+├─ analyze_cac_facebookleads.py     # Capa 1: CRM Sell leads (PRINCIPAL)
+├─ analyze_cac_zendesk_support.py   # Capa 2: Support history (NUEVO)
+├─ analyze_cac.py                   # Legacy: CSV matching (original)
+├─ requirements.txt                 # Dependencias Python
+├─ README.md                         # Este archivo
+├─ ZENDESK_SUPPORT_MATCHING.md      # Estrategia multi-capa
+├─ RESULTADOS_CAC.md                # Resultados finales (Capa 1)
+├─ APPROACH_COMPARISON.md           # Comparación de enfoques
+├─ leads_enero_mayo.csv             # Input: Meta CSV
+└─ out/                             # Generado por scripts
+   ├─ zendesk_support_matches.json       # Capa 2 output
+   ├─ matches.csv                       # Capa 1 matches
+   ├─ metrics.json                      # Capa 1 metrics
+   └─ reporte_cac.xlsx                  # (legacy) multi-sheet
 ```
 
 ## Setup
@@ -54,6 +69,37 @@ stage_id, stage_name, category, created_at, fecha_cirugia, honorarios`
 
 ## Ejecución
 
+### Opción A: FacebookLeads (Capa 1) — Recomendado como base
+
+```bash
+export ZENDESK_SELL_API_TOKEN=xxx
+python3 analyze_cac_facebookleads.py \
+    --gasto-clp 4529962 \
+    --periodo-inicio 2026-01-01 \
+    --periodo-fin 2026-05-10 \
+    --output-dir ./out
+```
+
+Output: `out/matches.csv` + `out/metrics.json`
+
+### Opción B: Zendesk Support (Capa 2) — Complementario
+
+Requiere credenciales de Zendesk Support (diferente de Zendesk Sell):
+
+```bash
+export ZENDESK_SUBDOMAIN=clinyco
+export ZENDESK_EMAIL=admin@clinyco.com
+export ZENDESK_API_TOKEN=xxxxxxxxxxxx
+
+python3 analyze_cac_zendesk_support.py
+```
+
+Output: `out/zendesk_support_matches.json`
+
+### Opción C: CSV Matching (legacy) — No recomendado
+
+Solo usa Meta CSV sin integración Zendesk (weak matching):
+
 ```bash
 export ZENDESK_SELL_API_TOKEN=xxx
 python3 analyze_cac.py \
@@ -66,21 +112,35 @@ python3 analyze_cac.py \
 
 ## Estrategia de matching
 
+### Capa 1: FacebookLeads (Zendesk Sell)
 Multi-capa con score descendente:
 
-| Score | Regla | Confianza |
-|-------|-------|-----------|
-| 100 | email normalizado exacto | Alta |
-| 90 | teléfono E.164 exacto | Alta |
-| 70 | nombre normalizado exacto + ventana ±90d | Media |
-| 40 | nombre fuzzy ≥88% + ventana | Baja — validar manual |
+| Score | Regla | Confianza | Cobertura |
+|-------|-------|-----------|-----------|
+| 100 | email normalizado exacto | Alta | ~60% (275 leads tienen email) |
+| 90 | teléfono E.164 exacto | Alta | ~20% |
+| 70 | nombre normalizado exacto + ventana ±7 a +365d | Media | ~15% |
 
 Normalización:
 - **Email**: lowercase, strip, sin espacios.
 - **Teléfono**: solo dígitos → `+569XXXXXXXX` (móvil chileno).
-- **Nombre**: lowercase, sin acentos, sin emojis (incluyendo bloques
-  Unicode mathematical-alphanum), sin caracteres no-alfanuméricos,
-  espacios colapsados.
+- **Nombre**: lowercase, sin acentos, sin emojis, sin caracteres
+  especiales, espacios colapsados.
+
+Ventana temporal: deal creado entre **-7 y +365 días** después del lead.
+(Leads pueden convertir hasta 1 año después; pero deals ANTES del lead
+son falsos positivos).
+
+### Capa 2: Zendesk Support (Message History)
+Búsqueda por nombre de perfil:
+
+| Método | Input | Output | Confianza |
+|--------|-------|--------|-----------|
+| Text search | `text:"Yanina Gissel"` | Tickets con ese nombre | Media |
+| User search | `name:Yanina Gissel` | Usuarios en sistema | Media-Alta |
+| Normalization | `yanina gissel` | Búsqueda case-insensitive | Media |
+
+Requester encontrado en ticket → Email + Phone → Cross-check con Capa 1.
 
 ## Definición de "conversión"
 
