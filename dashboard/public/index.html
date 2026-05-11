@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clinyco — Disponibilidad Medinet</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    .header {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .header h1 { font-size: 20px; font-weight: 600; color: #f8fafc; }
+    .header-meta { display: flex; gap: 16px; align-items: center; font-size: 13px; color: #94a3b8; }
+    .header-meta .badge {
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .badge-ok { background: #065f46; color: #6ee7b7; }
+    .badge-stale { background: #78350f; color: #fbbf24; }
+    .badge-none { background: #7f1d1d; color: #fca5a5; }
+
+    .controls {
+      padding: 12px 24px;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .controls select, .controls input {
+      padding: 6px 10px;
+      font-size: 13px;
+      background: #0f172a;
+      color: #e2e8f0;
+      border: 1px solid #475569;
+      border-radius: 6px;
+    }
+    .controls label { font-size: 13px; color: #94a3b8; margin-right: 4px; }
+
+    .content { padding: 20px 24px; }
+
+    .grid-container { overflow-x: auto; }
+
+    table.slot-grid {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 900px;
+    }
+    table.slot-grid th {
+      background: #1e293b;
+      color: #94a3b8;
+      padding: 8px 6px;
+      text-align: center;
+      font-weight: 500;
+      font-size: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      border-bottom: 2px solid #334155;
+    }
+    table.slot-grid th:first-child {
+      text-align: left;
+      min-width: 200px;
+      z-index: 3;
+      left: 0;
+    }
+    table.slot-grid td {
+      padding: 6px;
+      text-align: center;
+      border-bottom: 1px solid #1e293b;
+      vertical-align: middle;
+    }
+    table.slot-grid td:first-child {
+      text-align: left;
+      background: #0f172a;
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      border-right: 1px solid #334155;
+    }
+    table.slot-grid tr:hover td { background: #1e293b; }
+    table.slot-grid tr:hover td:first-child { background: #1e293b; }
+
+    .prof-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .prof-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #334155;
+      flex-shrink: 0;
+    }
+    .prof-info { min-width: 0; }
+    .prof-name { font-weight: 500; color: #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+    .prof-spec { font-size: 11px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+
+    .slot-cell {
+      min-width: 54px;
+      cursor: default;
+      border-radius: 4px;
+      padding: 4px 2px;
+      font-weight: 500;
+      font-size: 12px;
+      transition: transform 0.1s;
+    }
+    .slot-cell:hover { transform: scale(1.05); }
+    .slot-0 { color: #475569; }
+    .slot-low { background: #14532d; color: #86efac; }
+    .slot-mid { background: #065f46; color: #6ee7b7; }
+    .slot-high { background: #047857; color: #a7f3d0; }
+
+    .slot-detail {
+      position: fixed;
+      background: #1e293b;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 12px;
+      color: #e2e8f0;
+      max-width: 260px;
+      z-index: 100;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      display: none;
+    }
+    .slot-detail h4 { margin-bottom: 6px; color: #f8fafc; font-size: 13px; }
+    .slot-detail .times { display: flex; flex-wrap: wrap; gap: 4px; }
+    .slot-detail .time-chip {
+      background: #0f172a;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    .summary-cards {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .summary-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 16px 20px;
+      min-width: 160px;
+    }
+    .summary-card .value { font-size: 28px; font-weight: 700; color: #f8fafc; }
+    .summary-card .label { font-size: 12px; color: #64748b; margin-top: 4px; }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #64748b;
+    }
+    .empty-state h2 { color: #94a3b8; margin-bottom: 8px; }
+
+    @media (max-width: 768px) {
+      .header { padding: 12px 16px; }
+      .content { padding: 12px 16px; }
+      .summary-cards { gap: 8px; }
+      .summary-card { min-width: 120px; padding: 12px; }
+      .summary-card .value { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Clinyco — Disponibilidad Medinet</h1>
+    <div class="header-meta">
+      <span id="sync-badge" class="badge badge-none">Sin datos</span>
+      <span id="sync-time"></span>
+      <span id="auto-refresh">Auto-refresh: 5 min</span>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label for="sucursal-select">Sucursal:</label>
+    <select id="sucursal-select"></select>
+    <label for="search-input">Buscar:</label>
+    <input id="search-input" type="text" placeholder="Nombre o especialidad..." />
+  </div>
+
+  <div class="content">
+    <div class="summary-cards" id="summary-cards"></div>
+    <div class="grid-container" id="grid-container">
+      <div class="empty-state">
+        <h2>Cargando datos...</h2>
+        <p>Conectando con el servidor de sincronizacion.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="slot-detail" id="slot-detail"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
