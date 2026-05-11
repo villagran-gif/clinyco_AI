@@ -76,7 +76,7 @@ export function dbEnabled() {
   return Boolean(DATABASE_URL);
 }
 
-function getPool() {
+export function getPool() {
   if (!dbEnabled()) {
     return null;
   }
