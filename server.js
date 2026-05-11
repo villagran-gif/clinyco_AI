@@ -2,7 +2,7 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { accessSync, readFileSync, constants as fsConstants } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
@@ -81,20 +81,8 @@ const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
-function firstExistingPath(paths) {
-  for (const p of paths) {
-    try { accessSync(p, fsConstants.R_OK); return p; } catch { /* skip */ }
-  }
-  return null;
-}
-
-function resolveMedinetAntoniaScript() {
-  if (process.env.MEDINET_ANTONIA_SCRIPT) return process.env.MEDINET_ANTONIA_SCRIPT;
-  const base = fileURLToPath(new URL("./Antonia/", import.meta.url));
-  return firstExistingPath([base + "medinet-antonia.cjs", base + "medinet-antonia.js"]) || base + "medinet-antonia.cjs";
-}
-
-const MEDINET_ANTONIA_SCRIPT = resolveMedinetAntoniaScript();
+const MEDINET_VPS_URL = process.env.MEDINET_VPS_URL || "http://69.6.226.132:3002";
+const MEDINET_VPS_API_KEY = process.env.MEDINET_VPS_API_KEY || "";
 const execFileAsync = promisify(execFile);
 
 const MEDINET_CACHE_FILE = fileURLToPath(new URL("./data/medinet_professionals_cache.json", import.meta.url));
@@ -155,20 +143,27 @@ function matchProfessionalFromCache(text) {
   return bestPriority < 99 ? bestMatch : null;
 }
 
+async function callVpsMedinet(endpoint, body = {}) {
+  const url = `${MEDINET_VPS_URL}/api/medinet/${endpoint}`;
+  const headers = { "Content-Type": "application/json" };
+  if (MEDINET_VPS_API_KEY) headers["X-API-Key"] = MEDINET_VPS_API_KEY;
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(Number(body.timeout || 65000)),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`VPS ${endpoint} returned ${response.status}: ${text.slice(0, 200)}`);
+  }
+  return response.json();
+}
+
 async function runMedinetAntoniaCache() {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
   try {
-    const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
-      env: {
-        ...process.env,
-        MEDINET_MODE: "cache",
-        MEDINET_RUT,
-        MEDINET_HEADED: "false"
-      },
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024
-    });
-    console.log("MEDINET CACHE REFRESH completed");
+    await callVpsMedinet("cache", { timeout: Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000) });
+    console.log("MEDINET CACHE REFRESH completed (via VPS)");
     return true;
   } catch (error) {
     console.error("MEDINET CACHE REFRESH ERROR:", error.message);
@@ -271,67 +266,33 @@ function extractMedinetQuery(text = "") {
 }
 
 async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
 
-  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
-    env: {
-      ...process.env,
-      MEDINET_RUT,
-      MEDINET_QUERY: safeQuery,
-      MEDINET_PATIENT_PHONE: String(patientPhone || ""),
-      MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
-      MEDINET_HEADED: "false"
-    },
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024
-  });
-
-  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
-  if (!match) return null;
-
   try {
-    return JSON.parse(match[1]);
-  } catch (parseError) {
-    console.error("ANTONIA JSON PARSE ERROR:", parseError.message, "raw:", match[1].slice(0, 200));
+    return await callVpsMedinet("search", {
+      query: safeQuery,
+      patientPhone: String(patientPhone || ""),
+      patientMessage: String(patientMessage || ""),
+      timeout: Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000),
+    });
+  } catch (error) {
+    console.error("ANTONIA SEARCH ERROR (VPS):", error.message);
     return null;
   }
 }
 
 async function runMedinetAntoniaBooking({ slot, patientData }) {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
-  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
-    env: {
-      ...process.env,
-      MEDINET_MODE: "book",
-      MEDINET_RUT,
-      MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
-      MEDINET_SLOT_DATE: String(slot.dataDia || ""),
-      MEDINET_SLOT_TIME: String(slot.time || ""),
-      MEDINET_PATIENT_NOMBRES: String(patientData.nombres || ""),
-      MEDINET_PATIENT_AP_PATERNO: String(patientData.apPaterno || ""),
-      MEDINET_PATIENT_AP_MATERNO: String(patientData.apMaterno || ""),
-      MEDINET_PATIENT_PREVISION: String(patientData.prevision || ""),
-      MEDINET_PATIENT_NACIMIENTO: String(patientData.nacimiento || ""),
-      MEDINET_PATIENT_EMAIL: String(patientData.email || ""),
-      MEDINET_PATIENT_FONO: String(patientData.fono || ""),
-      MEDINET_PATIENT_DIRECCION: String(patientData.direccion || ""),
-      MEDINET_HEADED: "false"
-    },
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024
-  });
-
-  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
-  if (!match) return null;
-
   try {
-    return JSON.parse(match[1]);
-  } catch (parseError) {
-    console.error("ANTONIA BOOKING JSON PARSE ERROR:", parseError.message);
+    return await callVpsMedinet("book", {
+      slot,
+      patientData,
+      timeout: Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000),
+    });
+  } catch (error) {
+    console.error("ANTONIA BOOKING ERROR (VPS):", error.message);
     return null;
   }
 }
