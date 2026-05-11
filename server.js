@@ -2,7 +2,7 @@ import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
@@ -19,7 +19,10 @@ import {
   upsertCustomer,
   linkConversationToCustomer,
   addCustomerChannel,
-  getCustomerSummaries
+  getCustomerSummaries,
+  trackLeadScoreChange,
+  getLeadScoreHistory,
+  getEmojiSentimentBatch
 } from "./db.js";
 import { buildKnowledgePromptContext } from "./knowledge/prompt-context.js";
 import { resolveCustomerFromIdentifiers } from "./memory/customer-lookup.js";
@@ -30,11 +33,36 @@ import {
 } from "./memory/customer-memory.js";
 import {
   extractRut as extractValidatedRut,
-  formatRutHuman as formatValidatedRutHuman
+  formatRutHuman as formatValidatedRutHuman,
+  normalizeRut
 } from "./extraction/identity-normalizers.js";
+import { calculateLeadScore } from "./scoring/lead-score.js";
+import {
+  inferBestNextAction,
+  onHumanAgentMessage as onEugeniaHumanAgentMessage,
+  onMutedPatientMessage as onEugeniaMutedPatientMessage,
+  onTakeover as onEugeniaTakeover,
+  onTicketAuditsObserved as onEugeniaTicketAuditsObserved
+} from "./eugenia/index.js";
+import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
+import reviewRouter from "./review/router.js";
+import zapsRouter from "./ZAPS/webhooks/router.js";
+import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
+import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
+import {
+  searchSlotsViaApi,
+  searchSlotsNoAuth,
+  buildCacheFromApi,
+  formatRutWithDots,
+  bookAppointmentForPatient as apiBookAppointment,
+  checkCupos,
+  DEFAULT_BRANCH_ID,
+} from "./Antonia/medinet-api.js";
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use("/api/review", reviewRouter);
+app.use("/zaps", zapsRouter);
 
 app.use((req, res, next) => {
   if (req.path.startsWith("/debug")) {
@@ -56,6 +84,7 @@ const conversationHistory = new Map();
 const conversationStates = new Map();
 const hydratedConversations = new Set();
 const recentInboundMessageClaims = new Map();
+const conversationProcessingLocks = new Map(); // per-conversation mutex to serialize message processing
 
 // =========================
 // Config
@@ -74,9 +103,10 @@ const ENABLE_SELL_SEARCH = String(process.env.ENABLE_SELL_SEARCH || "true").toLo
 const ENABLE_SUPPORT_SEARCH = String(process.env.ENABLE_SUPPORT_SEARCH || "false").toLowerCase() === "true";
 const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.ZENDESK_API_EMAIL || null;
 const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
+const LEAD_SCORE_INFO_URL = String(process.env.LEAD_SCORE_INFO_URL || "").trim() || null;
 
 const MAX_HISTORY_MESSAGES = 14;
-const MAX_BOT_MESSAGES = 10;
+const MAX_BOT_MESSAGES = 30;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
@@ -84,6 +114,80 @@ const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 const MEDINET_VPS_URL = process.env.MEDINET_VPS_URL || "http://69.6.226.132:3002";
 const MEDINET_VPS_API_KEY = process.env.MEDINET_VPS_API_KEY || "";
 const execFileAsync = promisify(execFile);
+
+async function callVpsMedinet(endpoint, body = {}) {
+  const url = `${MEDINET_VPS_URL}/api/medinet/${endpoint}`;
+  const headers = { "Content-Type": "application/json" };
+  if (MEDINET_VPS_API_KEY) headers["X-API-Key"] = MEDINET_VPS_API_KEY;
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(Number(body.timeout || 65000)),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`VPS ${endpoint} returned ${response.status}: ${text.slice(0, 200)}`);
+  }
+  return response.json();
+}
+
+// Remote worker support: when MEDINET_WORKER_URL is set, delegate to the remote worker
+// instead of running Playwright locally (useful when Medinet blocks the server's IP)
+const MEDINET_WORKER_URL = (process.env.MEDINET_WORKER_URL || "").replace(/\/+$/, "");
+const MEDINET_WORKER_TOKEN = process.env.MEDINET_WORKER_TOKEN || "";
+
+async function callMedinetWorkerPath(path, body = {}, timeoutMs = 60000) {
+  if (!MEDINET_WORKER_URL || !MEDINET_WORKER_TOKEN) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs + 5000);
+
+  try {
+    const res = await fetch(`${MEDINET_WORKER_URL}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${MEDINET_WORKER_TOKEN}`
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      console.error(`[medinet-worker-remote] ${path} HTTP ${res.status}:`, bodyText.slice(0, 300));
+      return null;
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.error(`[medinet-worker-remote] ${path} error:`, err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callMedinetWorkerLegacy(action, payload = {}, timeoutMs = 60000) {
+  return callMedinetWorkerPath("/medinet/run", {
+    action,
+    payload: { ...payload, timeoutMs }
+  }, timeoutMs);
+}
+
+async function callMedinetWorkerApiSearch(payload = {}, timeoutMs = 60000) {
+  return callMedinetWorkerPath("/medinet/api/search", payload, timeoutMs);
+}
+
+async function callMedinetWorkerApiBook(payload = {}, timeoutMs = 60000) {
+  return callMedinetWorkerPath("/medinet/api/book", payload, timeoutMs);
+}
+
+function useRemoteWorker() {
+  return !!(MEDINET_WORKER_URL && MEDINET_WORKER_TOKEN);
+}
+
 
 const MEDINET_CACHE_FILE = fileURLToPath(new URL("./data/medinet_professionals_cache.json", import.meta.url));
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -143,30 +247,42 @@ function matchProfessionalFromCache(text) {
   return bestPriority < 99 ? bestMatch : null;
 }
 
-async function callVpsMedinet(endpoint, body = {}) {
-  const url = `${MEDINET_VPS_URL}/api/medinet/${endpoint}`;
-  const headers = { "Content-Type": "application/json" };
-  if (MEDINET_VPS_API_KEY) headers["X-API-Key"] = MEDINET_VPS_API_KEY;
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(Number(body.timeout || 65000)),
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`VPS ${endpoint} returned ${response.status}: ${text.slice(0, 200)}`);
-  }
-  return response.json();
-}
-
 async function runMedinetAntoniaCache() {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000);
+
+  // ── 1. Try REST API cache build (no browser, no IP blocking) ──
+  if (process.env.MEDINET_API_TOKEN) {
+    try {
+      console.log("[medinet-api] Building cache via REST API...");
+      const apiCache = await buildCacheFromApi();
+      if (apiCache && apiCache.professionals?.length > 0) {
+        writeFileSync(MEDINET_CACHE_FILE, JSON.stringify(apiCache, null, 2), "utf8");
+        console.log(`[medinet-api] Cache built via API: ${apiCache.professionals.length} professionals`);
+        return true;
+      }
+    } catch (apiError) {
+      console.warn("[medinet-api] API cache build failed, falling through:", apiError.message);
+    }
+  }
+
+  // ── 2. Try remote Playwright worker ──
+  if (useRemoteWorker()) {
+    console.log("[medinet] Cache refresh via remote worker:", MEDINET_WORKER_URL);
+    const result = await callMedinetWorkerLegacy("cache", {}, timeoutMs);
+    if (result !== null) {
+      console.log("MEDINET CACHE REFRESH completed (remote worker)");
+      return true;
+    }
+    console.warn("[medinet] Remote worker cache failed, falling back to local");
+  }
+
+  // ── 3. VPS Chile API (Playwright runs on VPS) ──
   try {
-    await callVpsMedinet("cache", { timeout: Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000) });
+    await callVpsMedinet("cache", { timeout: timeoutMs });
     console.log("MEDINET CACHE REFRESH completed (via VPS)");
     return true;
   } catch (error) {
-    console.error("MEDINET CACHE REFRESH ERROR:", error.message);
+    console.error("MEDINET CACHE REFRESH ERROR (VPS):", error.message);
     return false;
   }
 }
@@ -175,8 +291,10 @@ const MEDINET_DISCARD_TOKENS = new Set([
   "HOLA", "BUENAS", "TARDES", "DIAS", "NOCHES", "QUIERO", "NECESITO", "ME", "GUSTARIA",
   "AGENDAR", "AGENDA", "HORA", "HORAS", "CITA", "CONTROL", "CON", "PARA", "UNA", "UN",
   "POR", "FAVOR", "DOCTOR", "DOCTORA", "DR", "DRA", "EL", "LA", "LOS", "LAS", "DE",
-  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "TENGO", "TENER",
-  "RESERVAR", "SOLICITAR", "PEDIR",
+  "QUE", "EN", "AL", "DEL", "BUENOS", "QUISIERA", "PODRIA", "PUEDE", "PUEDES", "PUEDO",
+  "TENGO", "TENER", "TIENES", "TIENE", "HAY",
+  "DISPONIBLE", "DISPONIBLES", "DISPONIBILIDAD",
+  "RESERVAR", "SOLICITAR", "PEDIR", "TU", "SI", "NO", "HOY", "MANANA",
   // títulos profesionales que contaminan la búsqueda
   "PSICOLOGA", "PSICOLOGO", "NUTRICIONISTA", "NUTRIOLOGA", "NUTRIOLOGO",
   "KINESIOLOGOA", "KINESIOLOGA", "KINESIOLOGO", "PEDIATRA", "CIRUJANO", "CIRUJANA",
@@ -219,20 +337,20 @@ const FIRST_NAME_ALIASES = {
   ZIEDE: "edmundo ziede",
   ROSIRYS: "rosirys ruiz",
   // Nutrición
-  CERQUERA: "magaly cerquera",
-  SAAVEDRA: "katherine saavedra",
+  MAGALY: "magaly cerquera", CERQUERA: "magaly cerquera",
+  KATHERINE: "katherine saavedra", SAAVEDRA: "katherine saavedra",
   // Psicología
   PEGGY: "peggy huerta", HUERTA: "peggy huerta",
-  NARITELLI: "francisca naritelli",
+  FRANCISCA: "francisca naritelli", NARITELLI: "francisca naritelli",
   // Nutriología
-  YEVENES: "ingrid yevenes",
-  MOYA: "fernando moya",
+  INGRID: "ingrid yevenes", YEVENES: "ingrid yevenes",
+  FERNANDO: "fernando moya", MOYA: "fernando moya",
   // Medicina Deportiva
-  RAMOS: "pablo ramos",
+  PABLO: "pablo ramos", RAMOS: "pablo ramos",
   // Medicina General
-  NUNEZ: "carlos nunez",
+  CARLOS: "carlos nunez", NUNEZ: "carlos nunez",
   // Pediatría
-  JALDIN: "daniza jaldin",
+  DANIZA: "daniza jaldin", JALDIN: "daniza jaldin",
   // Endocrinología Infantil
   BANCALARI: "rodrigo bancalari",
   // Otros
@@ -265,41 +383,199 @@ function extractMedinetQuery(text = "") {
   return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
 }
 
-async function runMedinetAntonia({ query, patientPhone, patientMessage }) {
+async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut, branchId }) {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
   const safeQuery = String(query || "").trim();
   if (!safeQuery) return null;
+  const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
+  const effectiveBranchId = Number(branchId || DEFAULT_BRANCH_ID);
 
-  try {
-    return await callVpsMedinet("search", {
+  // ── 1. Try remote API-only worker (VPS Chile) ──
+  if (useRemoteWorker()) {
+    console.log("[medinet-search] path=remote api worker | query:", safeQuery, "| branch:", effectiveBranchId);
+
+    const result = await callMedinetWorkerApiSearch({
+      query: safeQuery,
+      patientRut: rut || "",
+      patientPhone: String(patientPhone || ""),
+      patientMessage: String(patientMessage || ""),
+      branchId: effectiveBranchId,
+    }, timeoutMs);
+
+    if (result !== null) {
+      console.log("[medinet-search] path=remote api worker | SUCCESS");
+      return result;
+    }
+
+    console.warn("[medinet-search] path=remote api worker | FAILED, trying legacy worker");
+    const legacyResult = await callMedinetWorkerLegacy("search", {
       query: safeQuery,
       patientPhone: String(patientPhone || ""),
       patientMessage: String(patientMessage || ""),
-      timeout: Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000),
-    });
-  } catch (error) {
-    console.error("ANTONIA SEARCH ERROR (VPS):", error.message);
-    return null;
+      patientRut: rut
+    }, timeoutMs);
+
+    if (legacyResult !== null) {
+      console.log("[medinet-search] path=fallback remote worker | SUCCESS");
+      return legacyResult;
+    }
+
+    console.warn("[medinet-search] path=fallback remote worker | FAILED, falling to local");
   }
+
+  // ── 3. VPS Chile API (Playwright runs on VPS) ──
+  try {
+    const result = await callVpsMedinet("search", {
+      query: safeQuery,
+      patientPhone: String(patientPhone || ""),
+      patientMessage: String(patientMessage || ""),
+      timeout: timeoutMs,
+    });
+    if (result) {
+      console.log("[medinet-search] path=VPS API | SUCCESS");
+      return result;
+    }
+  } catch (error) {
+    console.error("[medinet-search] VPS API error:", error.message);
+  }
+  return null;
 }
 
 async function runMedinetAntoniaBooking({ slot, patientData }) {
+  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
+  // ── 0. Try MelanIA first (session cookie booking with full patient data) ──
+  if (useRemoteWorker()) {
+    try {
+      const melaniaBranchId = slot.branchId || null;
+      console.log("[medinet-booking] path=melania | starting:", slot.professionalId, slot.dataDia, slot.time, "| branch:", melaniaBranchId || "default");
+      const melaniaResult = await callMedinetWorkerPath("/melania/book", {
+        query: slot.professional || slot.professionalId,
+        slotIndex: 0,
+        branchId: melaniaBranchId,
+        patientData: {
+          ...patientData,
+          rut: patientData.rut || patientData.run || "",
+          aseguradoraId: patientData.aseguradoraId || "",
+          previsionId: patientData.previsionId || "",
+          comuna: patientData.comuna || "",
+          sexo: patientData.sexo || 3,
+        },
+      }, timeoutMs);
+
+      if (melaniaResult?.success) {
+        console.log("[medinet-booking] path=melania | SUCCESS id=", melaniaResult.appointmentId);
+        return melaniaResult;
+      }
+      if (melaniaResult) {
+        console.log("[medinet-booking] path=melania | FAILED:", melaniaResult.message || melaniaResult.step);
+        // If MelanIA says cupos blocked, don't retry other methods
+        if (melaniaResult.step === "check_cupos") return melaniaResult;
+      }
+    } catch (melaniaError) {
+      console.warn("[medinet-booking] path=melania ERROR, falling through:", melaniaError.message);
+    }
+  }
+
+  // ── 1. Try REST API booking (agendaweb-add, no patient data saved) ──
   try {
-    return await callVpsMedinet("book", {
+    console.log("[medinet-booking] path=api | starting:", slot.professionalId, slot.dataDia, slot.time);
+    const rut = formatRutWithDots(patientData.rut || patientData.run || "");
+    let pacienteExiste = true;
+    if (rut) {
+      const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
+      if (cupos && !cupos.puede_agendar) {
+        console.log("[medinet-booking] path=api cupos_blocked | rut:", rut, "mensaje:", cupos.mensaje);
+        return {
+          source: "antonia_api_cupos_check",
+          success: false,
+          message: cupos.mensaje || "El paciente no puede agendar.",
+          patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
+        };
+      }
+      if (cupos) pacienteExiste = cupos.paciente_existe !== false;
+      console.log("[medinet-booking] path=api checkCupos | rut:", rut, "pacienteExiste:", pacienteExiste);
+    }
+    console.log("[medinet-booking] slot payload:", JSON.stringify({
+      professionalId: slot?.professionalId,
+      specialtyId: slot?.specialtyId,
+      tipoCitaId: slot?.tipoCitaId,
+      duration: slot?.duration,
+      dataDia: slot?.dataDia,
+      time: slot?.time,
+      branchId: DEFAULT_BRANCH_ID
+    }));
+    const apiResult = await apiBookAppointment({
+      slot,
+      patientData: { ...patientData, run: rut },
+      branchId: DEFAULT_BRANCH_ID,
+      pacienteExiste,
+    });
+    if (apiResult?.success) {
+      console.log("[medinet-booking] path=api", apiResult.source, "| SUCCESS");
+      return apiResult;
+    }
+    console.log("[medinet-booking] path=api FAILED:", apiResult?.source, apiResult?.message);
+  } catch (apiError) {
+    console.warn("[medinet-booking] path=api ERROR, falling through to Playwright:", apiError.message);
+  }
+
+  // Use search_and_book: searches for the slot first, then books in the same browser session.
+  const medinetMode = "search_and_book";
+
+  // ── 2. Try remote API-only worker ──
+  if (useRemoteWorker()) {
+    console.log("[medinet-booking] path=remote api worker:", slot.professionalId, slot.dataDia, slot.time);
+
+    const result = await callMedinetWorkerApiBook({
       slot,
       patientData,
-      timeout: Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 60000),
-    });
-  } catch (error) {
-    console.error("ANTONIA BOOKING ERROR (VPS):", error.message);
-    return null;
+      branchId: DEFAULT_BRANCH_ID
+    }, timeoutMs);
+
+    if (result !== null) {
+      console.log("[medinet-booking] path=remote api worker | result:", result.success ? "SUCCESS" : "FAILED");
+      return result;
+    }
+
+    console.warn("[medinet-booking] path=remote api worker FAILED, trying legacy worker");
+    const legacyResult = await callMedinetWorkerLegacy("search_and_book", { slot, patientData }, timeoutMs);
+
+    if (legacyResult !== null) {
+      console.log("[medinet-booking] path=fallback remote worker | result:", legacyResult.success ? "SUCCESS" : "FAILED");
+      return legacyResult;
+    }
+
+    console.warn("[medinet-booking] path=fallback remote worker FAILED, falling to local");
   }
+
+  // ── 3. VPS Chile API (Playwright runs on VPS) ──
+  try {
+    console.log("[medinet-booking] path=VPS API:", slot.professionalId, slot.dataDia, slot.time);
+    const result = await callVpsMedinet("book", {
+      slot,
+      patientData,
+      timeout: timeoutMs,
+    });
+    if (result) {
+      console.log("[medinet-booking] path=VPS API | result:", result.success ? "SUCCESS" : "FAILED");
+      return result;
+    }
+  } catch (error) {
+    console.error("[medinet-booking] VPS API error:", error.message);
+  }
+  return null;
 }
 
 function detectBookingSlotChoice(text, availableSlots) {
   if (!availableSlots || !availableSlots.length) return null;
   const cleaned = String(text || "").trim();
+
+  // Detect explicit "salir" / "cancelar" / "no quiero"
+  if (/^(salir|cancelar|no\s*quiero|ninguna|no\s*gracias)$/i.test(cleaned)) {
+    return { exit: true };
+  }
 
   // Match patterns: "1", "la 1", "opcion 1", "hora 1", "numero 1", "quiero la 1", etc.
   const numberMatch = cleaned.match(/(?:^|\s)(\d)(?:\s|$|[.,;!?])/);
@@ -310,6 +586,12 @@ function detectBookingSlotChoice(text, availableSlots) {
   if (!choiceStr) return null;
 
   const index = parseInt(choiceStr, 10) - 1;
+
+  // The "Salir" option is slots.length (last number in the list)
+  if (index === availableSlots.length) {
+    return { exit: true };
+  }
+
   if (index < 0 || index >= availableSlots.length) return null;
 
   return { index, slot: availableSlots[index] };
@@ -328,6 +610,7 @@ function buildPatientDataFromState(state) {
   const cd = state?.contactDraft || {};
   const { paterno, materno } = splitApellidos(cd.c_apellidos);
   return {
+    rut: cd.c_rut || "",
     nombres: cd.c_nombres || "",
     apPaterno: paterno,
     apMaterno: materno,
@@ -341,12 +624,9 @@ function buildPatientDataFromState(state) {
 
 function getMissingBookingFields(patientData) {
   const required = [
-    { key: "nombres", label: "nombre completo" },
-    { key: "apPaterno", label: "apellido paterno" },
-    { key: "prevision", label: "previsión/aseguradora" },
+    { key: "rut", label: "RUT" },
     { key: "email", label: "correo electrónico" },
-    { key: "fono", label: "teléfono" },
-    { key: "direccion", label: "dirección" }
+    { key: "fono", label: "teléfono" }
   ];
   return required.filter((f) => !patientData[f.key]);
 }
@@ -902,6 +1182,18 @@ function cleanupRecentMap(map, ttlMs) {
   }
 }
 
+// Per-conversation mutex: ensures only one message is processed at a time per conversation.
+// Prevents race conditions when the user sends multiple messages rapidly.
+function acquireConversationLock(conversationId) {
+  const existing = conversationProcessingLocks.get(conversationId) || Promise.resolve();
+  let releaseFn;
+  const newLock = new Promise((resolve) => { releaseFn = resolve; });
+  // Chain: wait for previous processing to finish before this one starts
+  const ready = existing.then(() => {});
+  conversationProcessingLocks.set(conversationId, newLock);
+  return { ready, release: releaseFn };
+}
+
 function fingerprintReplyText(value) {
   return normalizeKey(value).replace(/\s+/g, " ").trim();
 }
@@ -1027,11 +1319,21 @@ function formatRutHuman(raw) {
   return formatValidatedRutHuman(raw);
 }
 
+const NOT_A_PERSON_NAME = new Set([
+  "FONASA", "ISAPRE", "BANMEDICA", "COLMENA", "CONSALUD", "CRUZ BLANCA",
+  "ESENCIAL", "DIPRECA", "PARTICULAR", "MASVIDA", "VIDATRES", "MEDIMEL",
+  "PACIENTE", "CLIENTE", "USUARIO", "HOMBRE", "MUJER", "MAMA", "PAPA",
+  "DOCTOR", "DOCTORA", "NUTRIOLOGA", "NUTRICIONISTA", "KINESIOLOGA"
+]);
+
 function extractName(text) {
   const source = normalizeSpaces(String(text || ""));
   const match = source.match(/(?:me llamo|mi nombre es|soy)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,3})/i);
   if (!match) return null;
-  return titleCaseWords(match[1]);
+  const candidate = match[1].trim();
+  const firstWord = candidate.split(/\s+/)[0].toUpperCase();
+  if (NOT_A_PERSON_NAME.has(firstWord)) return null;
+  return titleCaseWords(candidate);
 }
 
 function isUsablePersonName(value) {
@@ -1293,8 +1595,13 @@ function extractDate(text) {
 
 function extractAddress(text) {
   const source = normalizeSpaces(String(text || ""));
-  const match = source.match(/(?:direccion|dirección)\s*:?\s*(.+)$/i);
-  return match ? titleCaseWords(match[1]) : null;
+  // Match explicit "dirección: ..." prefix — stop at next emoji label, newline, or end
+  const match = source.match(/(?:direccion|dirección)\s*:?\s*(.+?)(?=\s*(?:[🏙📱📧🎂🏥🩺🆔👤]|ciudad\s*:|celular\s*:|correo\s*:|fecha\s*:|previsi[oó]n\s*:|tramo\s*:|rut\s*:|nombre\s*:|apellido\s*:|$))/i);
+  if (match && match[1].trim()) return titleCaseWords(match[1].trim());
+  // Match common street patterns: "Av.", "Calle", "Pasaje", etc. followed by name and number
+  const streetMatch = source.match(/^((?:av(?:enida)?|calle|pasaje|psje|pje|los|las|el|la)\b[\s.]*.+?\d+(?:\s*,\s*\w+)?)(?=\s*(?:[🏙📱📧🎂🏥]|$))/i);
+  if (streetMatch) return titleCaseWords(streetMatch[1].trim());
+  return null;
 }
 
 function detectComuna(text) {
@@ -1329,7 +1636,64 @@ function detectProcedure(text) {
   if (/\b(COLECISTECTOMIA|COLECISTECTOMIA|VESICULA|Vesícula|HERNIA|CIRUGIA GENERAL|ENDOSCOPIA|ENDOSCOPÍA)\b/i.test(text)) {
     return { key: "GENERAL", label: "Cirugía general", pipelineId: 5049979 };
   }
+  if (/\b(NUTRICION|NUTRICIONISTA|NUTRI)\b/.test(normalized)) {
+    return { key: "CONSULTA_NUTRICION", label: "Consulta nutrición", pipelineId: null };
+  }
+  if (/\b(PSICOLOGIA|PSICOLOGA|PSICOLOGO|PSICOLOGICA)\b/.test(normalized)) {
+    return { key: "CONSULTA_PSICOLOGIA", label: "Consulta psicología", pipelineId: null };
+  }
+  if (/\b(KINESIOLOGIA|KINESIOLOGO|KINESIOLOGA|KINE)\b/.test(normalized)) {
+    return { key: "CONSULTA_KINESIOLOGIA", label: "Consulta kinesiología", pipelineId: null };
+  }
+  if (/\b(MEDICINA GENERAL|MEDICO GENERAL|MEDICA GENERAL|MEDICINA INTERNA)\b/.test(normalized)) {
+    return { key: "CONSULTA_MEDICINA", label: "Consulta medicina", pipelineId: null };
+  }
   return null;
+}
+
+const SPECIALTY_TO_DEAL_INTERES = {
+  NUTRICION: "Consulta nutrición", NUTRICIONISTA: "Consulta nutrición",
+  PSICOLOGIA: "Consulta psicología", PSICOLOGO: "Consulta psicología", PSICOLOGA: "Consulta psicología",
+  KINESIOLOGIA: "Consulta kinesiología", KINESIOLOGO: "Consulta kinesiología", KINESIOLOGA: "Consulta kinesiología",
+  CIRUGIA: "Cirugía bariátrica", "CIRUGIA DIGESTIVA": "Cirugía bariátrica", "CIRUGIA BARIATRICA": "Cirugía bariátrica",
+  "CIRUGIA PLASTICA": "Cirugía plástica",
+  ENDOCRINOLOGIA: "Consulta medicina", "MEDICINA GENERAL": "Consulta medicina",
+  PEDIATRIA: "Consulta medicina", "ENDOCRINOLOGIA INFANTIL": "Consulta medicina",
+  NUTRIOLOGIA: "Consulta nutrición", "MEDICINA DEPORTIVA": "Consulta medicina"
+};
+
+const PROFESSIONAL_ALIAS_TO_DEAL_INTERES = {
+  "magaly cerquera": "Consulta nutrición",
+  "katherine saavedra": "Consulta nutrición",
+  "peggy huerta": "Consulta psicología",
+  "francisca naritelli": "Consulta psicología",
+  "rodrigo villagran": "Cirugía bariátrica",
+  "nelson aros": "Cirugía bariátrica",
+  "alberto sirabo": "Cirugía bariátrica",
+  "edmundo ziede": "Cirugía plástica",
+  "rosirys ruiz": "Cirugía plástica",
+  "ingrid yevenes": "Consulta nutrición",
+  "fernando moya": "Consulta nutrición",
+  "pablo ramos": "Consulta medicina",
+  "carlos nunez": "Consulta medicina",
+  "daniza jaldin": "Consulta medicina",
+  "rodrigo bancalari": "Consulta medicina",
+  "francisco bencina": "Consulta medicina"
+};
+
+function deriveDealInteresFromSpecialty(specialty, alias) {
+  if (alias) {
+    const fromAlias = PROFESSIONAL_ALIAS_TO_DEAL_INTERES[alias.toLowerCase()];
+    if (fromAlias) return fromAlias;
+  }
+  if (specialty) {
+    const key = normalizeKey(specialty);
+    if (SPECIALTY_TO_DEAL_INTERES[key]) return SPECIALTY_TO_DEAL_INTERES[key];
+    for (const [k, v] of Object.entries(SPECIALTY_TO_DEAL_INTERES)) {
+      if (key.includes(k) || k.includes(key)) return v;
+    }
+  }
+  return "Consulta médica";
 }
 
 function isCoverageInsuranceQuestion(normalizedText) {
@@ -1373,7 +1737,7 @@ function detectNegatedAseguradora(normalizedText) {
 }
 
 function findExplicitAseguradora(normalizedText) {
-  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => normalizedText.includes(alias)) || null;
+  return SORTED_ASEGURADORA_ALIASES.find(([alias]) => (' ' + normalizedText + ' ').includes(' ' + alias + ' ')) || null;
 }
 
 function parseAseguradora(text) {
@@ -1705,6 +2069,15 @@ function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      zendeskRequesterId: null,
+      zendeskRequesterLinkedAt: null,
+      zendeskTicketId: null,
+      zendeskContactSyncKey: null,
+      zendeskContactSyncAt: null,
+      zendeskNotesSyncKey: null,
+      zendeskNotesSyncAt: null,
+      directMessageEmail: null,
+      directMessagePhone: null,
       supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
@@ -1715,7 +2088,11 @@ function buildInitialConversationState() {
       lastResolvedContext: null,
       verifiedRutAt: null,
       verifiedWhatsappAt: null,
-      verifiedPairAt: null
+      verifiedPairAt: null,
+      savedDataConfirmed: false,
+      savedDataShown: false,
+      awaitingMissingDataCompletion: false,
+      awaitingFinalConfirmation: false
     },
     measurements: {
       weightKg: null,
@@ -1746,9 +2123,11 @@ function buildInitialConversationState() {
       pendingSpecialty: null,
       awaitingSlotChoice: false,
       awaitingPatientData: false,
+      awaitingConfirmation: false,
       chosenSlot: null,
       missingFields: null
     },
+    melania: { active: false, lastBookingAt: null, lastBookingSlot: null, lastBookingPatient: null },
     system: {
       aiEnabled: true,
       humanTakenOver: false,
@@ -1762,6 +2141,12 @@ function buildInitialConversationState() {
       lastOutboundText: null,
       lastOutboundReason: null,
       lastOutboundAt: null
+    },
+    leadScore: {
+      score: 0,
+      category: "frío",
+      reasons: [],
+      calculatedAt: null
     }
   };
 }
@@ -1827,19 +2212,91 @@ async function hydrateConversationCache(conversationId) {
   return getConversationState(conversationId);
 }
 
+const lastSyncedLeadScore = new Map();
+
+async function syncLeadScoreToSupport(state, conversationId) {
+  try {
+    let supportUserId = normalizeZendeskEntityId(state.identity?.zendeskRequesterId);
+    let source = supportUserId ? "requester_id" : null;
+
+    if (!supportUserId) {
+      const supportUsers = state.identity?.supportRaw?.users;
+      const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
+
+      // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
+      if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
+
+      // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
+      const matchedUser = supportUsers[0];
+      const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
+      const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
+      const userEmail = String(matchedUser.email || "").trim().toLowerCase();
+      const userPhone = normalizePhone(matchedUser.phone || null);
+
+      const strongMatch =
+        (stateEmail && userEmail && stateEmail === userEmail) ||
+        (statePhone && userPhone && statePhone === userPhone);
+
+      if (!strongMatch) return;
+
+      supportUserId = normalizeZendeskEntityId(matchedUser.id);
+      source = "support_strong_match";
+    }
+
+    if (!supportUserId) return;
+
+    const leadScoreSummary = formatLeadScoreSummary(state.leadScore);
+    const leadScoreDetail = formatLeadScoreDetail(state.leadScore);
+    const userFields = {
+      user_lead_score: leadScoreSummary,
+      user_lead_score_detail: leadScoreDetail
+    };
+    if (LEAD_SCORE_INFO_URL) {
+      userFields.user_lead_score_info_url = LEAD_SCORE_INFO_URL;
+    }
+    const currentScore = state.leadScore?.score ?? 0;
+    const scoreSyncKey = `${supportUserId}:${leadScoreSummary}:${leadScoreDetail}:${LEAD_SCORE_INFO_URL || ""}`;
+    if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
+
+    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
+      user: {
+        user_fields: userFields
+      }
+    });
+    lastSyncedLeadScore.set(conversationId, scoreSyncKey);
+    console.log(
+      `LEAD_SCORE_SYNC_SUPPORT conversationId=${conversationId} zendeskUserId=${supportUserId} source=${source} score=${currentScore}`
+    );
+  } catch (error) {
+    console.error("SYNC_LEAD_SCORE_SUPPORT:", error.message);
+  }
+}
+
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
   try {
+    const previousScore = state.leadScore?.score ?? 0;
+    state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
+    await syncLeadScoreToSupport(state, conversationId);
+    await trackLeadScoreChange(conversationId, state.leadScore, previousScore, channel || "message", state.system?.botMessagesSent || 0);
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
   }
 }
 
-async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null }) {
+async function persistConversationMessage({ conversationId, role, messageId = null, channel = null, sourceType = null, content = "", rawJson = null, authorDisplayName = null }) {
   if (!dbEnabled()) return true;
   try {
+    // Run sentiment analysis on message content
+    let analysis = {};
+    try {
+      analysis = await analyzeSentiment(content, getEmojiSentimentBatch);
+    } catch (err) {
+      console.error("SENTIMENT_ANALYSIS_ERROR:", err.message);
+    }
+
     return await insertConversationMessage({
       conversationId,
       role,
@@ -1847,7 +2304,15 @@ async function persistConversationMessage({ conversationId, role, messageId = nu
       channel,
       sourceType,
       content,
-      rawJson
+      rawJson,
+      emojiList: analysis.emojiList || null,
+      emojiCount: analysis.emojiCount || 0,
+      emojiSentimentAvg: analysis.emojiSentimentAvg,
+      textSentimentScore: analysis.textSentimentScore,
+      wordCount: analysis.wordCount || 0,
+      hasQuestion: analysis.hasQuestion || false,
+      detectedSignals: analysis.detectedSignals?.length ? analysis.detectedSignals : null,
+      authorDisplayName
     });
   } catch (error) {
     console.error("DB MESSAGE ERROR:", error.message);
@@ -1932,6 +2397,128 @@ function applyCustomerResolutionToState(state, resolved, options = {}) {
   state.identity.matchStatus = "no_context";
   state.identity.requiresUserConfirmation = false;
   state.identity.safeToUseHistoricalContext = false;
+}
+
+function shouldConfirmSavedData(state) {
+  if (state.identity.savedDataConfirmed || state.identity.savedDataShown) return false;
+  if (state.identity.awaitingMissingDataCompletion || state.identity.awaitingFinalConfirmation) return false;
+  if (!state.identity.safeToUseHistoricalContext) return false;
+  if (!state.identity.customerId) return false;
+  const cd = state.contactDraft || {};
+  // Trigger confirmation when we have ANY patient data (not just names/insurance)
+  const hasRelevantData = cd.c_nombres || cd.c_aseguradora || cd.c_modalidad || cd.c_rut || cd.c_email || cd.c_tel1;
+  return Boolean(hasRelevantData);
+}
+
+function buildSavedDataSummary(state) {
+  const cd = state.contactDraft || {};
+  const hasAnyData = cd.c_nombres || cd.c_rut || cd.c_aseguradora || cd.c_email || cd.c_tel1;
+  if (!hasAnyData) return null;
+
+  const nombre = cd.c_nombres
+    ? `${cd.c_nombres}${cd.c_apellidos ? " " + cd.c_apellidos : ""}`
+    : null;
+  const prevision = cd.c_aseguradora
+    ? (cd.c_modalidad ? `${cd.c_aseguradora} - ${cd.c_modalidad}` : cd.c_aseguradora)
+    : null;
+
+  const lines = [
+    `👤 Nombre completo: ${nombre || "(falta)"}`,
+    `🆔 RUT: ${cd.c_rut || "(falta)"}`,
+    `🎂 Fecha de nacimiento: ${cd.c_fecha || "(falta)"}`,
+    `📧 Correo electrónico: ${cd.c_email || "(falta)"}`,
+    `🏥 Previsión: ${prevision || "(falta)"}`,
+    `🏡 Dirección: ${cd.c_direccion || "(falta)"}`,
+    `🏙️ Ciudad: ${cd.c_comuna || "(falta)"}`,
+    `📱 Número de celular: ${cd.c_tel1 || cd.c_tel2 || "(falta)"}`
+  ];
+  return lines.join("\n");
+}
+
+function getMissingPatientDataFields(state) {
+  const cd = state.contactDraft || {};
+  const missing = [];
+  if (!cd.c_fecha) missing.push({ key: "c_fecha", label: "🎂 Fecha de nacimiento:", emoji: "🎂" });
+  if (!cd.c_email) missing.push({ key: "c_email", label: "📧 Correo electrónico:", emoji: "📧" });
+  if (!cd.c_aseguradora) missing.push({ key: "c_aseguradora", label: "🏥 Previsión:", emoji: "🏥" });
+  if (cd.c_aseguradora === "FONASA" && !cd.c_modalidad) missing.push({ key: "c_modalidad", label: "🩺 Tramo Fonasa:", emoji: "🩺" });
+  if (!cd.c_direccion) missing.push({ key: "c_direccion", label: "🏡 Dirección:", emoji: "🏡" });
+  if (!cd.c_comuna) missing.push({ key: "c_comuna", label: "🏙️ Ciudad:", emoji: "🏙️" });
+  if (!cd.c_tel1 && !cd.c_tel2) missing.push({ key: "c_tel1", label: "📱 Número de celular:", emoji: "📱" });
+  if (!cd.c_nombres) missing.push({ key: "c_nombres", label: "👤 Nombre completo:", emoji: "👤" });
+  if (!cd.c_rut) missing.push({ key: "c_rut", label: "🆔 RUT:", emoji: "🆔" });
+  // Medinet requires both apellido paterno AND materno
+  if (cd.c_apellidos && !splitApellidos(cd.c_apellidos).materno) {
+    missing.push({ key: "c_ap_materno", label: "👤 Apellido materno:", emoji: "👤" });
+  }
+  return missing;
+}
+
+function buildSavedDataConfirmationMessage(state) {
+  const summary = buildSavedDataSummary(state);
+  if (!summary) return null;
+
+  const missing = getMissingPatientDataFields(state);
+
+  if (missing.length > 0) {
+    const missingBlock = missing.map((f) => `${f.label}`).join("\n");
+    return `Para agendar correctamente, necesito confirmar tus datos:\n\n📋 *Datos del Paciente*\n${summary}\n\n` +
+      `¿Están correctos? Si hay datos incorrectos indícamelo.\n\n` +
+      `Además, me faltan estos datos. Copia y pega este bloque y complétalo:\n\n${missingBlock}`;
+  }
+
+  return `Para agendar correctamente, necesito confirmar tus datos:\n\n📋 *Datos del Paciente*\n${summary}\n\nConfirma con *1=Sí* o *2=No*`;
+}
+
+function handleSavedDataConfirmationResponse(state, userText) {
+  const normalized = (userText || "").toUpperCase().replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim();
+  const confirmsData = /^(SI|SÍ|OK|CORRECTO|CORRECTOS|ESTA BIEN|ESTAN BIEN|ESTÁN BIEN|DALE|PERFECTO|TODO BIEN|CONFIRMO|CONFIRMADO|1)\b/.test(normalized);
+  const rejectsData = /^(NO|CAMBIAR|CORREGIR|MODIFICAR|ACTUALIZAR|MAL|INCORRECTO|INCORRECTOS|ESTAN MAL|ESTÁN MAL|2)\b/.test(normalized);
+
+  if (confirmsData) {
+    state.identity.savedDataConfirmed = true;
+    // Check if there are still missing fields — ask for them
+    const missing = getMissingPatientDataFields(state);
+    if (missing.length > 0) {
+      const missingBlock = missing.map((f) => `${f.label}`).join("\n");
+      return {
+        confirmed: true,
+        needsCompletion: true,
+        message: `OK, datos confirmados ✅\n\nAhora necesito que completes los datos que faltan. Copia y pega este bloque con tus datos:\n\n${missingBlock}`
+      };
+    }
+    return { confirmed: true, message: null };
+  }
+
+  if (rejectsData) {
+    // Clear saved data so the bot asks fresh questions
+    state.contactDraft.c_rut = null;
+    state.contactDraft.c_nombres = null;
+    state.contactDraft.c_apellidos = null;
+    state.contactDraft.c_fecha = null;
+    state.contactDraft.c_aseguradora = null;
+    state.contactDraft.c_modalidad = null;
+    state.contactDraft.c_email = null;
+    state.contactDraft.c_tel1 = null;
+    state.contactDraft.c_tel2 = null;
+    state.contactDraft.c_direccion = null;
+    state.contactDraft.c_comuna = null;
+    state.dealDraft.dealInteres = null;
+    state.dealDraft.dealPeso = null;
+    state.dealDraft.dealEstatura = null;
+    state.measurements.weightKg = null;
+    state.measurements.heightCm = null;
+    state.measurements.bmi = null;
+    state.measurements.bmiCategory = null;
+    state.identity.directMessageEmail = null;
+    state.identity.directMessagePhone = null;
+    state.identity.savedDataConfirmed = true;
+    return { confirmed: true, cleared: true, message: "Perfecto, borro los datos anteriores. Cuéntame, ¿en qué te puedo ayudar?" };
+  }
+
+  // User might be giving corrections inline — mark as confirmed and let the normal flow extract new data
+  state.identity.savedDataConfirmed = true;
+  return { confirmed: true, message: null };
 }
 
 async function syncCustomerChannelsFromState(customerId, conversationId, state, channelLabel) {
@@ -2099,7 +2686,8 @@ async function claimInboundUserMessage({ conversationId, messageId, channel, sou
       channel,
       sourceType,
       content,
-      rawJson
+      rawJson,
+      authorDisplayName: rawJson?.author?.displayName || null
     });
     return true;
   }
@@ -2199,7 +2787,8 @@ async function sendManagedReply({
     channel: channelLabel,
     sourceType: "api:conversations",
     content: finalReply,
-    rawJson: { kind, resolverDecision }
+    rawJson: { kind, resolverDecision },
+    authorDisplayName: "Antonia"
   });
   await saveConversationEvent({
     conversationId,
@@ -2265,6 +2854,75 @@ function extractConversationInfo(payload) {
   };
 }
 
+function normalizeZendeskEntityId(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+}
+
+function leadScoreBadge(category) {
+  switch (String(category || "").toLowerCase()) {
+    case "caliente":
+      return "🔴";
+    case "tibio":
+      return "🟡";
+    case "frío":
+    case "frio":
+    default:
+      return "🔵";
+  }
+}
+
+function formatLeadScoreSummary(leadScore) {
+  const score = leadScore?.score ?? 0;
+  const category = String(leadScore?.category || "frío").toUpperCase();
+  const badge = leadScore?.emoji || leadScoreBadge(leadScore?.category);
+  const pipelinePrefix = leadScore?.pipeline ? `${leadScore.pipeline} ` : "";
+  return `${pipelinePrefix}${badge} ${category} (${score})`;
+}
+
+function formatLeadScoreDetail(leadScore) {
+  const summary = formatLeadScoreSummary(leadScore);
+  const reasons = Array.isArray(leadScore?.reasons) ? leadScore.reasons.filter(Boolean) : [];
+  if (!reasons.length) return summary;
+  return `${summary} = ${reasons.join(", ")}`;
+}
+
+function extractZendeskTicketAssignment(payload = {}) {
+  const conversationId = normalizeZendeskEntityId(
+    payload?.conversation_id ??
+    payload?.conversationId ??
+    payload?.ticket?.conversation_id ??
+    payload?.ticket?.conversationId
+  );
+  const assigneeId = normalizeZendeskEntityId(
+    payload?.assignee_id ??
+    payload?.assigneeId ??
+    payload?.ticket?.assignee_id ??
+    payload?.ticket?.assigneeId
+  );
+  const requesterId = normalizeZendeskEntityId(
+    payload?.requester_id ??
+    payload?.requesterId ??
+    payload?.ticket?.requester_id ??
+    payload?.ticket?.requesterId ??
+    payload?.requester?.id
+  );
+  const ticketId = normalizeZendeskEntityId(
+    payload?.ticket_id ??
+    payload?.ticketId ??
+    payload?.ticket?.id ??
+    payload?.ticket?.ticket_id
+  );
+
+  return {
+    event: payload?.event || null,
+    conversationId,
+    assigneeId,
+    requesterId,
+    ticketId
+  };
+}
+
 function hasScheduleIntent(text) {
   const normalized = normalizeKey(text);
   return [
@@ -2302,6 +2960,8 @@ function hasExplicitScheduleIntent(text) {
     "AGENDAR CON",
     "AGENDAR PARA",
     "DISPONIBILIDAD CON",
+    "DISPONIBLES CON",
+    "DISPONIBLE CON",
     "AGENDA CON",
     "RESERVAR HORA CON",
     "CAMBIO DE HORA",
@@ -2325,9 +2985,15 @@ function extractProfessionalReference(text) {
     return { professionalName: titleCaseWords(titledMatch[1]), matchType: "titled" };
   }
 
-  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){1,3})\b/i);
+  const withConMatch = source.match(/\b(?:con|para)\s+([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+){0,3})\b/i);
   if (withConMatch) {
-    return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
+    // Reject time/date expressions mistakenly captured as professional names
+    // e.g. "para la segunda semana de abril" should NOT extract "segunda semana"
+    const candidateNorm = normalizeKey(withConMatch[1]);
+    const isTimeExpression = /\b(PRIMERA|SEGUNDA|TERCERA|CUARTA|ULTIMA|PROXIMA|SIGUIENTE|ESTA|ESA|OTRA|SEMANA|MES|LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO|ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE|MANANA|HOY|AYER|TARDE|NOCHE)\b/.test(candidateNorm);
+    if (!isTimeExpression) {
+      return { professionalName: titleCaseWords(withConMatch[1]), matchType: "con_phrase" };
+    }
   }
 
   return { professionalName: null, matchType: null };
@@ -2386,11 +3052,14 @@ function buildAntoniaFastPathCandidate(text, state) {
   const hasIntent = hasScheduleIntent(text) || hasExplicitScheduleIntent(text);
 
   const alias = extractKnownProfessionalAlias(text);
-  if (alias && hasIntent) {
+  // Trigger fast-path if professional is named AND (has schedule intent OR we're already in schedule_request stage)
+  const inScheduleStage = state.identity?.lastResolvedStage === "schedule_request" ||
+    state.booking?.awaitingSlotChoice || state.booking?.pendingProfessional;
+  if (alias && (hasIntent || inScheduleStage)) {
     return { shouldTry: true, reason: "known_professional_alias", query: alias, trigger: "alias" };
   }
 
-  if (!hasIntent) return noFastPath;
+  if (!hasIntent && !inScheduleStage) return noFastPath;
 
   const specialty = extractCanonicalSpecialtyQuery(text);
   if (specialty) {
@@ -2410,6 +3079,15 @@ function buildAntoniaFastPathCandidate(text, state) {
     if (cacheHit) {
       return { shouldTry: true, reason: "cache_professional_match", query: sanitized, trigger: "cache" };
     }
+  }
+
+  // If user shows schedule intent and we already have a pendingProfessional from a prior search,
+  // re-use that professional instead of searching for generic words like "agendar"
+  if (hasIntent && state.booking?.pendingProfessional) {
+    const pendingQuery = extractKnownProfessionalAlias(state.booking.pendingProfessional)
+      || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
+      || state.booking.pendingProfessional;
+    return { shouldTry: true, reason: "schedule_intent_with_pending_professional", query: pendingQuery, trigger: "pending_professional" };
   }
 
   return noFastPath;
@@ -2436,7 +3114,10 @@ function updateDraftsFromText(state, text, info) {
   const structured = parseStructuredLeadText(cleanText);
 
   const email = extractEmail(cleanText) || extractEmail(structured.email);
-  if (email) state.contactDraft.c_email = email;
+  if (email) {
+    state.contactDraft.c_email = email;
+    state.identity.directMessageEmail = email;
+  }
 
   const phone = extractPhone(cleanText) || normalizePhone(structured.phone_number);
   if (phone) {
@@ -2444,6 +3125,7 @@ function updateDraftsFromText(state, text, info) {
     if (!state.contactDraft.c_tel2) {
       state.contactDraft.c_tel2 = phone;
     }
+    state.identity.directMessagePhone = phone;
   }
 
   const rut = extractRut(cleanText);
@@ -2457,6 +3139,14 @@ function updateDraftsFromText(state, text, info) {
 
   const address = extractAddress(cleanText);
   if (address) state.contactDraft.c_direccion = address;
+
+  // Extract apellido materno if provided explicitly (e.g. "Apellido materno: Pérez")
+  const apMaternoMatch = cleanText.match(/apellido\s+materno\s*:?\s*([A-Za-záéíóúñÁÉÍÓÚÑ]+)/i);
+  if (apMaternoMatch) {
+    const existingApellidos = state.contactDraft.c_apellidos || "";
+    const { paterno } = splitApellidos(existingApellidos);
+    state.contactDraft.c_apellidos = paterno ? `${paterno} ${titleCaseWords(apMaternoMatch[1])}` : titleCaseWords(apMaternoMatch[1]);
+  }
 
   const preferredFullName = structured.full_name || extractName(cleanText);
   if (preferredFullName && isUsablePersonName(preferredFullName)) {
@@ -2538,6 +3228,20 @@ function updateDraftsFromText(state, text, info) {
     }
   }
 
+  // Derive dealInteres from professional name when not already set
+  if (!state.dealDraft.dealInteres) {
+    const alias = extractKnownProfessionalAlias(cleanText);
+    if (alias) {
+      const cachedProf = matchProfessionalFromCache(alias);
+      const specialty = cachedProf?.specialty || null;
+      const derived = deriveDealInteresFromSpecialty(specialty, alias);
+      if (derived) {
+        state.dealDraft.dealInteres = derived;
+        console.log(`Derived dealInteres="${derived}" from professional="${alias}" specialty="${specialty}"`);
+      }
+    }
+  }
+
   if (detectExistingPatientIntent(cleanText)) {
     state.identity.saysExistingPatient = true;
   }
@@ -2601,6 +3305,11 @@ function shouldAskOpenHelpQuestion(state, userText) {
   if (state.openHelp.asked) return false;
   if (state.system.botMessagesSent < 5) return false;
   if (hasClearTopLevelIntent(userText)) return false;
+  if (state.dealDraft?.dealInteres || state.booking?.pendingProfessional || state.booking?.pendingSpecialty) return false;
+  const resolvedStage = state.identity?.lastResolvedStage;
+  if (resolvedStage === "schedule_request" || resolvedStage === "missing_insurance" || resolvedStage === "missing_modality" || resolvedStage === "missing_interest") return false;
+  const insuranceInfo = parseAseguradora(userText);
+  if (insuranceInfo?.aseguradora || insuranceInfo?.isIsapreGeneric) return false;
   return true;
 }
 
@@ -2661,6 +3370,13 @@ function buildStateSummary(state) {
     `likelyClinicalRecordOnly=${state.identity.likelyClinicalRecordOnly ? "si" : "no"}`,
     `botMessagesSent=${state.system.botMessagesSent}`
   ];
+
+  if (state.leadScore?.score > 0) {
+    const ls = state.leadScore;
+    const lsEmoji = ls.emoji || "";
+    const lsPipeline = ls.pipeline ? `${ls.pipeline}= ` : "";
+    parts.push(`${lsPipeline}[LEAD_SCORE] ${lsEmoji} ${ls.category.toUpperCase()} (${ls.score}) = ${(ls.reasons || []).join(", ")}`);
+  }
 
   if (state.identity.sellSummary) {
     parts.push(`[SELL_RESUMEN] ${state.identity.sellSummary}`);
@@ -2796,6 +3512,196 @@ async function zendeskSupportGet(path, params = {}) {
   return data;
 }
 
+async function zendeskSupportPost(path, body = {}) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+async function zendeskSupportPut(path, body = {}) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
+  const response = await fetch(url.toString(), {
+    method: "PUT",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+async function zendeskSupportGetByUrl(url) {
+  if (!ZENDESK_SUBDOMAIN) {
+    throw new Error("Missing ZENDESK_SUBDOMAIN");
+  }
+
+  const authHeader = getZendeskSupportAuthHeader();
+  if (!authHeader) {
+    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
+  }
+
+  const parsedUrl = new URL(String(url || ""));
+  const expectedHost = `${ZENDESK_SUBDOMAIN}.zendesk.com`;
+  if (parsedUrl.host !== expectedHost) {
+    throw new Error(`Unexpected Zendesk host: ${parsedUrl.host}`);
+  }
+
+  const response = await fetch(parsedUrl.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const raw = await response.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
+  }
+
+  return data;
+}
+
+function extractConversationIdFromUnknown(node, seen = new Set()) {
+  if (!node || typeof node !== "object") {
+    return null;
+  }
+
+  if (seen.has(node)) {
+    return null;
+  }
+  seen.add(node);
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const nested = extractConversationIdFromUnknown(item, seen);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (/^conversation[_-]?id$/i.test(key)) {
+      const normalized = normalizeZendeskEntityId(value);
+      if (normalized) return normalized;
+    }
+  }
+
+  for (const value of Object.values(node)) {
+    const nested = extractConversationIdFromUnknown(value, seen);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+async function fetchZendeskTicketAudits(ticketId) {
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
+  if (!normalizedTicketId) {
+    return [];
+  }
+
+  let nextUrl = `https://${ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/tickets/${encodeURIComponent(normalizedTicketId)}/audits.json`;
+  const audits = [];
+
+  while (nextUrl) {
+    const payload = await zendeskSupportGetByUrl(nextUrl);
+    const rows = Array.isArray(payload?.audits) ? payload.audits : [];
+    audits.push(...rows);
+    nextUrl = payload?.next_page || null;
+  }
+
+  return audits;
+}
+
+async function resolveConversationIdFromZendeskTicket(ticketId) {
+  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
+  if (!normalizedTicketId) {
+    return null;
+  }
+
+  const audits = await fetchZendeskTicketAudits(normalizedTicketId);
+
+  for (const audit of audits) {
+    const events = Array.isArray(audit?.events) ? audit.events : [];
+    for (const event of events) {
+      if (event?.type !== "ChatStartedEvent") continue;
+      const conversationId = extractConversationIdFromUnknown(event);
+      if (conversationId) {
+        return conversationId;
+      }
+    }
+  }
+
+  for (const audit of audits) {
+    const conversationId = extractConversationIdFromUnknown(audit);
+    if (conversationId) {
+      return conversationId;
+    }
+  }
+
+  return null;
+}
+
 async function searchSupportByEmail(email) {
   if (!email) return [];
   const query = `type:user ${email}`;
@@ -2897,6 +3803,293 @@ async function searchSupportReal({ email, phone, name, channelDisplayName, sourc
     users: filteredUsers,
     tickets
   };
+}
+
+function isSocialMessagingSource(sourceType) {
+  const normalized = normalizeKey(sourceType || "");
+  return normalized === "INSTAGRAM" ||
+    normalized === "FACEBOOK" ||
+    normalized === "MESSENGER" ||
+    normalized === "WHATSAPP";
+}
+
+function normalizeZendeskContactEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  return email || null;
+}
+
+function buildZendeskContactSyncKey(userId, email, phone) {
+  return JSON.stringify({
+    userId: userId || null,
+    email: email || null,
+    phone: phone || null
+  });
+}
+
+function buildZendeskNotesSyncKey(userId, notes) {
+  return JSON.stringify({
+    userId: userId || null,
+    notes: String(notes || "").trim() || null
+  });
+}
+
+function normalizeZendeskNotes(value) {
+  const text = String(value || "").replace(/\r\n/g, "\n").trim();
+  return text || null;
+}
+
+function formatPhoneForZendeskNotes(raw) {
+  const phone = normalizePhone(raw);
+  if (!phone) return null;
+  if (/^\+569\d{8}$/.test(phone)) {
+    return `${phone.slice(3, 4)} ${phone.slice(4, 8)} ${phone.slice(8)}`;
+  }
+  return phone;
+}
+
+function formatZendeskNotesValue(value) {
+  return normalizeSpaces(String(value || "").replace(/\r\n/g, "\n").replace(/\n+/g, " "));
+}
+
+function calculateAgeFromBirthDate(raw) {
+  const text = String(raw || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return null;
+  }
+
+  const birthDate = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(birthDate.getTime())) {
+    return null;
+  }
+
+  const today = new Date();
+  let age = today.getUTCFullYear() - birthDate.getUTCFullYear();
+  const monthDiff = today.getUTCMonth() - birthDate.getUTCMonth();
+  const dayDiff = today.getUTCDate() - birthDate.getUTCDate();
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+    age -= 1;
+  }
+  return age >= 0 ? String(age) : null;
+}
+
+function buildZendeskUserNotesFromState(state, info, options = {}) {
+  const confirmed = Boolean(options.confirmed);
+  const structured = parseStructuredLeadText(info?.userText || info?.rawMessage?.content?.text || "");
+  const contact = state?.contactDraft || {};
+  const deal = state?.dealDraft || {};
+  const directEmail = normalizeZendeskContactEmail(state?.identity?.directMessageEmail);
+  const directPhone = normalizePhone(state?.identity?.directMessagePhone || null);
+
+  const fullName = formatZendeskNotesValue(
+    (confirmed ? [contact.c_nombres, contact.c_apellidos].filter(Boolean).join(" ") : "") ||
+    structured.full_name ||
+    info?.authorDisplayName ||
+    info?.sourceProfileName ||
+    ""
+  );
+  const insurance = formatZendeskNotesValue(
+    contact.c_aseguradora
+      ? (contact.c_modalidad ? `${contact.c_aseguradora} - ${contact.c_modalidad}` : contact.c_aseguradora)
+      : (structured.insurance || "")
+  );
+  const age = formatZendeskNotesValue(structured.age || calculateAgeFromBirthDate(contact.c_fecha) || "");
+  const noteLines = [
+    `RUT: ${formatZendeskNotesValue(contact.c_rut) || ""}`,
+    `Correo electrónico: ${formatZendeskNotesValue((confirmed ? contact.c_email : null) || directEmail || structured.email) || ""}`,
+    `Nombre completo: ${fullName || ""}`,
+    `Teléfono: ${formatPhoneForZendeskNotes((confirmed ? (contact.c_tel1 || contact.c_tel2) : null) || directPhone || structured.phone_number) || ""}`,
+    `Ciudad: ${formatZendeskNotesValue(contact.c_comuna || structured.city) || ""}`,
+    `Dirección: ${formatZendeskNotesValue(contact.c_direccion) || ""}`,
+    `Servicio o interés: ${formatZendeskNotesValue(deal.dealInteres) || ""}`,
+    `¿Fonasa, Isapre o particular?: ${insurance || ""}`,
+    `Peso: ${formatZendeskNotesValue(deal.dealPeso || state?.measurements?.weightKg) || ""}`,
+    `Estatura: ${formatZendeskNotesValue(deal.dealEstatura || state?.measurements?.heightCm) || ""}`,
+    `Edad: ${age || ""}`
+  ];
+
+  return noteLines.join("\n");
+}
+
+function hasConfirmedZendeskSyncData(state) {
+  return Boolean(state?.identity?.savedDataConfirmed) &&
+    !state?.identity?.awaitingMissingDataCompletion &&
+    !state?.identity?.awaitingFinalConfirmation;
+}
+
+function buildZendeskSyncPayloadFromState(state, info) {
+  const confirmed = hasConfirmedZendeskSyncData(state);
+  const email = confirmed
+    ? normalizeZendeskContactEmail(state?.contactDraft?.c_email)
+    : normalizeZendeskContactEmail(state?.identity?.directMessageEmail);
+  const phone = confirmed
+    ? normalizePhone(state?.contactDraft?.c_tel1 || null)
+    : normalizePhone(state?.identity?.directMessagePhone || null);
+  const notes = buildZendeskUserNotesFromState(state, info, { confirmed });
+
+  return {
+    confirmed,
+    email,
+    phone,
+    notes
+  };
+}
+
+async function getZendeskUser(userId) {
+  if (!userId) return null;
+  const data = await zendeskSupportGet(`/api/v2/users/${userId}.json`);
+  return data?.user || null;
+}
+
+async function listZendeskUserIdentities(userId) {
+  if (!userId) return [];
+  const data = await zendeskSupportGet(`/api/v2/users/${userId}/identities.json`);
+  return Array.isArray(data?.identities) ? data.identities : [];
+}
+
+async function createZendeskUserIdentity(userId, identity, options = {}) {
+  if (!userId || !identity?.type || !identity?.value) {
+    return null;
+  }
+  const data = await zendeskSupportPost(`/api/v2/users/${userId}/identities.json`, {
+    identity,
+    ...options
+  });
+  return data?.identity || null;
+}
+
+async function updateZendeskUser(userId, user) {
+  if (!userId || !user || typeof user !== "object") {
+    return null;
+  }
+  const data = await zendeskSupportPut(`/api/v2/users/${userId}.json`, { user });
+  return data?.user || null;
+}
+
+async function syncZendeskUserContactsFromState(state, info, context = {}) {
+  const sourceType = info?.sourceType || state?.identity?.channelSourceType || null;
+  if (!isSocialMessagingSource(sourceType)) {
+    return null;
+  }
+
+  if (!ZENDESK_SUBDOMAIN || !getZendeskSupportAuthHeader()) {
+    return null;
+  }
+
+  const { confirmed, email, phone, notes: noteText } = buildZendeskSyncPayloadFromState(state, info);
+
+  if (!email && !phone && !noteText) {
+    return null;
+  }
+
+  const zendeskUserId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
+  if (!zendeskUserId) {
+    const logParts = [
+      context?.conversationId ? `conversationId=${context.conversationId}` : null,
+      "reason=requester_not_resolved",
+      `mode=${confirmed ? "confirmed" : "direct_message"}`,
+      email ? `email=${email}` : null,
+      phone ? `phone=${phone}` : null
+    ].filter(Boolean).join(" ");
+    console.log(`ZENDESK_CONTACT_SYNC_SKIPPED ${logParts}`);
+    return null;
+  }
+
+  const zendeskUser = await getZendeskUser(zendeskUserId);
+  const existingNotes = normalizeZendeskNotes(zendeskUser?.notes);
+
+  const syncKey = buildZendeskContactSyncKey(zendeskUserId, email, phone);
+  const notesSyncKey = buildZendeskNotesSyncKey(zendeskUserId, noteText);
+  const shouldSyncContacts = Boolean(email || phone) && state?.identity?.zendeskContactSyncKey !== syncKey;
+  const shouldSyncNotes = Boolean(noteText) &&
+    existingNotes !== normalizeZendeskNotes(noteText);
+
+  if (!shouldSyncContacts && !shouldSyncNotes) {
+    return null;
+  }
+
+  let createdEmail = false;
+  let createdPhone = false;
+  let createdNotes = false;
+
+  if (shouldSyncContacts) {
+    const identities = await listZendeskUserIdentities(zendeskUserId);
+    const normalizedIdentityEmailValues = identities
+      .filter((identity) => identity?.type === "email")
+      .map((identity) => normalizeZendeskContactEmail(identity?.value))
+      .filter(Boolean);
+    const normalizedIdentityPhoneValues = identities
+      .filter((identity) => identity?.type === "phone_number")
+      .map((identity) => normalizePhone(identity?.value))
+      .filter(Boolean);
+    const existingEmails = new Set([
+      normalizeZendeskContactEmail(zendeskUser?.email),
+      ...normalizedIdentityEmailValues
+    ].filter(Boolean));
+    const existingPhones = new Set([
+      normalizePhone(zendeskUser?.phone),
+      ...normalizedIdentityPhoneValues
+    ].filter(Boolean));
+
+    if (email && !existingEmails.has(email)) {
+      await createZendeskUserIdentity(zendeskUserId, {
+        type: "email",
+        value: email
+      }, {
+        skip_verify_email: true
+      });
+      createdEmail = true;
+    }
+
+    if (phone && !existingPhones.has(phone)) {
+      await createZendeskUserIdentity(zendeskUserId, {
+        type: "phone_number",
+        value: phone
+      });
+      createdPhone = true;
+    }
+
+    state.identity.zendeskContactSyncKey = syncKey;
+    state.identity.zendeskContactSyncAt = new Date().toISOString();
+  }
+
+  if (shouldSyncNotes) {
+    await updateZendeskUser(zendeskUserId, { notes: noteText });
+    createdNotes = true;
+    state.identity.zendeskNotesSyncKey = notesSyncKey;
+    state.identity.zendeskNotesSyncAt = new Date().toISOString();
+  }
+
+  const logParts = [
+    context?.conversationId ? `conversationId=${context.conversationId}` : null,
+    `zendeskUserId=${zendeskUserId}`,
+    `mode=${confirmed ? "confirmed" : "direct_message"}`,
+    context?.trigger ? `trigger=${context.trigger}` : null,
+    email ? `email=${email}` : null,
+    phone ? `phone=${phone}` : null,
+    `emailAdded=${createdEmail ? "si" : "no"}`,
+    `phoneAdded=${createdPhone ? "si" : "no"}`,
+    `notesAdded=${createdNotes ? "si" : "no"}`
+  ].filter(Boolean).join(" ");
+  console.log(`ZENDESK_CONTACT_SYNC ${logParts}`);
+
+  return {
+    zendeskUserId,
+    emailAdded: createdEmail,
+    phoneAdded: createdPhone,
+    notesAdded: createdNotes,
+    syncedAt: createdNotes
+      ? state.identity.zendeskNotesSyncAt
+      : state.identity.zendeskContactSyncAt
+  };
+}
+
+async function safelySyncZendeskUserContactsFromState(state, info, context = {}) {
+  try {
+    return await syncZendeskUserContactsFromState(state, info, context);
+  } catch (error) {
+    console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
+    return null;
+  }
 }
 
 function updateStateFromSellSearch(state, sellData) {
@@ -3125,7 +4318,7 @@ Objetivo:
 - extraer datos relevantes para contacto y deal
 - no repetir preguntas ya respondidas
 - avanzar paso a paso
-- máximo 2 frases por respuesta
+- máximo 3 frases por respuesta (puedes usar más solo cuando contengas emocionalmente)
 - hacer solo 1 pregunta a la vez
 - no sonar como robot
 - responder en español chileno neutral, profesional y cálido
@@ -3134,8 +4327,31 @@ Objetivo:
 - evita preguntas duras tipo flujo si ya entendiste la necesidad
 
 Identidad:
-- idealmente en tu segundo mensaje debes presentarte como Antonia
+- (La presentación como Antonia se maneja automáticamente, no te presentes de nuevo)
 - no digas que eres una IA
+
+═══ REGLAS DE EMPATÍA Y RAPPORT (crítico) ═══
+
+- SIEMPRE haz rapport ANTES de pedir datos administrativos
+- En el PRIMER mensaje de respuesta, reconoce lo que el paciente dijo antes de preguntar
+- Si el paciente dice "me interesa manga/bypass/balón", responde primero con algo como "Qué bueno que te estés informando" o "Me alegra que nos escribas" ANTES de pedir previsión
+- Si el paciente comparte peso/estatura/IMC alto, SIEMPRE incluye una frase de contención como "Lo importante es que estás dando un paso positivo" o "Entiendo que puede ser un tema sensible, vamos paso a paso"
+- Cuando entregues datos de IMC que indiquen obesidad, NO lances el número de forma fría. Acompaña con contexto empático:
+  CORRECTO: "Con esos datos, tu IMC es 44.4. Sé que los números pueden preocupar, pero lo importante es que estás tomando acción. Esto nos sirve para orientarte hacia la mejor opción."
+  INCORRECTO: "📊 Tu IMC es 44.4 (obesidad grado 3)" (sin contención)
+- En pipeline bariátrica y balones: el paciente tiene MIEDO y posible VERGÜENZA corporal. Sé especialmente cálida
+- En pipeline plástica: el paciente busca AUTOESTIMA. Valida su decisión sin juzgar
+- Nunca uses la palabra "obesidad" sin acompañarla de una frase positiva o de acción
+
+═══ REGLA DE CANDIDATURA (compliance) ═══
+
+- SÍ puedes responder sobre candidatura en términos GENÉRICOS usando criterios generales
+- CORRECTO: "Son candidatos los pacientes con IMC mayor a 35, o mayor a 30 cuando hay comorbilidades como diabetes o hipertensión. Con tus datos, estarías dentro del perfil para una evaluación."
+- CORRECTO: "Según lo que me cuentas, calificarías para que nuestro equipo médico te evalúe."
+- INCORRECTO: "Usted es candidata a manga gástrica" (diagnóstico personalizado)
+- INCORRECTO: "No eres candidata" (descarte sin evaluación médica)
+- INCORRECTO: "Te recomiendo bypass en vez de manga" (prescripción clínica)
+- La clave: responder con CRITERIOS GENERALES + invitar a evaluación médica
 
 Reglas operativas:
 - no inventes precios
@@ -3177,6 +4393,78 @@ ${buildKnowledgePromptContext()}
 `.trim();
 }
 
+function formatReplyForWhatsApp(text) {
+  // Regla 1: Cortar en puntuación después de la palabra 10+
+  const punctAllRe = /[.;?!,:—]$/;
+  const punctNoColonRe = /[.;?!,—]$/;
+  const lines = text.split('\n');
+  const formatted = [];
+
+  for (const line of lines) {
+    if (!line.trim()) { formatted.push(line); continue; }
+    const words = line.split(/\s+/);
+    let current = [];
+    let count = 0;
+    let inQuestion = false;
+    for (const word of words) {
+      current.push(word);
+      count++;
+      if (word.includes('¿')) inQuestion = true;
+      const punctRe = inQuestion ? punctNoColonRe : punctAllRe;
+      if (count >= 10 && punctRe.test(word)) {
+        formatted.push(current.join(' '));
+        formatted.push('');
+        current = [];
+        count = 0;
+      }
+      if (word.includes('?') && inQuestion) inQuestion = false;
+    }
+    if (current.length) formatted.push(current.join(' '));
+  }
+
+  let result = formatted.join('\n');
+
+  // Regla 2: 2 líneas vacías antes de ¿
+  result = result.replace(/\n*¿/g, '\n\n\n¿');
+  result = result.replace(/^\n+/, '');
+  result = result.replace(/\n{4,}/g, '\n\n\n');
+
+  // Regla 3: Emojis contextuales
+  let emojiCount = 0;
+  const MAX_EMOJIS = 3;
+  const emojiLines = result.split('\n');
+  const emojiResult = [];
+
+  for (const line of emojiLines) {
+    let l = line;
+    const hasEmoji = /[\u{1F300}-\u{1FAD6}]/u.test(l);
+    const isQuestion = l.trim().startsWith('¿');
+    if (hasEmoji || isQuestion || emojiCount >= MAX_EMOJIS) {
+      emojiResult.push(l);
+      continue;
+    }
+    if (/^(Perfecto|Listo)/i.test(l.trim())) {
+      l = '✅ ' + l.trim();
+      emojiCount++;
+    } else if (/https?:\/\//.test(l) && emojiCount < MAX_EMOJIS) {
+      l = l.replace(/(https?:\/\/)/, '🔗 $1');
+      emojiCount++;
+    } else if (/\+56|\bWhatsApp\b/i.test(l) && emojiCount < MAX_EMOJIS) {
+      l = l.replace(/(\+56)/, '📲 $1');
+      emojiCount++;
+    } else if (/\bIMC\b|kg\/m²/.test(l) && emojiCount < MAX_EMOJIS) {
+      l = '📊 ' + l.trim();
+      emojiCount++;
+    } else if (/\bderiva|una agente\b/i.test(l) && emojiCount < MAX_EMOJIS) {
+      l = l.replace(/(una agente)/, '🙋‍♀️ $1');
+      emojiCount++;
+    }
+    emojiResult.push(l);
+  }
+
+  return emojiResult.join('\n');
+}
+
 async function askOpenAI({ systemPrompt, stateSummary, history }) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY");
@@ -3194,7 +4482,8 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
     ]
   });
 
-  return response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  let reply = response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  return formatReplyForWhatsApp(reply);
 }
 
 async function sendConversationReply(appId, conversationId, reply) {
@@ -3301,6 +4590,24 @@ app.get("/debug/conversation/:conversationId", requireDebugKey, async (req, res)
   }
 });
 
+app.post("/debug/reset/:conversationId", requireDebugKey, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    conversationStates.delete(conversationId);
+    conversationHistory.delete(conversationId);
+    const pool = getDebugPool();
+    if (pool) {
+      await pool.query("DELETE FROM conversations WHERE conversation_id = $1", [conversationId]);
+      await pool.query("DELETE FROM conversation_messages WHERE conversation_id = $1", [conversationId]);
+    }
+    console.log(`RESET conversation ${conversationId}`);
+    return res.json({ ok: true, reset: conversationId });
+  } catch (error) {
+    console.error("ERROR /debug/reset:", error.message);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 app.get("/debug/health", requireDebugKey, async (req, res) => {
   try {
     const pool = getDebugPool();
@@ -3312,6 +4619,15 @@ app.get("/debug/health", requireDebugKey, async (req, res) => {
 });
 
 
+
+app.get("/api/lead-score-history/:conversationId", requireDebugKey, async (req, res) => {
+  try {
+    const history = await getLeadScoreHistory(req.params.conversationId, parseInt(req.query.limit) || 50);
+    return res.json({ ok: true, count: history.length, history });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
 
 app.get("/support-search-test", async (req, res) => {
   try {
@@ -3336,24 +4652,85 @@ app.post("/ticket-assigned", async (req, res) => {
     console.log("===== /ticket-assigned webhook =====");
     console.log("Body:", safeJson(req.body));
 
-    const { event, conversation_id, assignee_id } = req.body || {};
+    const {
+      event,
+      conversationId: conversation_id,
+      assigneeId: assignee_id,
+      requesterId,
+      ticketId
+    } = extractZendeskTicketAssignment(req.body || {});
 
-    if (!conversation_id) {
-      return res.status(400).json({ ok: false, error: "Missing conversation_id" });
+    let conversationId = conversation_id;
+
+    if (!conversationId && ticketId) {
+      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
+      if (conversationId) {
+        console.log(
+          `TICKET_ASSIGNED_CONVERSATION_RESOLVED ticketId=${ticketId} conversationId=${conversationId}`
+        );
+      } else {
+        console.log(
+          `TICKET_ASSIGNED_CONVERSATION_NOT_FOUND ticketId=${ticketId} requesterId=${requesterId || "-"}`
+        );
+      }
     }
 
-    await hydrateConversationCache(conversation_id);
-    const state = getConversationState(conversation_id);
+    if (!conversationId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing conversation_id",
+        ticket_id: ticketId || null,
+        requester_id: requesterId || null
+      });
+    }
+
+    await hydrateConversationCache(conversationId);
+    const state = getConversationState(conversationId);
+    const previousRequesterId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
     state.system.aiEnabled = false;
     state.system.humanTakenOver = true;
     state.system.assigneeId = assignee_id || null;
     state.system.handoffReason = "ticket_assigned";
+    if (requesterId) {
+      state.identity.zendeskRequesterId = requesterId;
+      state.identity.zendeskRequesterLinkedAt = state.identity.zendeskRequesterLinkedAt || new Date().toISOString();
+    }
+    if (ticketId) {
+      state.identity.zendeskTicketId = ticketId;
+    }
+    if (requesterId && requesterId !== previousRequesterId) {
+      lastSyncedLeadScore.delete(conversationId);
+    }
 
-    console.log("AI disabled for conversation:", conversation_id);
+    if (requesterId || ticketId) {
+      const linkLog = [
+        `conversationId=${conversationId}`,
+        requesterId ? `zendeskRequesterId=${requesterId}` : null,
+        ticketId ? `ticketId=${ticketId}` : null
+      ].filter(Boolean).join(" ");
+      console.log(`ZENDESK_REQUESTER_LINKED ${linkLog}`);
+    }
+
+    try {
+      await syncZendeskUserContactsFromState(state, {
+        sourceType: state?.identity?.channelSourceType || null,
+        userText: null,
+        rawMessage: null,
+        authorDisplayName: null,
+        sourceProfileName: state?.identity?.sourceProfileName || null
+      }, {
+        conversationId,
+        trigger: "ticket_assigned"
+      });
+    } catch (error) {
+      console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
+    }
+
+    console.log("AI disabled for conversation:", conversationId);
     console.log("Conversation state:", safeJson(state));
 
     await saveConversationEvent({
-      conversationId: conversation_id,
+      conversationId,
       info: {
         sourceType: "system",
         entryPoint: "ticket_assigned",
@@ -3373,17 +4750,86 @@ app.post("/ticket-assigned", async (req, res) => {
       }
     });
 
-    await persistConversationSnapshot(conversation_id, state, null);
-    await maybeSaveConversationSummary(conversation_id, state, "ticket_assigned");
+    await persistConversationSnapshot(conversationId, state, null);
+    await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
+
+    // ── EugenIA Hook 1: PREDICT at takeover + first note ──
+    try {
+      const resolverForEugenia = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, "");
+      const resolverForNote = {
+        ...resolverForEugenia,
+        actionLabel: inferBestNextAction(resolverForEugenia)
+      };
+      await onEugeniaTakeover({
+        conversationId,
+        ticketId: ticketId || state.identity?.zendeskTicketId || null,
+        state,
+        resolverDecision: resolverForNote,
+        zendeskSupportPut,
+        logger: console
+      });
+    } catch (eugeniaErr) {
+      console.error("EUGENIA_PREDICT_ERROR:", eugeniaErr.message);
+    }
 
     return res.json({
       ok: true,
       event: event || "human_takeover",
-      conversation_id,
+      conversation_id: conversationId,
+      ticket_id: ticketId || null,
+      requester_id: requesterId || null,
       aiEnabled: state.system.aiEnabled
     });
   } catch (error) {
     console.error("ERROR /ticket-assigned:", error.message);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/ticket-updated", async (req, res) => {
+  try {
+    console.log("===== /ticket-updated webhook =====");
+    console.log("Body:", safeJson(req.body));
+
+    const {
+      conversationId: conversation_id,
+      ticketId
+    } = extractZendeskTicketAssignment(req.body || {});
+
+    if (!ticketId) {
+      return res.status(400).json({ ok: false, error: "Missing ticket_id" });
+    }
+
+    let conversationId = conversation_id;
+    if (!conversationId) {
+      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
+    }
+
+    if (!conversationId) {
+      return res.status(400).json({ ok: false, error: "Missing conversation_id", ticket_id: ticketId });
+    }
+
+    await hydrateConversationCache(conversationId);
+    const state = getConversationState(conversationId);
+    const audits = await fetchZendeskTicketAudits(ticketId);
+    const inserted = await onEugeniaTicketAuditsObserved({
+      conversationId,
+      ticketId,
+      audits,
+      state,
+      zendeskSupportPut,
+      logger: console
+    });
+
+    return res.json({
+      ok: true,
+      conversation_id: conversationId,
+      ticket_id: ticketId,
+      processed_audits: audits.length,
+      inserted_events: inserted
+    });
+  } catch (error) {
+    console.error("ERROR /ticket-updated:", error.message);
     return res.status(500).json({ ok: false, error: error.message });
   }
 });
@@ -3433,6 +4879,27 @@ app.post("/messages", async (req, res) => {
       console.log("AI disabled due to human business message:", conversationId);
       console.log("Business sourceType:", sourceType);
 
+      // ── EugenIA observes human agent comments but never mutates Antonia state ──
+      try {
+        const businessText = info?.rawMessage?.content?.text || userText || "";
+        const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, businessText);
+        const resolverForObservation = {
+          ...resolverNext,
+          actionLabel: inferBestNextAction(resolverNext)
+        };
+        await onEugeniaHumanAgentMessage({
+          conversationId,
+          ticketId: state.identity?.zendeskTicketId || null,
+          text: businessText,
+          sourcePublic: true,
+          state,
+          resolverDecision: resolverForObservation,
+          logger: console
+        });
+      } catch (corrErr) {
+        console.error("AGENT_CORRECTION_ERROR:", corrErr.message);
+      }
+
       await saveConversationEvent({
         conversationId,
         info,
@@ -3450,6 +4917,7 @@ app.post("/messages", async (req, res) => {
 
       await persistConversationSnapshot(conversationId, state, channelLabel);
       await maybeSaveConversationSummary(conversationId, state, channelLabel);
+
       return res.json({ ok: true, skipped: "human_business_message_detected" });
     }
 
@@ -3460,6 +4928,16 @@ app.post("/messages", async (req, res) => {
     if (!appId || !userText) {
       return res.json({ ok: true, skipped: "payload_not_parsed_yet" });
     }
+
+    // Serialize user message processing per conversation to prevent race conditions.
+    // Without this, multiple rapid messages (e.g. data + RUT) process concurrently,
+    // causing stale state reads and conflicting bot responses.
+    const convLock = acquireConversationLock(conversationId);
+    await convLock.ready;
+    try {
+    // Re-hydrate state after acquiring lock — a prior message may have updated it
+    await hydrateConversationCache(conversationId);
+    Object.assign(state, getConversationState(conversationId));
 
     if (isRecentOutboundEcho(state, userText)) {
       await saveConversationEvent({
@@ -3493,6 +4971,26 @@ app.post("/messages", async (req, res) => {
         resolverDecision: buildBlockedDecision(state, state?.system?.handoffReason || "ai_disabled")
       });
       await persistConversationSnapshot(conversationId, state, channelLabel);
+
+      // ── EugenIA Hook 3: PREDICT on patient msg when ai_disabled + note every 2 msgs ──
+      try {
+        const resolverForP = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, userText || "");
+        const resolverForMutedPatient = {
+          ...resolverForP,
+          actionLabel: inferBestNextAction(resolverForP)
+        };
+        await onEugeniaMutedPatientMessage({
+          conversationId,
+          ticketId: state.identity?.zendeskTicketId || null,
+          state,
+          resolverDecision: resolverForMutedPatient,
+          zendeskSupportPut,
+          logger: console
+        });
+      } catch (eugeniaErr) {
+        console.error("EUGENIA_PREDICT_PATIENT_ERROR:", eugeniaErr.message);
+      }
+
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
@@ -3537,6 +5035,7 @@ app.post("/messages", async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+    state.leadScore = calculateLeadScore(state);
     try {
       await ensureCustomerContext({
         conversationId,
@@ -3550,13 +5049,369 @@ app.post("/messages", async (req, res) => {
     }
     await persistConversationSnapshot(conversationId, state, channelLabel);
 
+    // --- MelanIA just booked: Antonia confirms with patient details ---
+    if (state.melania?.lastBookingAt && !state.melania?.active) {
+      const msSinceBooking = Date.now() - new Date(state.melania.lastBookingAt).getTime();
+      if (msSinceBooking < 5 * 60 * 1000) {
+        const slot = state.melania.lastBookingSlot || {};
+        const pat = state.melania.lastBookingPatient || {};
+        const cd = state.contactDraft || {};
+
+        const nombre = `${pat.nombres || cd.c_nombres || ""} ${pat.apPaterno || ""} ${pat.apMaterno || ""}`.trim();
+        const lines = [];
+        lines.push("Hola, Antonia nuevamente. 👋");
+        lines.push("");
+        lines.push("MelanIA agendo tu hora con exito 🤝");
+        lines.push("");
+        lines.push("📋 Datos del paciente:");
+        if (nombre) lines.push(`  Nombre: ${nombre}`);
+        if (pat.rut || cd.c_rut) lines.push(`  RUT: ${pat.rut || cd.c_rut}`);
+        if (pat.email || cd.c_email) lines.push(`  Correo: ${pat.email || cd.c_email}`);
+        if (pat.fono || cd.c_tel1) lines.push(`  Telefono: ${pat.fono || cd.c_tel1}`);
+        if (pat.prevision || cd.c_aseguradora) lines.push(`  Prevision: ${pat.prevision || cd.c_aseguradora}`);
+        lines.push("");
+        lines.push("📅 Hora agendada:");
+        const slotDate = slot.date || slot.dataDia || "";
+        if (slotDate) lines.push(`  Fecha: ${slotDate}`);
+        if (slot.time) lines.push(`  Hora: ${slot.time}`);
+        if (slot.professional) lines.push(`  Profesional: ${slot.professional}`);
+        if (slot.specialty) lines.push(`  Especialidad: ${slot.specialty}`);
+        lines.push("");
+        lines.push("Si necesitas algo mas, aqui estoy. 😊");
+
+        const reply = lines.join("\n");
+
+        // Clear flag so future messages go to Antonia normally
+        state.melania.lastBookingAt = null;
+        state.melania.lastBookingSlot = null;
+        state.melania.lastBookingPatient = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText, reply,
+          kind: "antonia_post_melania_booking",
+          state, info, channelLabel,
+          resolverDecision: { stage: "post_melania_handoff", nextAction: "booking_confirmed" },
+        }));
+      }
+      // Expired — clear flag and let Antonia handle normally
+      state.melania.lastBookingAt = null;
+      state.melania.lastBookingSlot = null;
+      state.melania.lastBookingPatient = null;
+    }
+
+    // --- MelanIA flow interceptor ---
+    if (state.melania?.active) {
+      const result = handleMelaniaMessage(state.melania, userText);
+      state.melania = result.melaniaState;
+
+      // MelanIA needs slot search — fetch from worker and present
+      if (result.searchQuery && state.melania.step === "awaiting_slots") {
+        const branchIdForSearch = result.searchBranchId || state.melania.chosenProfessional?.branchId || null;
+        console.log("[melania] Searching slots for:", result.searchQuery, "branchId:", branchIdForSearch || "default");
+        try {
+          const searchResult = await runMedinetAntonia({
+            query: result.searchQuery,
+            patientPhone: info?.channelDisplayName || "",
+            patientMessage: "",
+            patientRut: state.contactDraft?.c_rut || "",
+            branchId: branchIdForSearch,
+          });
+          const slots = searchResult?.available_slots || [];
+          const slotsResult = setMelaniaSlots(
+            state.melania,
+            slots,
+            searchResult?.professional || result.searchQuery,
+            searchResult?.specialty || ""
+          );
+          state.melania = slotsResult.melaniaState;
+
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: slotsResult.reply,
+            kind: slotsResult.done ? "melania_exit" : "melania_slots",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_slots", slotsFound: slots.length },
+          }));
+        } catch (searchError) {
+          console.error("[melania] Slot search error:", searchError.message);
+          state.melania.active = false;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: "Error buscando horas. Puedes agendar en https://clinyco.medinetapp.com/agendaweb/planned/",
+            kind: "melania_exit",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_exit", failReason: "search_error" },
+          }));
+        }
+      }
+
+      // MelanIA collected all data — execute booking via worker
+      if (result.bookingReady) {
+        console.log("[melania] Data complete, booking via worker...");
+        const patientData = state.melania.collectedData;
+        const slotToBook = state.melania.chosenSlot;
+
+        // Check if phone owner is different from patient being booked
+        const profileName = (state.identity?.sourceProfileName || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        const patientNombres = (patientData.nombres || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        const patientApPaterno = (patientData.apPaterno || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        if (profileName && patientNombres && patientApPaterno) {
+          const profileWords = profileName.split(/\s+/);
+          const patientWords = [patientNombres, patientApPaterno].join(" ").split(/\s+/);
+          const overlap = profileWords.filter(w => w.length > 2 && patientWords.some(pw => pw === w));
+          if (overlap.length === 0) {
+            console.log(`[melania] Phone owner mismatch: profile="${state.identity?.sourceProfileName}" patient="${patientData.nombres} ${patientData.apPaterno}" → redirecting to agendaweb`);
+            state.melania.active = false;
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+            const reply = `Detectamos que este telefono esta registrado a nombre de ${state.identity?.sourceProfileName || "otra persona"}, pero los datos ingresados son de ${patientData.nombres} ${patientData.apPaterno}.\n\nPara agendar a otra persona, puedes hacerlo directamente en nuestra agenda web:\nhttps://clinyco.medinetapp.com/agendaweb/planned/`;
+            addToHistory(conversationId, "user", userText);
+            return res.json(await sendManagedReply({
+              appId, conversationId, messageId, userText, reply,
+              kind: "melania_phone_mismatch",
+              state, info, channelLabel,
+              resolverDecision: { stage: "melania_exit", failReason: "phone_owner_mismatch" },
+            }));
+          }
+        }
+
+        state.melania.active = false;
+        state.melania.lastBookingAt = new Date().toISOString();
+        state.melania.lastBookingSlot = slotToBook;
+        state.melania.lastBookingPatient = patientData;
+        // Pass MelanIA collected data to Antonia's contactDraft
+        if (patientData) {
+          const cd = state.contactDraft;
+          if (patientData.rut) cd.c_rut = patientData.rut;
+          if (patientData.nombres) cd.c_nombres = patientData.nombres;
+          if (patientData.apPaterno || patientData.apMaterno) {
+            cd.c_apellidos = `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim();
+          }
+          if (patientData.email) cd.c_email = patientData.email;
+          if (patientData.fono) { cd.c_tel1 = patientData.fono; cd.c_tel2 = patientData.fono; }
+          if (patientData.nacimiento) cd.c_fecha = patientData.nacimiento;
+          if (patientData.prevision) cd.c_aseguradora = patientData.prevision;
+          if (patientData.direccion) cd.c_direccion = patientData.direccion;
+          if (patientData.comuna) cd.c_comuna = patientData.comuna;
+        }
+        // Reset Antonia booking state so she doesn't continue collecting data
+        state.booking = {
+          pendingSlots: null, pendingProfessional: null, pendingSpecialty: null,
+          awaitingSlotChoice: false, awaitingPatientData: false, awaitingConfirmation: false,
+          chosenSlot: null, missingFields: null,
+        };
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
+
+        const reply = bookingResult?.success
+          ? bookingResult.patient_reply || "Tu hora fue agendada correctamente."
+          : "No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/";
+
+        if (!bookingResult?.success) {
+          state.melania.lastBookingAt = null; // don't trigger handoff on failure
+        }
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText, reply,
+          kind: "melania_booking_result",
+          state, info, channelLabel,
+          resolverDecision: { stage: "melania_booking", nextAction: "booking_completed", bookingResult },
+        }));
+      }
+
+      // MelanIA finished (cancelled or error) — return to Antonia
+      if (result.done) {
+        console.log("[melania] Flow ended:", result.failReason || "completed");
+        state.melania.active = false;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        if (result.reply) {
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: result.reply,
+            kind: "melania_exit",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_exit", failReason: result.failReason },
+          }));
+        }
+      } else {
+        // MelanIA needs more input — send reply and wait
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: result.reply,
+          kind: "melania_collecting",
+          state, info, channelLabel,
+          resolverDecision: { stage: "melania_collecting", step: state.melania.step },
+        }));
+      }
+    }
+
+    // --- Antonia booking: RUT identity verification ---
+    if (state.booking.awaitingRutVerification && state.booking.chosenSlot) {
+      // User is providing their RUT to verify identity before booking
+      const providedRut = extractRut(userText);
+      const knownRut = normalizeRut(state.contactDraft?.c_rut || "");
+      if (providedRut) {
+        const normalizedProvided = normalizeRut(providedRut);
+        if (normalizedProvided === knownRut) {
+          // RUT matches — proceed to collect missing data or confirmation
+          state.booking.awaitingRutVerification = false;
+          const patientData = buildPatientDataFromState(state);
+          const missing = getMissingBookingFields(patientData);
+
+          if (missing.length > 0) {
+            state.booking.awaitingPatientData = true;
+            state.booking.missingFields = missing.map((f) => f.key);
+            await persistConversationSnapshot(conversationId, state, channelLabel);
+            const missingLabels = missing.map((f) => f.label).join(", ");
+            const reply = `RUT verificado correctamente. Para completar la reserva necesito los siguientes datos: ${missingLabels}. Por favor envíamelos.`;
+            addToHistory(conversationId, "user", userText);
+            return res.json(await sendManagedReply({
+              appId, conversationId, messageId, userText,
+              reply,
+              kind: "antonia_booking_collect_data",
+              state, info, channelLabel,
+              resolverDecision: {
+                stage: "antonia_booking",
+                nextAction: "collect_patient_data",
+                reason: "RUT verified, collecting missing patient data"
+              }
+            }));
+          }
+
+          // All data available — show confirmation
+          state.booking.awaitingPatientData = false;
+          state.booking.awaitingConfirmation = true;
+          state.booking.missingFields = null;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+
+          const slot = state.booking.chosenSlot;
+          const confirmReply = `RUT verificado correctamente.\n\nAntes de confirmar, verifica tus datos:\n\n` +
+            `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
+            `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
+            `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
+            `- *Hora:* ${slot.time || "—"}\n` +
+            `- *RUT:* ${patientData.rut}\n` +
+            `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+            `- *Fecha de nacimiento:* ${patientData.nacimiento}\n` +
+            `- *Previsión:* ${patientData.prevision}\n` +
+            `- *Email:* ${patientData.email}\n` +
+            `- *Teléfono:* ${patientData.fono}\n` +
+            `- *Dirección:* ${patientData.direccion}\n\n` +
+            `¿Están correctos? (Sí / No)`;
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: confirmReply,
+            kind: "antonia_booking_confirm",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "await_confirmation",
+              reason: "RUT verified, all data available, awaiting confirmation"
+            }
+          }));
+        } else {
+          // RUT doesn't match — inform and ask again
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: "El RUT que indicaste no coincide con nuestros registros. Por favor verifica e intenta nuevamente con tu RUT correcto.",
+            kind: "antonia_booking_rut_mismatch",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "rut_verification_retry",
+              reason: "RUT mismatch during identity verification"
+            }
+          }));
+        }
+      } else {
+        // No RUT detected in the text — ask again
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "No detecté un RUT en tu mensaje. Por favor indícame tu RUT para verificar tu identidad antes de continuar con la reserva.",
+          kind: "antonia_booking_rut_retry",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "rut_verification_retry",
+            reason: "No RUT detected, asking again"
+          }
+        }));
+      }
+    }
+
     // --- Antonia booking slot choice interceptor ---
+    // Resilience: if pendingSlots exist but awaitingSlotChoice was lost (e.g. after deploy),
+    // re-activate if the user text looks like a slot choice number
+    if (!state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
+      const tentative = detectBookingSlotChoice(userText, state.booking.pendingSlots);
+      if (tentative) {
+        console.log("Booking state recovery: re-activating awaitingSlotChoice for slot choice", tentative.index + 1);
+        state.booking.awaitingSlotChoice = true;
+      }
+    }
     if (state.booking.awaitingSlotChoice && state.booking.pendingSlots?.length) {
       const choice = detectBookingSlotChoice(userText, state.booking.pendingSlots);
+      if (choice && choice.exit) {
+        // User chose "Salir" — clear booking state entirely
+        console.log("Antonia booking: patient chose to exit slot selection");
+        state.booking.pendingSlots = null;
+        state.booking.pendingProfessional = null;
+        state.booking.pendingSpecialty = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "Entendido, cancelé la reserva. Si necesitas algo más, quedo atenta.",
+          kind: "antonia_booking_exit",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_cancelled",
+            reason: "Patient chose to exit/cancel slot selection"
+          }
+        }));
+      }
       if (choice) {
         console.log("Antonia booking: patient chose slot", choice.index + 1, safeJson(choice.slot));
         state.booking.chosenSlot = choice.slot;
         state.booking.awaitingSlotChoice = false;
+
+        // Always verify RUT as identity double-check before proceeding with booking
+        const patientRut = state.contactDraft?.c_rut;
+        if (patientRut) {
+          state.booking.awaitingRutVerification = true;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          const reply = `Perfecto, seleccionaste la hora ${choice.slot.time} del ${choice.slot.date}. Para verificar tu identidad, por favor indícame tu RUT.`;
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply,
+            kind: "antonia_booking_verify_rut",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "verify_rut_identity",
+              reason: "Booking: asking RUT for identity verification before proceeding"
+            }
+          }));
+        }
 
         const patientData = buildPatientDataFromState(state);
         const missing = getMissingBookingFields(patientData);
@@ -3582,47 +5437,167 @@ app.post("/messages", async (req, res) => {
           }));
         }
 
-        // All data available — execute booking
-        try {
-          console.log("Antonia booking: all data ready, executing booking...");
-          const bookingResult = await runMedinetAntoniaBooking({ slot: choice.slot, patientData });
-
-          state.booking.pendingSlots = null;
-          state.booking.awaitingSlotChoice = false;
+        // All data available — always show confirmation before booking (never skip)
+        {
           state.booking.awaitingPatientData = false;
-          state.booking.chosenSlot = null;
+          state.booking.awaitingConfirmation = true;
           state.booking.missingFields = null;
           await persistConversationSnapshot(conversationId, state, channelLabel);
 
-          const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+          const slot = choice.slot;
+          const confirmReply = `Antes de confirmar, verifica tus datos:\n\n` +
+            `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
+            `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
+            `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
+            `- *Hora:* ${slot.time || "—"}\n` +
+            `- *RUT:* ${patientData.rut}\n` +
+            `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+            `- *Fecha de nacimiento:* ${patientData.nacimiento}\n` +
+            `- *Previsión:* ${patientData.prevision}\n` +
+            `- *Email:* ${patientData.email}\n` +
+            `- *Teléfono:* ${patientData.fono}\n` +
+            `- *Dirección:* ${patientData.direccion}\n\n` +
+            `¿Están correctos? (Sí / No)`;
           addToHistory(conversationId, "user", userText);
           return res.json(await sendManagedReply({
             appId, conversationId, messageId, userText,
-            reply,
-            kind: "antonia_booking_result",
+            reply: confirmReply,
+            kind: "antonia_booking_confirm",
             state, info, channelLabel,
             resolverDecision: {
               stage: "antonia_booking",
-              nextAction: "booking_completed",
-              reason: "Booking completed by Antonia",
-              bookingResult
+              nextAction: "await_confirmation",
+              reason: "Booking: all data available, awaiting user confirmation before booking"
             }
           }));
-        } catch (error) {
-          if (error.message?.includes("Executable doesn't exist")) {
-            console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
-          }
-          console.error("ANTONIA BOOKING ERROR:", error.message);
-          state.booking.pendingSlots = null;
-          state.booking.awaitingSlotChoice = false;
-          state.booking.chosenSlot = null;
-          await persistConversationSnapshot(conversationId, state, channelLabel);
         }
+      } else {
+        // User sent non-slot text while awaitingSlotChoice — data was already captured by updateDraftsFromText.
+        // The Playwright worker needs ALL patient data to fill the Medinet form.
+        // Check if data is complete: if yes → present slots; if no → ask for missing fields.
+        const patientData = buildPatientDataFromState(state);
+        const missing = getMissingBookingFields(patientData);
+        const professional = state.booking.pendingProfessional || "el profesional";
+
+        if (missing.length > 0) {
+          // Still missing data — ask for it within the booking context (don't fall to generic resolver)
+          console.log("Booking: awaitingSlotChoice, collecting missing data before presenting slots:", missing.map(f => f.key).join(", "));
+          // Reset reminder counter since we're still collecting data
+          state.booking.slotReminderSent = false;
+          const missingLabels = missing.map((f) => f.label).join(", ");
+          const collectReply = `Gracias por la información. Para poder agendar con ${professional} necesito además: ${missingLabels}.`;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: collectReply,
+            kind: "antonia_booking_collect_before_slots",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "collect_patient_data_before_slots",
+              reason: `Booking: awaiting slot choice but missing patient data: ${missing.map(f => f.key).join(", ")}`
+            }
+          }));
+        }
+
+        // All data complete — present or remind slots, then exit silently on 2nd non-choice text
+        if (!state.booking.slotReminderSent) {
+          // First time with complete data + non-slot text: present slots once
+          console.log("Booking: all patient data complete, presenting slots for first time");
+          state.booking.slotReminderSent = true;
+          const specialty = state.booking.pendingSpecialty || "";
+          const slotLines = state.booking.pendingSlots.map((s, i) => `${i + 1}- ${s.date || s.dataDia} a las ${s.time}`).join("\n");
+          const exitOption = `${state.booking.pendingSlots.length + 1}- Salir`;
+          const reshowReply = `Perfecto, tengo todos tus datos. Estas son las horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:\n${slotLines}\n${exitOption}\n\nElige el número de la hora que prefieres para agendar.`;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: reshowReply,
+            kind: "antonia_reshow_slots_after_data",
+            state, info, channelLabel,
+            resolverDecision: {
+              stage: "antonia_booking",
+              nextAction: "reshow_pending_slots",
+              reason: "All patient data complete; presenting available slots for selection"
+            }
+          }));
+        }
+
+        // Second non-slot text after reminder — user isn't engaging with slots.
+        // Silently exit booking flow and let the normal resolver handle the message.
+        console.log("Booking: patient sent non-slot text twice after slot reminder, exiting booking flow silently");
+        state.booking.pendingSlots = null;
+        state.booking.pendingProfessional = null;
+        state.booking.pendingSpecialty = null;
+        state.booking.awaitingSlotChoice = false;
+        state.booking.chosenSlot = null;
+        state.booking.missingFields = null;
+        state.booking.slotReminderSent = false;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        // Fall through to normal resolver processing below
       }
     }
 
+    // --- Antonia booking: user confirming or cancelling ---
+    if (state.booking.awaitingConfirmation && state.booking.chosenSlot) {
+      const normalized = normalizeKey(userText);
+      const isConfirm = /^(si|sí|s[ií][\s,.]|ok|dale|confirmo|confirm[oa]r|yes|ya|1)\b/i.test(normalized);
+      const isCancel = /^(no|cancel|cancelar|nop|nope|2)\b/i.test(normalized);
+
+      if (isCancel) {
+        // Don't cancel — ask which data needs correction and go back to data collection
+        state.booking.awaitingConfirmation = false;
+        state.booking.awaitingPatientData = true;
+        // Keep chosenSlot and other booking state intact so user can correct and re-confirm
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "Entendido — ¿qué dato no está correcto? Indícame cuál necesitas corregir (nombre, RUT, fecha de nacimiento, previsión, email, teléfono o dirección) y el valor correcto.",
+          kind: "antonia_booking_correction",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "collect_patient_data",
+            reason: "User indicated data is incorrect, asking which field to correct"
+          }
+        }));
+      }
+
+      if (!isConfirm) {
+        // Not a clear yes/no — ask again
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "¿Confirmas la reserva? Responde *Sí* para confirmar o *No* para cancelar.",
+          kind: "antonia_booking_confirm_retry",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "await_confirmation",
+            reason: "Booking: unclear confirmation response"
+          }
+        }));
+      }
+
+      // User confirmed — proceed to booking execution
+      // (falls through to awaitingPatientData=false + awaitingConfirmation=true handling below)
+    }
+
     // --- Antonia booking: patient providing missing data ---
-    if (state.booking.awaitingPatientData && state.booking.chosenSlot) {
+    if ((state.booking.awaitingPatientData || state.booking.awaitingConfirmation) && state.booking.chosenSlot) {
+      // If the only missing field is "direccion" and updateDraftsFromText didn't capture it,
+      // treat the entire user text as the address (user naturally replies without "dirección:" prefix)
+      if (!state.contactDraft.c_direccion && state.booking.missingFields) {
+        const stillMissing = state.booking.missingFields;
+        const onlyDireccionMissing = stillMissing.length === 1 && stillMissing[0] === "direccion";
+        const textLooksLikeAddress = userText.trim().length >= 3 && !extractEmail(userText);
+        if (onlyDireccionMissing && textLooksLikeAddress) {
+          state.contactDraft.c_direccion = titleCaseWords(normalizeSpaces(userText.trim()));
+        }
+      }
       // Re-extract patient data (updateDraftsFromText may have captured new fields)
       const patientData = buildPatientDataFromState(state);
       const missing = getMissingBookingFields(patientData);
@@ -3647,19 +5622,65 @@ app.post("/messages", async (req, res) => {
         }));
       }
 
+      // All data collected — ask for confirmation before booking
+      if (!state.booking.awaitingConfirmation) {
+        state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = true;
+        state.booking.missingFields = null;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const slot = state.booking.chosenSlot;
+        const confirmReply = `Antes de confirmar, verifica tus datos:\n\n` +
+          `- *Profesional:* ${state.booking.pendingProfessional || "—"}\n` +
+          `- *Especialidad:* ${state.booking.pendingSpecialty || "—"}\n` +
+          `- *Fecha:* ${slot.date || slot.dataDia || "—"}\n` +
+          `- *Hora:* ${slot.time || "—"}\n` +
+          `- *RUT:* ${patientData.rut}\n` +
+          `- *Nombre:* ${patientData.nombres} ${patientData.apPaterno}\n` +
+          `- *Fecha de nacimiento:* ${patientData.nacimiento}\n` +
+          `- *Previsión:* ${patientData.prevision}\n` +
+          `- *Email:* ${patientData.email}\n` +
+          `- *Teléfono:* ${patientData.fono}\n` +
+          `- *Dirección:* ${patientData.direccion}\n\n` +
+          `¿Están correctos? (Sí / No)`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmReply,
+          kind: "antonia_booking_confirm",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "await_confirmation",
+            reason: "Booking: all data collected, awaiting user confirmation"
+          }
+        }));
+      }
+
       // All data collected — execute booking
       try {
         console.log("Antonia booking: data complete, executing booking...");
-        const bookingResult = await runMedinetAntoniaBooking({ slot: state.booking.chosenSlot, patientData });
-
+        // Save slot before clearing state to prevent race condition with concurrent requests
+        const slotToBook = { ...state.booking.chosenSlot };
+        // Clear booking state BEFORE the slow booking call to prevent duplicate attempts
         state.booking.pendingSlots = null;
         state.booking.awaitingSlotChoice = false;
+        state.booking.awaitingRutVerification = false;
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
-        const reply = bookingResult?.patient_reply || "Hubo un error al procesar la reserva. Por favor intenta directamente en la agenda web.";
+        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
+
+        const bookingFailureMessage = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\n\nPuedes encontrar el mismo calendario en https://clinyco.medinetapp.com/agendaweb/planned/\n\nGracias\n\nAntonia, soy una IA mejorando cada día.";
+        let reply;
+        if (bookingResult?.success) {
+          reply = bookingResult.patient_reply || "Tu hora fue agendada correctamente.";
+        } else {
+          reply = bookingFailureMessage;
+        }
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
@@ -3678,18 +5699,140 @@ app.post("/messages", async (req, res) => {
           console.error("PLAYWRIGHT_MISSING: run 'npx playwright install chromium'");
         }
         console.error("ANTONIA BOOKING ERROR:", error.message);
+        state.booking.awaitingRutVerification = false;
         state.booking.awaitingPatientData = false;
+        state.booking.awaitingConfirmation = false;
         state.booking.chosenSlot = null;
+        state.booking.pendingSlots = null;
+        state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
+        const errorReply = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\n\nPuedes encontrar el mismo calendario en https://clinyco.medinetapp.com/agendaweb/planned/\n\nGracias\n\nAntonia, soy una IA mejorando cada día.";
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: errorReply,
+          kind: "antonia_booking_error",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "booking_error",
+            reason: `Booking error: ${error.message}`
+          }
+        }));
       }
     }
     // --- End Antonia booking interceptor ---
 
+    // --- Re-show pending slots if user shows schedule intent and slots exist ---
+    if (state.booking.pendingSlots?.length && !state.booking.awaitingSlotChoice && !state.booking.chosenSlot) {
+      const hasIntent = hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText);
+      if (hasIntent) {
+        const professional = state.booking.pendingProfessional || "el profesional";
+        const specialty = state.booking.pendingSpecialty || "";
+        const slotLines = state.booking.pendingSlots.map((s, i) => `${i + 1}- ${s.date || s.dataDia} a las ${s.time}`).join("\n");
+        const exitOption = `${state.booking.pendingSlots.length + 1}- Salir`;
+        const reshowReply = `Estas son las horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ""}:\n${slotLines}\n${exitOption}\n\nElige el número de la hora que prefieres para agendar.`;
+        state.booking.awaitingSlotChoice = true;
+        state.booking.slotReminderSent = false;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: reshowReply,
+          kind: "antonia_reshow_slots",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_booking",
+            nextAction: "reshow_pending_slots",
+            reason: "User showed schedule intent with existing pending slots"
+          }
+        }));
+      }
+    }
+
+    // --- MelanIA activation: when Antonia detects booking intent ---
+    if (!state.melania?.active) {
+      const hasIntent = hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText);
+      if (hasIntent && !state.system.humanTakenOver && state.system.aiEnabled) {
+        console.log("[melania] Booking intent detected, activating MelanIA");
+        const partialData = buildPatientDataFromState(state);
+
+        // Fetch availability cache from worker
+        let professionals = [];
+        try {
+          const avail = await callMedinetWorkerPath("/melania/availability", {}, 15000);
+          professionals = avail?.professionals || [];
+        } catch (e) {
+          console.warn("[melania] Availability fetch failed:", e.message);
+        }
+
+        if (professionals.length > 0) {
+          const { reply: melaniaReply, melaniaState } = startMelaniaFlow(partialData, professionals);
+          state.melania = melaniaState;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          addToHistory(conversationId, "user", userText);
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: melaniaReply,
+            kind: "melania_start",
+            state, info, channelLabel,
+            resolverDecision: { stage: "melania_start", reason: "MelanIA activated on booking intent" },
+          }));
+        }
+        // No professionals available — fall through to Antonia fast-path
+        console.log("[melania] No professionals available, falling through to Antonia");
+      }
+    }
+
     // --- Antonia fast-path (Step 8) ---
     let antoniaFastPathAttempted = false;
-    const fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
+    let fastPathCandidate = buildAntoniaFastPathCandidate(userText, state);
+
+    // Resume pending Medinet search: if RUT just arrived and there's a pendingProfessional waiting
+    if (!fastPathCandidate.shouldTry && state.booking.pendingProfessional && state.contactDraft?.c_rut) {
+      const rutJustProvided = extractRut(userText);
+      if (rutJustProvided) {
+        console.log("Antonia resume: RUT provided, resuming pending search for", state.booking.pendingProfessional);
+        fastPathCandidate = {
+          shouldTry: true,
+          reason: "resume_pending_after_rut",
+          query: state.booking.pendingProfessional,
+          trigger: "rut_resume"
+        };
+      }
+    }
+
     if (fastPathCandidate.shouldTry) {
       antoniaFastPathAttempted = true;
+
+      // RUT is required to access MediNet agenda — ask for it if missing
+      const patientRut = state.contactDraft?.c_rut;
+      if (!patientRut) {
+        // Store the professional/query so we can resume after getting RUT
+        // Guard against storing time expressions as pendingProfessional
+        if (fastPathCandidate.query) {
+          const qLower = fastPathCandidate.query.toLowerCase();
+          const isTemporalQuery = /\b(primera|segunda|tercera|cuarta|ultima|proxima|siguiente|semana|mes)\b/.test(qLower);
+          if (!isTemporalQuery) {
+            state.booking.pendingProfessional = state.booking.pendingProfessional || fastPathCandidate.query;
+          }
+        }
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        const profName = state.booking.pendingProfessional || fastPathCandidate.query || "el profesional";
+        const rutReply = `Para buscar horas disponibles con ${profName} necesito tu RUT. ¿Me lo puedes indicar?`;
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: rutReply,
+          kind: "antonia_fast_path_need_rut",
+          state, info, channelLabel,
+          resolverDecision: {
+            stage: "antonia_fast_path",
+            nextAction: "need_rut_for_medinet",
+            reason: `Fast-path needs RUT to search MediNet: ${fastPathCandidate.reason}`
+          }
+        }));
+      }
 
       // Cache TTL check: refresh if stale (>30 min)
       if (isCacheStale()) {
@@ -3709,19 +5852,25 @@ app.post("/messages", async (req, res) => {
         const antoniaResponse = await runMedinetAntonia({
           query: fastPathCandidate.query,
           patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
-          patientMessage: userText
+          patientMessage: userText,
+          patientRut: state.contactDraft?.c_rut || ""
         });
 
-        if (antoniaResponse?.patient_reply) {
+        const searchReply = antoniaResponse?.patient_reply
+          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+        if (searchReply) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
             state.booking.pendingSlots = antoniaResponse.available_slots;
             state.booking.pendingProfessional = antoniaResponse.professional || null;
             state.booking.pendingSpecialty = antoniaResponse.specialty || null;
             state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingRutVerification = false;
             state.booking.awaitingPatientData = false;
+            state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
+            state.booking.slotReminderSent = false;
             await persistConversationSnapshot(conversationId, state, channelLabel);
           }
           addToHistory(conversationId, "user", userText);
@@ -3730,7 +5879,7 @@ app.post("/messages", async (req, res) => {
             conversationId,
             messageId,
             userText,
-            reply: antoniaResponse.patient_reply,
+            reply: searchReply,
             kind: "antonia_fast_path_reply",
             state,
             info,
@@ -3925,6 +6074,128 @@ app.post("/messages", async (req, res) => {
       customerMemory = { customer: null, summaries: [], customerContextBlock: null };
     }
 
+    // --- Saved data confirmation layer ---
+    if (state.identity.savedDataShown && !state.identity.savedDataConfirmed) {
+      const confirmResult = handleSavedDataConfirmationResponse(state, userText);
+      if (confirmResult.needsCompletion && confirmResult.message) {
+        // Data confirmed but missing fields remain — ask to complete
+        state.identity.awaitingMissingDataCompletion = true;
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmResult.message,
+          kind: "saved_data_needs_completion",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_needs_completion")
+        }));
+      }
+      if (confirmResult.message) {
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmResult.message,
+          kind: "saved_data_cleared",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_cleared")
+        }));
+      }
+      // confirmed or inline correction — continue normal flow
+    }
+
+    if (!state.identity.awaitingFinalConfirmation) {
+      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+    }
+
+    // --- Awaiting missing data completion ---
+    if (state.identity.awaitingMissingDataCompletion) {
+      // updateDraftsFromText already ran above and extracted new fields from the user's reply
+      const stillMissing = getMissingPatientDataFields(state);
+      if (stillMissing.length > 0) {
+        // Still missing some fields — ask again
+        const missingBlock = stillMissing.map((f) => `${f.label}`).join("\n");
+        const reply = `Gracias. Aún me faltan estos datos:\n\n${missingBlock}\n\nPor favor envíamelos para continuar.`;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "saved_data_still_missing",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_still_missing")
+        }));
+      }
+      // All fields complete — show final confirmation
+      state.identity.awaitingMissingDataCompletion = false;
+      const finalSummary = buildSavedDataSummary(state);
+      const finalReply = `Perfecto, estos son tus datos completos:\n\n📋 *Datos del Paciente*\n${finalSummary}\n\nConfirma con *1=Sí* o *2=No*`;
+      state.identity.awaitingFinalConfirmation = true;
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      addToHistory(conversationId, "user", userText);
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText,
+        reply: finalReply,
+        kind: "saved_data_final_confirm",
+        state, info, channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "saved_data_final_confirm")
+      }));
+    }
+
+    // --- Final data confirmation ---
+    if (state.identity.awaitingFinalConfirmation) {
+      const normalized = (userText || "").toUpperCase().replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim();
+      const isConfirm = /^(SI|SÍ|OK|CORRECTO|CORRECTOS|DALE|PERFECTO|CONFIRMO|1)\b/.test(normalized);
+      const isReject = /^(NO|CAMBIAR|CORREGIR|MAL|INCORRECTO|2)\b/.test(normalized);
+      state.identity.awaitingFinalConfirmation = false;
+      if (isConfirm) {
+        state.identity.savedDataConfirmed = true;
+        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+        // Continue to normal flow
+      } else if (isReject) {
+        // Re-enter missing data completion to let them correct
+        state.identity.awaitingMissingDataCompletion = true;
+        const allFields = [
+          "👤 Nombre completo:",
+          "🆔 RUT:",
+          "🎂 Fecha de nacimiento:",
+          "📧 Correo electrónico:",
+          "🏥 Previsión:",
+          "🏡 Dirección:",
+          "🏙️ Ciudad:",
+          "📱 Número de celular:"
+        ].join("\n");
+        const reply = `OK, envíame los datos que quieres corregir. Copia y pega este bloque:\n\n${allFields}`;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        addToHistory(conversationId, "user", userText);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply,
+          kind: "saved_data_correction",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "saved_data_correction")
+        }));
+      }
+      // Unclear response — treat as confirmed and continue
+      state.identity.savedDataConfirmed = true;
+      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
+    }
+
+    if (shouldConfirmSavedData(state)) {
+      const confirmMsg = buildSavedDataConfirmationMessage(state);
+      if (confirmMsg) {
+        state.identity.savedDataShown = true;
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: confirmMsg,
+          kind: "confirm_saved_data",
+          state, info, channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "confirm_saved_data")
+        }));
+      }
+    }
+    // --- End saved data confirmation layer ---
+
     if (shouldTriggerCaseE(state)) {
       state.identity.likelyClinicalRecordOnly = true;
       return res.json(await sendManagedReply({
@@ -3994,6 +6265,10 @@ app.post("/messages", async (req, res) => {
     console.log("Resolver context:", safeJson(resolverContext));
     console.log("Resolver decision:", safeJson(resolverDecision));
 
+    if (resolverDecision) {
+      resolverDecision.leadScore = state.leadScore || null;
+    }
+
     const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);
     const hardDerive =
       resolverDecision.shouldDerive && (
@@ -4004,23 +6279,34 @@ app.post("/messages", async (req, res) => {
 
     if (!antoniaFastPathAttempted && resolverContext.stage === "agenda_without_direct_access") {
       try {
-        const medinetQuery = extractMedinetQuery(userText);
+        // Prefer pendingProfessional from prior search over extracting from raw text
+        // (avoids searching for generic words like "agendar")
+        const medinetQuery = (state.booking?.pendingProfessional
+          ? (extractKnownProfessionalAlias(state.booking.pendingProfessional)
+             || sanitizeMedinetProfessionalCandidate(state.booking.pendingProfessional)
+             || state.booking.pendingProfessional)
+          : extractMedinetQuery(userText));
         const antoniaResponse = await runMedinetAntonia({
           query: medinetQuery,
           patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
           patientMessage: userText
         });
 
-        if (antoniaResponse?.patient_reply) {
+        const searchReply2 = antoniaResponse?.patient_reply
+          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+        if (searchReply2) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
             state.booking.pendingSlots = antoniaResponse.available_slots;
             state.booking.pendingProfessional = antoniaResponse.professional || null;
             state.booking.pendingSpecialty = antoniaResponse.specialty || null;
             state.booking.awaitingSlotChoice = true;
+            state.booking.awaitingRutVerification = false;
             state.booking.awaitingPatientData = false;
+            state.booking.awaitingConfirmation = false;
             state.booking.chosenSlot = null;
             state.booking.missingFields = null;
+            state.booking.slotReminderSent = false;
             await persistConversationSnapshot(conversationId, state, channelLabel);
           }
           return res.json(await sendManagedReply({
@@ -4028,7 +6314,7 @@ app.post("/messages", async (req, res) => {
             conversationId,
             messageId,
             userText,
-            reply: antoniaResponse.patient_reply,
+            reply: searchReply2,
             kind: "antonia_medinet_reply",
             state,
             info,
@@ -4099,7 +6385,7 @@ app.post("/messages", async (req, res) => {
       history
     });
 
-    const isTenthMessage = state.system.botMessagesSent + 1 >= MAX_BOT_MESSAGES;
+    const isTenthMessage = state.system.botMessagesSent + 1 === MAX_BOT_MESSAGES;
     if (isTenthMessage) {
       const closure = getMaxMessagesClosure();
       reply = `${reply}\n\n${closure}`;
@@ -4124,6 +6410,10 @@ app.post("/messages", async (req, res) => {
     }
 
     return res.json(openAiResult);
+    } finally {
+      // Release per-conversation lock so the next queued message can proceed
+      convLock.release();
+    }
   } catch (error) {
     console.error("ERROR /messages:", error.message);
     return res.status(500).json({ ok: false, error: error.message });
@@ -4135,4 +6425,10 @@ await initDb();
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);
   console.log(`Database persistence: ${dbEnabled() ? "enabled" : "disabled"}`);
+  if (useRemoteWorker()) {
+    console.log(`Medinet remote worker: ${MEDINET_WORKER_URL}`);
+  } else {
+    console.log(`Medinet: local execution (no MEDINET_WORKER_URL configured)`);
+  }
+  startZapsPoller();
 });

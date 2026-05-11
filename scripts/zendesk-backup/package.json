@@ -1,0 +1,16 @@
+{
+  "name": "zendesk-backup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backup completo de cuenta Zendesk Support previo a eliminación. Aislado del resto del repo.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "backup": "node backup.js",
+    "backup:tickets": "node backup.js tickets",
+    "backup:users": "node backup.js users",
+    "backup:config": "node backup.js config"
+  }
+}

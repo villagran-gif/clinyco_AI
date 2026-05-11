@@ -1,0 +1,99 @@
+## TEST harness for WAHA Plus 2026.3+ with GOWS engine
+##
+## Why GOWS (not NOWEB):
+##   WAHA 2026.3 (Apr 7 2026 release) added WAHA_GOWS_DEVICE_* env vars
+##   that explicitly control how far back historical messages sync on
+##   first connect — this is the ONLY engine in WAHA that guarantees
+##   historical-range control. NOWEB/WEBJS rely on whatever WhatsApp
+##   Web decides to ship, which is typically only weeks.
+##
+## Goal: validate with a secondary phone number whether WAHA Plus + GOWS:
+##   1) Loads 3+ months of historical chats on session start (verify in
+##      the dashboard after scanning the QR).
+##   2) Emits ALL call webhook events (call.received, call.accepted,
+##      call.rejected) required to measure "best time to call".
+##
+## Usage (on VPS, isolated from prod):
+##   1) Get license key via Patreon DM after subscribing.
+##   2) Export env vars:
+##        export WAHA_LICENSE_KEY="xxxxx-xxxxx-xxxxx"
+##        export WAHA_PLUS_TEST_API_KEY="$(openssl rand -hex 16)"
+##        export WAHA_DASHBOARD_PASS="..."
+##   3) docker compose -f docker-compose.plus-test.yml up -d
+##   4) SSH tunnel: ssh -L 3002:127.0.0.1:3002 user@vps
+##   5) Open http://localhost:3002 → scan QR with TEST phone.
+##   6) Verify in dashboard: ¿cuántos meses de chats cargaron?
+##   7) Make 1 outbound + 1 inbound test call; tail:
+##        docker logs -f clinyco-observer-plus-test | grep '\[webhook\] call'
+##   8) If history ≥ 3 months AND all 3 call events arrive → migrate prod
+##      (docker-compose.yml) to waha-plus + GOWS with same env.
+##
+## Runs on port 3002 to not collide with prod WAHA (port 3000).
+##
+services:
+  waha-plus:
+    image: devlikeapro/waha-plus:latest
+    container_name: clinyco-waha-plus-test
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      - WAHA_LICENSE_KEY=${WAHA_LICENSE_KEY}
+      - WHATSAPP_API_KEY=${WAHA_PLUS_TEST_API_KEY}
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USER:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASS}
+      # GOWS engine — WhatsApp-Go native, WAHA Plus only.
+      # Only engine with explicit historical-sync control (WAHA 2026.3+).
+      - WHATSAPP_DEFAULT_ENGINE=GOWS
+      # ── GOWS historical sync window ────────────────────────────────
+      # Added in WAHA 2026.3 (issue #1963). Exact var names vary by
+      # build — check https://waha.devlike.pro/docs/engines/gows/ for
+      # the current set. Typical candidates to try:
+      #   WAHA_GOWS_DEVICE_FULL_SYNC=true
+      #   WAHA_GOWS_DEVICE_HISTORY_SYNC=FULL
+      # Leaving FULL_SYNC=true to pull as much history as WhatsApp allows.
+      - WAHA_GOWS_DEVICE_FULL_SYNC=true
+      # ── LID → phone number remap (WAHA 2026.3) ─────────────────────
+      # Without this, call/message payloads expose WhatsApp's internal
+      # LID (random-looking 15-digit id) instead of the real phone.
+      - WAHA_DEVICE_REMAP_LID=true
+      # ── Storage isolation (WAHA 2026.3) ────────────────────────────
+      - WAHA_NAMESPACE=clinyco-plus-test
+      # ── Reduce bandwidth during test — no media download ───────────
+      - WHATSAPP_DOWNLOAD_MEDIA=false
+      - WHATSAPP_START_SESSION=default
+      # ── Events: all call events + messages ─────────────────────────
+      - WHATSAPP_HOOK_URL=http://observer-test:3001/waha-webhook
+      - WHATSAPP_HOOK_EVENTS=message,message.any,session.status,call.received,call.accepted,call.rejected
+    volumes:
+      - waha_plus_test_sessions:/app/.sessions
+    networks:
+      - clinyco-plus-test
+    restart: unless-stopped
+
+  observer-test:
+    build:
+      context: ..
+      dockerfile: waha-dev/observer/Dockerfile
+    container_name: clinyco-observer-plus-test
+    ports:
+      - "127.0.0.1:3003:3001"
+    env_file:
+      - .env
+    environment:
+      - DEFAULT_SESSION_NAME=plus-test
+      - DEFAULT_AGENT_NAME=Agente Plus Test
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - clinyco-plus-test
+    depends_on:
+      - waha-plus
+    restart: unless-stopped
+
+volumes:
+  waha_plus_test_sessions:
+
+networks:
+  clinyco-plus-test:
+    driver: bridge

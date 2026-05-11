@@ -55,6 +55,15 @@ export function buildInitialConversationState() {
       foundInSupport: false,
       supportSummary: null,
       supportRaw: null,
+      zendeskRequesterId: null,
+      zendeskRequesterLinkedAt: null,
+      zendeskTicketId: null,
+      zendeskContactSyncKey: null,
+      zendeskContactSyncAt: null,
+      zendeskNotesSyncKey: null,
+      zendeskNotesSyncAt: null,
+      directMessageEmail: null,
+      directMessagePhone: null,
       supportInferredRut: null,
       lastSupportSearchKey: null,
       likelyClinicalRecordOnly: false,
@@ -95,9 +104,12 @@ export function buildInitialConversationState() {
       pendingProfessional: null,
       pendingSpecialty: null,
       awaitingSlotChoice: false,
+      awaitingRutVerification: false,
       awaitingPatientData: false,
+      awaitingConfirmation: false,
       chosenSlot: null,
-      missingFields: null
+      missingFields: null,
+      slotReminderSent: false
     },
     system: {
       aiEnabled: true,
@@ -112,6 +124,12 @@ export function buildInitialConversationState() {
       lastOutboundText: null,
       lastOutboundReason: null,
       lastOutboundAt: null
+    },
+    leadScore: {
+      score: 0,
+      category: "frío",
+      reasons: [],
+      calculatedAt: null
     }
   };
 }
@@ -127,6 +145,7 @@ export function mergeConversationState(baseState, persistedState = {}) {
     customerMemory: { ...baseState.customerMemory, ...(persistedState.customerMemory || {}) },
     openHelp: { ...baseState.openHelp, ...(persistedState.openHelp || {}) },
     booking: { ...baseState.booking, ...(persistedState.booking || {}) },
-    system: { ...baseState.system, ...(persistedState.system || {}) }
+    system: { ...baseState.system, ...(persistedState.system || {}) },
+    leadScore: { ...baseState.leadScore, ...(persistedState.leadScore || {}) }
   };
 }

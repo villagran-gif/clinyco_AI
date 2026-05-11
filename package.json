@@ -15,17 +15,24 @@
     "zendesk:export:bad": "node scripts/zendesk/export-conversation-log.cjs tickets_malos_resueltos.csv",
     "dashboard:sync": "node dashboard/medinet-dashboard-sync.cjs",
     "dashboard:serve": "node dashboard/medinet-api-server.cjs",
-    "dashboard:deploy": "bash dashboard/deploy-vps.sh"
+    "dashboard:deploy": "bash dashboard/deploy-vps.sh",
+    "start:medinet-worker": "node workers/medinet-worker.js",
+    "outcomes:sync": "node scripts/sync-outcomes.js",
+    "zap:update-comisiones": "node ZAPS/update-comisiones/run.js",
+    "zap:normaliza-rut-contacto": "node ZAPS/zendesksell-normaliza-rut-al-crear-contacto/run.js",
+    "zap:rut-normalizado-trato": "node ZAPS/rut-normalizado-crear-trato/run.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@playwright/test": "^1.58.2",
     "braintrust": "0.3.7",
     "csv-parse": "^6.2.0",
     "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "openai": "^5.12.2",
-    "playwright": "^1.58.2",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
+    "playwright": "^1.58.2",
     "xlsx": "^0.18.5"
   }
 }

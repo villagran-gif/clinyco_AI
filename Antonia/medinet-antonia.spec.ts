@@ -33,7 +33,7 @@ type AntoniaResponse = {
 
 const AGENDA_URL = 'https://clinyco.medinetapp.com/agendaweb/planned/';
 const DEFAULT_BRANCH_NAME = process.env.MEDINET_BRANCH_NAME || 'Antofagasta Mall Arauco Express';
-const MAX_SLOTS = 3;
+const MAX_SLOTS = 6;
 
 function normalizeSpaces(value = ''): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -279,7 +279,7 @@ test('flujo Medinet Antonia por profesional o especialidad', async ({ page }) =>
     ...availableDayIndices.filter((index) => index === selectedDayIndex),
   ];
   const slots: Slot[] = [];
-  const seenDates = new Set<string>();
+  const seenSlotKeys = new Set<string>();
 
   for (const index of prioritizedIndices) {
     if (slots.length >= MAX_SLOTS) break;
@@ -341,25 +341,32 @@ test('flujo Medinet Antonia por profesional o especialidad', async ({ page }) =>
     if (activeDate === previousActiveTable.dataDia && dateLabel === previousDateLabel && index !== selectedDayIndex) continue;
 
     const date = isoToDisplayDate(activeDate) || isoToDisplayDate(hiddenDate) || dateLabel;
-    if (!date || seenDates.has(date)) continue;
+    if (!date) continue;
 
-    const activeTimes = activeTable.times;
-    if (!activeTimes.length) continue;
+    const visibleTimes = (activeTable.times || [])
+      .map((value) => normalizeSpaces(value))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'es'));
 
-    const pickedTime = pickRandomItem(activeTimes);
-    const time = normalizeSpaces(pickedTime || '');
-    if (!time) continue;
+    if (!visibleTimes.length) continue;
 
-    seenDates.add(date);
-    slots.push({
-      date,
-      time,
-      booking_url: AGENDA_URL,
-      professional: bestCandidate.name,
-      specialty: bestCandidate.specialty,
-      alert_text: bestCandidate.alert_text,
-      label: `${date} ${time}`,
-    });
+    for (const time of visibleTimes) {
+      if (slots.length >= MAX_SLOTS) break;
+
+      const slotKey = `${activeDate || hiddenDate || date}|${time}`;
+      if (seenSlotKeys.has(slotKey)) continue;
+      seenSlotKeys.add(slotKey);
+
+      slots.push({
+        date,
+        time,
+        booking_url: AGENDA_URL,
+        professional: bestCandidate.name,
+        specialty: bestCandidate.specialty,
+        alert_text: bestCandidate.alert_text,
+        label: `${date} ${time}`,
+      });
+    }
   }
 
   const antoniaResponse: AntoniaResponse = {

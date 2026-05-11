@@ -157,6 +157,8 @@ export async function initDb() {
         ai_enabled boolean not null default true,
         human_taken_over boolean not null default false,
         assignee_id text,
+        zendesk_ticket_id text,
+        zendesk_requester_id text,
         bot_messages_sent integer not null default 0,
         introduced_as_antonia boolean not null default false,
         handoff_reason text,
@@ -220,6 +222,8 @@ export async function initDb() {
       alter table conversations add column if not exists channel_display_name text;
       alter table conversations add column if not exists source_profile_name text;
       alter table conversations add column if not exists whatsapp_phone text;
+      alter table conversations add column if not exists zendesk_ticket_id text;
+      alter table conversations add column if not exists zendesk_requester_id text;
 
       alter table customers add column if not exists rut text;
       alter table customers add column if not exists whatsapp_phone text;
@@ -246,6 +250,8 @@ export async function initDb() {
       alter table customer_channels add column if not exists source_system text;
       alter table customer_channels add column if not exists external_id text;
       alter table customer_channels add column if not exists metadata_json jsonb not null default '{}'::jsonb;
+
+      alter table structured_leads add column if not exists score_category text default 'frío';
 
       alter table customer_conversation_summaries add column if not exists canal text;
       alter table customer_conversation_summaries add column if not exists procedimiento text;
@@ -295,6 +301,138 @@ export async function initDb() {
       on customer_conversation_summaries (conversation_id);
     `);
 
+    // ── Lead Score History + EugenIA Predictions/Observations ──
+    await client.query(`
+      create table if not exists lead_score_history (
+        id bigserial primary key,
+        conversation_id text not null,
+        score integer not null,
+        previous_score integer,
+        delta integer not null default 0,
+        category text not null,
+        pipeline text,
+        reasons text[],
+        trigger_type text,
+        message_number integer,
+        created_at timestamptz not null default now()
+      );
+
+      create index if not exists lead_score_history_conversation_idx
+      on lead_score_history (conversation_id, created_at desc);
+
+      create table if not exists eugenia_predictions (
+        id bigserial primary key,
+        conversation_id text not null,
+        turn_number integer not null default 1,
+        prediction_type text not null default 'question',
+        ai_suggested_action text not null,
+        ai_suggested_intent text,
+        ai_confidence numeric(3,2),
+        lead_score_at_prediction integer,
+        pipeline text,
+        predicted_at timestamptz not null default now(),
+        human_actual_action text,
+        human_actual_intent text,
+        observed_at timestamptz,
+        match_type text,
+        match_score numeric(3,2),
+        compared_at timestamptz,
+        outcome_phase text,
+        outcome_score integer,
+        outcome_at timestamptz,
+        is_gold_sample boolean not null default false,
+        gold_reason text,
+        state_snapshot_json jsonb,
+        created_at timestamptz not null default now()
+      );
+
+      create unique index if not exists eugenia_predictions_unique_turn_type_idx
+      on eugenia_predictions (conversation_id, turn_number, prediction_type);
+
+      create index if not exists eugenia_predictions_conversation_turn_idx
+      on eugenia_predictions (conversation_id, turn_number);
+
+      create index if not exists eugenia_predictions_gold_idx
+      on eugenia_predictions (is_gold_sample) where is_gold_sample = true;
+
+      create table if not exists eugenia_ticket_notes (
+        id bigserial primary key,
+        conversation_id text not null,
+        ticket_id text not null,
+        turn_number integer,
+        note_fingerprint text not null,
+        note_body text not null,
+        published_at timestamptz,
+        created_at timestamptz not null default now()
+      );
+
+      create unique index if not exists eugenia_ticket_notes_ticket_fingerprint_idx
+      on eugenia_ticket_notes (ticket_id, note_fingerprint);
+
+      create index if not exists eugenia_ticket_notes_conversation_idx
+      on eugenia_ticket_notes (conversation_id, created_at desc);
+
+      create table if not exists eugenia_directives (
+        id bigserial primary key,
+        conversation_id text not null,
+        ticket_id text,
+        source_kind text not null default 'ticket_comment',
+        source_public boolean,
+        directive_type text not null,
+        parsed_field text,
+        parsed_value text,
+        raw_text text not null,
+        created_at timestamptz not null default now()
+      );
+
+      create index if not exists eugenia_directives_conversation_idx
+      on eugenia_directives (conversation_id, created_at desc);
+
+      create table if not exists eugenia_ticket_events (
+        id bigserial primary key,
+        conversation_id text not null,
+        ticket_id text not null,
+        audit_id text not null,
+        event_type text not null,
+        author_id text,
+        source_public boolean,
+        body text,
+        created_at timestamptz not null default now()
+      );
+
+      create unique index if not exists eugenia_ticket_events_ticket_audit_event_idx
+      on eugenia_ticket_events (ticket_id, audit_id, event_type);
+
+      create index if not exists eugenia_ticket_events_conversation_idx
+      on eugenia_ticket_events (conversation_id, created_at desc);
+
+      create table if not exists eugenia_help_sessions (
+        id bigserial primary key,
+        conversation_id text not null,
+        ticket_id text not null,
+        agent_author_id text not null,
+        trigger_audit_id text not null,
+        trigger_text text not null,
+        prompt_published_at timestamptz,
+        feedback_audit_id text,
+        feedback_text text,
+        sheet_tab text,
+        sheet_url text,
+        sheet_row_number integer,
+        sheet_synced_at timestamptz,
+        sync_error text,
+        closed_at timestamptz,
+        created_at timestamptz not null default now()
+      );
+
+      create unique index if not exists eugenia_help_sessions_open_ticket_agent_idx
+      on eugenia_help_sessions (ticket_id, agent_author_id)
+      where closed_at is null;
+
+      create index if not exists eugenia_help_sessions_conversation_idx
+      on eugenia_help_sessions (conversation_id, created_at desc);
+    `);
+
     console.log("Database ready");
   } finally {
     client.release();
@@ -340,12 +478,14 @@ export async function upsertConversationState(conversationId, channel, state) {
       ai_enabled,
       human_taken_over,
       assignee_id,
+      zendesk_ticket_id,
+      zendesk_requester_id,
       bot_messages_sent,
       introduced_as_antonia,
       handoff_reason,
       state_json
     )
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
     on conflict (conversation_id)
     do update set
       customer_id = excluded.customer_id,
@@ -357,6 +497,8 @@ export async function upsertConversationState(conversationId, channel, state) {
       ai_enabled = excluded.ai_enabled,
       human_taken_over = excluded.human_taken_over,
       assignee_id = excluded.assignee_id,
+      zendesk_ticket_id = excluded.zendesk_ticket_id,
+      zendesk_requester_id = excluded.zendesk_requester_id,
       bot_messages_sent = excluded.bot_messages_sent,
       introduced_as_antonia = excluded.introduced_as_antonia,
       handoff_reason = excluded.handoff_reason,
@@ -375,6 +517,8 @@ export async function upsertConversationState(conversationId, channel, state) {
       Boolean(system.aiEnabled),
       Boolean(system.humanTakenOver),
       system.assigneeId || null,
+      identity.zendeskTicketId || null,
+      identity.zendeskRequesterId || null,
       Number(system.botMessagesSent || 0),
       Boolean(system.introducedAsAntonia),
       system.handoffReason || null,
@@ -392,7 +536,15 @@ export async function insertConversationMessage({
   channel = null,
   sourceType = null,
   content = "",
-  rawJson = null
+  rawJson = null,
+  emojiList = null,
+  emojiCount = 0,
+  emojiSentimentAvg = null,
+  textSentimentScore = null,
+  wordCount = 0,
+  hasQuestion = false,
+  detectedSignals = null,
+  authorDisplayName = null
 }) {
   if (messageId) {
     const existing = await getPool().query(
@@ -421,9 +573,17 @@ export async function insertConversationMessage({
       channel,
       source_type,
       content,
-      raw_json
+      raw_json,
+      emoji_list,
+      emoji_count,
+      emoji_sentiment_avg,
+      text_sentiment_score,
+      word_count,
+      has_question,
+      detected_signals,
+      author_display_name
     )
-    values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15)
     returning id
     `,
     [
@@ -433,7 +593,15 @@ export async function insertConversationMessage({
       channel,
       sourceType,
       content,
-      JSON.stringify(rawJson || {})
+      JSON.stringify(rawJson || {}),
+      emojiList,
+      emojiCount,
+      emojiSentimentAvg,
+      textSentimentScore,
+      wordCount,
+      hasQuestion,
+      detectedSignals,
+      authorDisplayName
     ]
   );
 
@@ -469,11 +637,14 @@ export async function upsertStructuredLead(conversationId, channel, state) {
       telefono,
       email,
       rut,
-      source_json
+      source_json,
+      score,
+      score_category
     )
     values (
       $1, $2, $3, $4, $5, $6, $7,
-      $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb
+      $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb,
+      $17, $18
     )
     on conflict (conversation_id)
     do update set
@@ -492,6 +663,8 @@ export async function upsertStructuredLead(conversationId, channel, state) {
       email = excluded.email,
       rut = excluded.rut,
       source_json = excluded.source_json,
+      score = excluded.score,
+      score_category = excluded.score_category,
       updated_at = now()
     `,
     [
@@ -515,7 +688,9 @@ export async function upsertStructuredLead(conversationId, channel, state) {
         dealDraft: state?.dealDraft || {},
         identity: state?.identity || {},
         system: state?.system || {}
-      })
+      }),
+      state?.leadScore?.score ?? 0,
+      state?.leadScore?.category ?? "frío"
     ]
   );
 }
@@ -961,6 +1136,337 @@ export async function refreshCustomerConversationStats(customerId) {
   );
 
   return rows[0] || null;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Lead Score History
+// ══════════════════════════════════════════════════════════════
+
+export async function trackLeadScoreChange(conversationId, leadScore, previousScore, triggerType, messageNumber) {
+  if (!conversationId || !leadScore) return null;
+  const score = leadScore.score ?? 0;
+  const prev = typeof previousScore === "number" ? previousScore : 0;
+  const delta = score - prev;
+  if (delta === 0) return null;
+
+  const { rows } = await getPool().query(
+    `insert into lead_score_history
+       (conversation_id, score, previous_score, delta, category, pipeline, reasons, trigger_type, message_number)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     returning *`,
+    [conversationId, score, prev, delta, leadScore.category, leadScore.pipeline || null,
+     leadScore.reasons || [], triggerType || null, messageNumber || null]
+  );
+  return rows[0] || null;
+}
+
+export async function getLeadScoreHistory(conversationId, limit = 50) {
+  const { rows } = await getPool().query(
+    `select * from lead_score_history where conversation_id = $1 order by created_at desc limit $2`,
+    [conversationId, limit]
+  );
+  return rows;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Outcome Scores por Pipeline
+// ══════════════════════════════════════════════════════════════
+
+const OUTCOME_SCORES = {
+  bariatrica: {
+    "CERRADO OPERADO": 100, "CERRADO EN RECUPERACION": 90,
+    "CERRADO AGENDADO": 80, "CERRADO PRESUPUESTO APROBADO": 70,
+    "CERRADO EVALUADO": 60, "CERRADO PRESUPUESTADO": 50,
+    "EXAMENES ENVIADOS": 40, "EN EVALUACION": 30,
+    "CONTACTADO": 20, "CANDIDATOS": 10,
+    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0
+  },
+  balon: {
+    "CERRADO INSTALADO": 100, "CERRADO AGENDADO": 80,
+    "CERRADO PRESUPUESTO APROBADO": 70, "CERRADO EVALUADO": 60,
+    "CERRADO PRESUPUESTADO": 50, "EXAMENES ENVIADOS": 40,
+    "EN EVALUACION": 30, "CONTACTADO": 20, "CANDIDATOS": 10,
+    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0
+  },
+  plastica: {
+    "CERRADO OPERADO": 100, "CERRADO AGENDADO": 80,
+    "CERRADO PRESUPUESTO APROBADO": 70, "CERRADO EVALUADO": 60,
+    "CERRADO PRESUPUESTADO": 50, "EXAMENES ENVIADOS": 40,
+    "EN EVALUACION": 30, "CONTACTADO": 20, "CANDIDATO": 10,
+    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0
+  },
+  general: {
+    "CERRADO OPERADO": 100, "CERRADO AGENDADO": 80,
+    "CERRADO PRESUPUESTO APROBADO": 70, "CERRADO EVALUADO": 60,
+    "CERRADO PRESUPUESTADO": 50, "EXAMENES ENVIADOS": 40,
+    "EN EVALUACION": 30, "CONTACTADO": 20, "CANDIDATOS": 10,
+    "SIN RESPUESTA": 0, "SUSPENDIDO": 0, "DESCALIFICADO": 0
+  }
+};
+
+export function getOutcomeScore(pipeline, phase) {
+  const key = String(pipeline || "").toLowerCase().replace(/[^a-z]/g, "");
+  const map = OUTCOME_SCORES[key] || OUTCOME_SCORES.bariatrica;
+  return map[String(phase || "").toUpperCase()] ?? null;
+}
+
+// ══════════════════════════════════════════════════════════════
+// EugenIA Predictions — PREDICT / OBSERVE / COMPARE / OUTCOME
+// ══════════════════════════════════════════════════════════════
+
+export async function insertPrediction({
+  conversationId, turnNumber, predictionType = "question",
+  aiSuggestedAction, aiSuggestedIntent, aiConfidence,
+  leadScoreAtPrediction, pipeline, stateSnapshot
+}) {
+  const { rows } = await getPool().query(
+    `insert into eugenia_predictions
+       (conversation_id, turn_number, prediction_type, ai_suggested_action,
+        ai_suggested_intent, ai_confidence, lead_score_at_prediction, pipeline, state_snapshot_json)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     on conflict (conversation_id, turn_number, prediction_type)
+     do update set
+       ai_suggested_action = excluded.ai_suggested_action,
+       ai_suggested_intent = excluded.ai_suggested_intent,
+       ai_confidence = excluded.ai_confidence,
+       lead_score_at_prediction = excluded.lead_score_at_prediction,
+       pipeline = excluded.pipeline,
+       state_snapshot_json = coalesce(excluded.state_snapshot_json, eugenia_predictions.state_snapshot_json)
+     returning *`,
+    [conversationId, turnNumber || 1, predictionType, aiSuggestedAction,
+     aiSuggestedIntent || null, aiConfidence || null,
+     leadScoreAtPrediction || null, pipeline || null, stateSnapshot ? JSON.stringify(stateSnapshot) : null]
+  );
+  return rows[0] || null;
+}
+
+export async function reserveEugeniaTicketNote({
+  conversationId,
+  ticketId,
+  turnNumber,
+  noteFingerprint,
+  noteBody
+}) {
+  const { rows } = await getPool().query(
+    `insert into eugenia_ticket_notes
+       (conversation_id, ticket_id, turn_number, note_fingerprint, note_body)
+     values ($1, $2, $3, $4, $5)
+     on conflict (ticket_id, note_fingerprint) do nothing
+     returning *`,
+    [conversationId, ticketId, turnNumber || null, noteFingerprint, noteBody]
+  );
+  return rows[0] || null;
+}
+
+export async function markEugeniaTicketNotePublished(noteId) {
+  const { rows } = await getPool().query(
+    `update eugenia_ticket_notes
+     set published_at = now()
+     where id = $1
+     returning *`,
+    [noteId]
+  );
+  return rows[0] || null;
+}
+
+export async function insertEugeniaDirective({
+  conversationId,
+  ticketId,
+  sourceKind = "ticket_comment",
+  sourcePublic = null,
+  directiveType,
+  parsedField,
+  parsedValue,
+  rawText
+}) {
+  const { rows } = await getPool().query(
+    `insert into eugenia_directives
+       (conversation_id, ticket_id, source_kind, source_public, directive_type, parsed_field, parsed_value, raw_text)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     returning *`,
+    [conversationId, ticketId || null, sourceKind, sourcePublic, directiveType, parsedField || null, parsedValue || null, rawText]
+  );
+  return rows[0] || null;
+}
+
+export async function insertEugeniaTicketEvent({
+  conversationId,
+  ticketId,
+  auditId,
+  eventType,
+  authorId,
+  sourcePublic,
+  body
+}) {
+  const { rows } = await getPool().query(
+    `insert into eugenia_ticket_events
+       (conversation_id, ticket_id, audit_id, event_type, author_id, source_public, body)
+     values ($1, $2, $3, $4, $5, $6, $7)
+     on conflict (ticket_id, audit_id, event_type) do nothing
+     returning *`,
+    [conversationId, ticketId, auditId, eventType, authorId || null, sourcePublic, body || null]
+  );
+  return rows[0] || null;
+}
+
+export async function openEugeniaHelpSession({
+  conversationId,
+  ticketId,
+  agentAuthorId,
+  triggerAuditId,
+  triggerText
+}) {
+  const { rows } = await getPool().query(
+    `insert into eugenia_help_sessions
+       (conversation_id, ticket_id, agent_author_id, trigger_audit_id, trigger_text)
+     values ($1, $2, $3, $4, $5)
+     on conflict (ticket_id, agent_author_id) where closed_at is null
+     do nothing
+     returning *`,
+    [conversationId, ticketId, agentAuthorId, triggerAuditId, triggerText]
+  );
+  return rows[0] || null;
+}
+
+export async function getOpenEugeniaHelpSession({ ticketId, agentAuthorId }) {
+  const { rows } = await getPool().query(
+    `select *
+     from eugenia_help_sessions
+     where ticket_id = $1
+       and agent_author_id = $2
+       and closed_at is null
+     order by created_at desc
+     limit 1`,
+    [ticketId, agentAuthorId]
+  );
+  return rows[0] || null;
+}
+
+export async function markEugeniaHelpSessionPrompted(sessionId) {
+  const { rows } = await getPool().query(
+    `update eugenia_help_sessions
+     set prompt_published_at = now()
+     where id = $1
+     returning *`,
+    [sessionId]
+  );
+  return rows[0] || null;
+}
+
+export async function completeEugeniaHelpSession(sessionId, {
+  feedbackAuditId,
+  feedbackText,
+  sheetTab,
+  sheetUrl,
+  sheetRowNumber,
+  syncedAt,
+  syncError
+}) {
+  const { rows } = await getPool().query(
+    `update eugenia_help_sessions
+     set feedback_audit_id = $2,
+         feedback_text = $3,
+         sheet_tab = $4,
+         sheet_url = $5,
+         sheet_row_number = $6,
+         sheet_synced_at = $7,
+         sync_error = $8,
+         closed_at = now()
+     where id = $1
+     returning *`,
+    [
+      sessionId,
+      feedbackAuditId || null,
+      feedbackText || null,
+      sheetTab || null,
+      sheetUrl || null,
+      sheetRowNumber ?? null,
+      syncedAt || null,
+      syncError || null
+    ]
+  );
+  return rows[0] || null;
+}
+
+export async function updateObservation(predictionId, { humanActualAction, humanActualIntent }) {
+  const { rows } = await getPool().query(
+    `update eugenia_predictions
+     set human_actual_action = $2, human_actual_intent = $3, observed_at = now()
+     where id = $1 returning *`,
+    [predictionId, humanActualAction, humanActualIntent || null]
+  );
+  return rows[0] || null;
+}
+
+export async function updateComparison(predictionId, { matchType, matchScore }) {
+  const { rows } = await getPool().query(
+    `update eugenia_predictions
+     set match_type = $2, match_score = $3, compared_at = now()
+     where id = $1 returning *`,
+    [predictionId, matchType, matchScore]
+  );
+  return rows[0] || null;
+}
+
+export async function updateOutcome(predictionId, { outcomePhase, outcomeScore, isGoldSample, goldReason }) {
+  const { rows } = await getPool().query(
+    `update eugenia_predictions
+     set outcome_phase = $2, outcome_score = $3, outcome_at = now(),
+         is_gold_sample = coalesce($4, false), gold_reason = $5
+     where id = $1 returning *`,
+    [predictionId, outcomePhase, outcomeScore, isGoldSample || false, goldReason || null]
+  );
+  return rows[0] || null;
+}
+
+export async function getLatestPendingPredictions(conversationId) {
+  const { rows } = await getPool().query(
+    `select * from eugenia_predictions
+     where conversation_id = $1 and human_actual_action is null
+     order by turn_number desc, prediction_type asc
+     limit 2`,
+    [conversationId]
+  );
+  return rows;
+}
+
+export async function getGoldSamples(limit = 50) {
+  const { rows } = await getPool().query(
+    `select * from eugenia_predictions where is_gold_sample = true
+     order by outcome_score desc, compared_at desc limit $1`,
+    [limit]
+  );
+  return rows;
+}
+
+export async function getPredictionStats(conversationId) {
+  const { rows } = await getPool().query(
+    `select
+       count(*) as total,
+       count(*) filter (where match_type = 'same_intent') as same_intent,
+       count(*) filter (where match_type = 'partial_match') as partial,
+       count(*) filter (where match_type = 'different_topic') as different,
+       avg(match_score) filter (where match_score is not null) as avg_match,
+       count(*) filter (where is_gold_sample = true) as gold_samples
+     from eugenia_predictions
+     where conversation_id = $1 and human_actual_action is not null`,
+    [conversationId]
+  );
+  return rows[0] || null;
+}
+
+// ── Emoji Sentiment Lookup (shared with observer) ──
+
+export async function getEmojiSentimentBatch(emojis) {
+  if (!emojis.length) return new Map();
+  const { rows } = await getPool().query(
+    `SELECT emoji, sentiment_score, negative, neutral, positive
+     FROM emoji_sentiment_lookup WHERE emoji = ANY($1)`,
+    [emojis]
+  );
+  const map = new Map();
+  for (const row of rows) map.set(row.emoji, row);
+  return map;
 }
 
 export { buildCustomerProfile };

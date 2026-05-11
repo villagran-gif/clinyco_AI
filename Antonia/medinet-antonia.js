@@ -4,7 +4,7 @@ const path = require('path');
 
 const AGENDA_URL = 'https://clinyco.medinetapp.com/agendaweb/planned/';
 const DEFAULT_BRANCH_NAME = process.env.MEDINET_BRANCH_NAME || 'Antofagasta Mall Arauco Express';
-const MAX_SLOTS = 3;
+const MAX_SLOTS = 6;
 const CACHE_FILE = path.resolve(__dirname, '..', 'data', 'medinet_professionals_cache.json');
 function normalizeSpaces(value = '') {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -88,8 +88,9 @@ function buildPatientReply(professional, specialty, slots) {
   return [
     `Tengo estas horas disponibles con ${professional}${specialty ? ` en ${specialty}` : ''}:`,
     ...slots.map((slot, i) => `${i + 1}- ${slot.date} a las ${slot.time}`),
+    `${slots.length + 1}- Salir`,
     '',
-    'Si deseas agendar, indícame el número de la hora que prefieres y te ayudo a reservar.',
+    'Elige el número de la hora que prefieres para agendar.',
   ].join('\n');
 }
 
@@ -266,7 +267,7 @@ async function main() {
     ];
 
     const slots = [];
-    const seenDates = new Set();
+    const seenSlotKeys = new Set();
 
     for (const index of prioritizedIndices) {
       if (slots.length >= MAX_SLOTS) break;
@@ -329,23 +330,34 @@ async function main() {
       if (activeDate === previousActiveTable.dataDia && dateLabel === previousDateLabel && index !== selectedDayIndex) continue;
 
       const date = isoToDisplayDate(activeDate) || isoToDisplayDate(hiddenDate) || dateLabel;
-      if (!date || seenDates.has(date)) continue;
+      if (!date) continue;
 
-      const pickedTime = normalizeSpaces(pickRandomItem(activeTable.times) || '');
-      if (!pickedTime) continue;
+      const visibleTimes = (activeTable.times || [])
+        .map((value) => normalizeSpaces(value))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, 'es'));
 
-      seenDates.add(date);
-      slots.push({
-        date,
-        time: pickedTime,
-        dataDia: activeDate,
-        booking_url: AGENDA_URL,
-        professional: bestCandidate.name,
-        professionalId: bestCandidate.id,
-        specialty: bestCandidate.specialty,
-        alert_text: bestCandidate.alert_text,
-        label: `${date} ${pickedTime}`,
-      });
+      if (!visibleTimes.length) continue;
+
+      for (const time of visibleTimes) {
+        if (slots.length >= MAX_SLOTS) break;
+
+        const slotKey = `${activeDate || hiddenDate || date}|${time}`;
+        if (seenSlotKeys.has(slotKey)) continue;
+        seenSlotKeys.add(slotKey);
+
+        slots.push({
+          date,
+          time,
+          dataDia: activeDate,
+          booking_url: AGENDA_URL,
+          professional: bestCandidate.name,
+          professionalId: bestCandidate.id,
+          specialty: bestCandidate.specialty,
+          alert_text: bestCandidate.alert_text,
+          label: `${date} ${time}`,
+        });
+      }
     }
 
     const antoniaResponse = {

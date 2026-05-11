@@ -40,7 +40,7 @@ type Candidate = {
 /* ── constantes ── */
 const AGENDA_URL = 'https://clinyco.medinetapp.com/agendaweb/planned/';
 const DEFAULT_BRANCH_NAME = process.env.MEDINET_BRANCH_NAME || 'Antofagasta Mall Arauco Express';
-const MAX_SLOTS = 3;
+const MAX_SLOTS = 6;
 
 /* ─────────────  mapa de profesionales (data-id-profesional del HTML)  ───────────── */
 const PROF_DB: Record<string, { name: string; specialty: string; specialtyId: string }> = {
@@ -285,7 +285,7 @@ async function collectSlots(page: any, prof: { id: string; name: string; special
     ...availableDayIndices.filter(i => i === selectedDayIndex),
   ];
   const slots: Slot[] = [];
-  const seenDates = new Set<string>();
+  const seenSlotKeys = new Set<string>();
 
   for (const idx of prioritized) {
     if (slots.length >= MAX_SLOTS) break;
@@ -324,21 +324,31 @@ async function collectSlots(page: any, prof: { id: string; name: string; special
     if (!activeDate && !dateLabel) continue;
 
     const date = isoToDisplayDate(activeDate) || isoToDisplayDate(hiddenDate) || dateLabel;
-    if (!date || seenDates.has(date)) continue;
-    if (!activeTable.times.length) continue;
+    if (!date) continue;
 
-    const time = normalizeSpaces(pickRandomItem(activeTable.times) || '');
-    if (!time) continue;
+    const visibleTimes = (activeTable.times || [])
+      .map((value) => normalizeSpaces(value))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'es'));
 
-    seenDates.add(date);
-    slots.push({
-      date, time, dataDia: activeDate,
-      booking_url: AGENDA_URL,
-      professional: prof.name, professionalId: prof.id,
-      specialty: prof.specialty, specialtyId: prof.specialtyId,
-      alert_text: prof.alert_text,
-      label: `${date} ${time}`,
-    });
+    if (!visibleTimes.length) continue;
+
+    for (const time of visibleTimes) {
+      if (slots.length >= MAX_SLOTS) break;
+
+      const slotKey = `${activeDate || hiddenDate || date}|${time}`;
+      if (seenSlotKeys.has(slotKey)) continue;
+      seenSlotKeys.add(slotKey);
+
+      slots.push({
+        date, time, dataDia: activeDate,
+        booking_url: AGENDA_URL,
+        professional: prof.name, professionalId: prof.id,
+        specialty: prof.specialty, specialtyId: prof.specialtyId,
+        alert_text: prof.alert_text,
+        label: `${date} ${time}`,
+      });
+    }
   }
   return slots;
 }
