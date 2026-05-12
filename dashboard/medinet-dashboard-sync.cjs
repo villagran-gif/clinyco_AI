@@ -63,7 +63,7 @@ async function fetchProximosCuposAll(sucursalId) {
     return [];
   }
   const data = await response.json();
-  return data.profesionales || [];
+  return Array.isArray(data) ? data : (data.profesionales || []);
 }
 
 function parsePickerFechaHtml(html) {
@@ -183,35 +183,63 @@ async function fetchProfessionalSlots(sucursalId, prof) {
   const especialidadId = prof.especialidad_id || prof.specialtyId || '1';
   const profesionalId = prof.id;
 
-  console.log(`  Fetching slots: ${prof.nombre || prof.name} (${profesionalId})`);
+  // Build full name: "nombres paterno" (API uses these fields)
+  const fullName = [prof.nombres || prof.nombre || prof.name, prof.paterno || prof.materno || ''].filter(Boolean).join(' ').trim();
 
-  const pickerResult = await fetchPickerFecha(sucursalId, especialidadId, profesionalId);
-  const datesInRange = filterDatesInRange(pickerResult.dates);
+  // Use cupos from the initial API response (already filtered by sucursal)
+  let cupos = Array.isArray(prof.cupos) ? prof.cupos : [];
 
-  const slots = [];
-
-  for (const fecha of datesInRange) {
-    let horas = pickerResult.slots[fecha] || [];
-
-    // If picker-fecha didn't have inline time slots, try picker-hora endpoint
-    if (!horas.length) {
-      horas = await fetchHorasForDate(sucursalId, especialidadId, profesionalId, fecha);
-      if (horas.length) await sleep(300);
-    }
-
-    if (horas.length) {
-      slots.push({ fecha, horas });
+  // Build slots, only keeping dates within range
+  const slotsByDate = {};
+  for (const cupo of cupos) {
+    const fecha = cupo.fecha;
+    if (!fecha) continue;
+    const horas = Array.isArray(cupo.horas) ? cupo.horas : [];
+    if (!horas.length) continue;
+    slotsByDate[fecha] = slotsByDate[fecha] || [];
+    for (const h of horas) {
+      if (!slotsByDate[fecha].includes(h)) slotsByDate[fecha].push(h);
     }
   }
 
+  // If proximos-cupos-all only returned the next 1 cupo per prof, fetch full range via picker-fecha
+  const cuposDates = Object.keys(slotsByDate);
+  const datesInRange = filterDatesInRange(cuposDates);
+
+  // Try to enrich with picker-fecha to get ALL slots in the next 14 days (not just next one)
+  try {
+    const pickerResult = await fetchPickerFecha(sucursalId, especialidadId, profesionalId);
+    const pickerDatesInRange = filterDatesInRange(pickerResult.dates);
+    for (const fecha of pickerDatesInRange) {
+      const horas = pickerResult.slots[fecha] || [];
+      if (!horas.length) continue;
+      slotsByDate[fecha] = slotsByDate[fecha] || [];
+      for (const h of horas) {
+        if (!slotsByDate[fecha].includes(h)) slotsByDate[fecha].push(h);
+      }
+    }
+  } catch (err) {
+    // Non-fatal: we still have the initial cupos from proximos-cupos-all
+  }
+
+  const slots = Object.keys(slotsByDate)
+    .filter(fecha => {
+      const d = new Date(fecha + 'T00:00:00');
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const end = new Date(today); end.setDate(end.getDate() + DAYS_AHEAD);
+      return d >= today && d < end;
+    })
+    .sort()
+    .map(fecha => ({ fecha, horas: slotsByDate[fecha].sort() }));
+
   return {
     id: profesionalId,
-    nombre: prof.nombre || prof.name || '',
+    nombre: fullName || prof.nombre || '',
     especialidad: prof.especialidad || prof.specialty || '',
     especialidad_id: especialidadId,
     duracion_cita: Number(prof.duracion_cita || prof.duracion || 0),
     avatar_url: prof.avatar_url || prof.avatarUrl || '',
-    alert: prof.alert_text || prof.alert || '',
+    alert: prof.agendaweb_alert || prof.alert_text || prof.alert || '',
     slots,
     total_horas: slots.reduce((sum, s) => sum + s.horas.length, 0),
   };

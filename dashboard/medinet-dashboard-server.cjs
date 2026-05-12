@@ -51,7 +51,25 @@ function serveFile(filePath, contentType, res) {
   }
 }
 
+function setCors(req, res) {
+  const origin = req.headers.origin || '';
+  if (origin.endsWith('.netlify.app') || origin.includes('localhost')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+  }
+}
+
 const server = http.createServer((req, res) => {
+  setCors(req, res);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (!checkAuth(req)) {
     res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Clinyco Dashboard"' });
     res.end('Unauthorized');
