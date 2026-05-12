@@ -1392,9 +1392,7 @@ let _medinetSearch = '';
 
 async function loadMedinet() {
   try {
-    const mnRes = await fetch("http://69.6.226.132:3001/api/slots");
-    if (!mnRes.ok) throw new Error(`VPS ${mnRes.status}`);
-    const data = await mnRes.json();
+    const data = await api("/medinet/slots");
     if (data.error) throw new Error(data.error);
     _medinetData = data;
     document.getElementById("mn-loading").style.display = "none";
