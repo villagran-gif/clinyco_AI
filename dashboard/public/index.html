@@ -184,50 +184,9 @@
       .summary-card { min-width: 120px; padding: 12px; }
       .summary-card .value { font-size: 22px; }
     }
-    #login-overlay {
-      position: fixed; inset: 0; z-index: 9999;
-      background: #0f172a;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #login-overlay.hidden { display: none; }
-    .login-box {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 12px;
-      padding: 40px 36px;
-      text-align: center;
-      min-width: 320px;
-    }
-    .login-box h2 { color: #f8fafc; margin-bottom: 8px; font-size: 22px; }
-    .login-box p { color: #94a3b8; font-size: 14px; margin-bottom: 20px; }
-    .login-box input {
-      width: 100%; padding: 10px 14px; font-size: 15px;
-      background: #0f172a; color: #e2e8f0;
-      border: 1px solid #475569; border-radius: 8px;
-      margin-bottom: 14px; text-align: center;
-    }
-    .login-box input:focus { outline: none; border-color: #6366f1; }
-    .login-box button {
-      width: 100%; padding: 10px; font-size: 15px; font-weight: 600;
-      background: #4f46e5; color: #fff; border: none; border-radius: 8px;
-      cursor: pointer;
-    }
-    .login-box button:hover { background: #4338ca; }
-    .login-error { color: #f87171; font-size: 13px; margin-top: 10px; display: none; }
   </style>
 </head>
 <body>
-  <div id="login-overlay">
-    <div class="login-box">
-      <h2>Clinyco Dashboard</h2>
-      <p>Ingresa la clave de acceso</p>
-      <input id="login-pass" type="password" placeholder="Clave" autofocus />
-      <button id="login-btn">Entrar</button>
-      <div id="login-error" class="login-error">Clave incorrecta</div>
-    </div>
-  </div>
-
-  <div id="app-content" style="display:none">
   <div class="header">
     <h1>Clinyco — Disponibilidad Medinet</h1>
     <div class="header-meta">
@@ -255,50 +214,7 @@
   </div>
 
   <div class="slot-detail" id="slot-detail"></div>
-  </div>
 
-  <script>
-  (function() {
-    var PASS_HASH = '028cc290667b4c5c2dbb05f73eee118881c7fb77f6dcb37a30ad5d92c1ff72b9';
-    var overlay = document.getElementById('login-overlay');
-    var appContent = document.getElementById('app-content');
-    var passInput = document.getElementById('login-pass');
-    var loginBtn = document.getElementById('login-btn');
-    var loginError = document.getElementById('login-error');
-
-    async function sha256(str) {
-      var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-      return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
-    }
-
-    function unlock() {
-      overlay.classList.add('hidden');
-      appContent.style.display = '';
-      sessionStorage.setItem('clinyco_auth', '1');
-    }
-
-    if (sessionStorage.getItem('clinyco_auth') === '1') {
-      unlock();
-    }
-
-    async function tryLogin() {
-      var hash = await sha256(passInput.value);
-      if (hash === PASS_HASH) {
-        unlock();
-      } else {
-        loginError.style.display = 'block';
-        passInput.value = '';
-        passInput.focus();
-      }
-    }
-
-    loginBtn.addEventListener('click', tryLogin);
-    passInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') tryLogin();
-      loginError.style.display = 'none';
-    });
-  })();
-  </script>
   <script src="./app.js"></script>
 </body>
 </html>
