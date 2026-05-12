@@ -1,7 +1,6 @@
 (function () {
   'use strict';
 
-  var API_BASE = 'http://69.6.226.132:3002';
   var REFRESH_MS = 5 * 60 * 1000;
   var data = null;
   var selectedSucursal = '';
@@ -16,7 +15,7 @@
   var detailPopup = document.getElementById('slot-detail');
 
   function fetchData() {
-    fetch(API_BASE + '/api/slots')
+    fetch('/api/slots')
       .then(function (res) { return res.json(); })
       .then(function (json) {
         if (json.error) {

@@ -214,6 +214,7 @@
     <button onclick="showTab('agents')">Agentes</button>
     <button onclick="showTab('marketing')" style="background:#d97706;color:#fff;border-radius:6px">Marketing $</button>
     <button onclick="showTab('kpis')">KPIs</button>
+    <button onclick="showTab('medinet')" style="background:#0d9488;color:#fff;border-radius:6px">Medinet</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -1316,6 +1317,30 @@
       </div>
     </div>
   </div>
+
+  <!-- ══════ TAB: MEDINET DISPONIBILIDAD ══════ -->
+  <div id="tab-medinet" class="tab-content">
+    <div id="mn-loading" class="loading">Cargando disponibilidad Medinet...</div>
+    <div id="mn-content" style="display:none">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        <h3 style="margin:0">Disponibilidad Medinet — Proximos dias</h3>
+        <div style="display:flex;align-items:center;gap:12px;font-size:13px">
+          <span id="mn-sync-badge" style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500"></span>
+          <span id="mn-sync-time" style="color:#666"></span>
+          <label>Sucursal: <select id="mn-sucursal" style="padding:4px 8px;font-size:13px"></select></label>
+          <input id="mn-search" type="text" placeholder="Buscar profesional..." style="padding:4px 8px;font-size:13px;width:180px" />
+        </div>
+      </div>
+
+      <div id="mn-summary" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>
+
+      <div id="mn-grid" style="overflow-x:auto"></div>
+
+      <div id="mn-detail-popup" style="position:fixed;background:#1e293b;border:1px solid #475569;border-radius:8px;padding:12px;font-size:12px;color:#e2e8f0;max-width:260px;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.4);display:none"></div>
+
+    </div>
+  </div>
 </main>
 
 <script>
@@ -1360,13 +1385,216 @@ async function api(path) {
   return res.json();
 }
 
+// ── Medinet availability ──
+let _medinetData = null;
+let _medinetSucursal = '';
+let _medinetSearch = '';
+
+async function loadMedinet() {
+  try {
+    const data = await api("/medinet/slots");
+    if (data.error) throw new Error(data.error);
+    _medinetData = data;
+    document.getElementById("mn-loading").style.display = "none";
+    document.getElementById("mn-content").style.display = "block";
+    mnUpdateSync();
+    mnPopulateSucursales();
+    mnRender();
+    window._medinetLoaded = true;
+
+    document.getElementById("mn-sucursal").addEventListener("change", function() {
+      _medinetSucursal = this.value;
+      mnRender();
+    });
+    let searchTimer;
+    document.getElementById("mn-search").addEventListener("input", function() {
+      clearTimeout(searchTimer);
+      const v = this.value;
+      searchTimer = setTimeout(() => { _medinetSearch = v; mnRender(); }, 300);
+    });
+  } catch (err) {
+    document.getElementById("mn-loading").innerHTML = `<div class="error-msg">Error cargando Medinet: ${err.message}</div>`;
+  }
+}
+
+function mnUpdateSync() {
+  const badge = document.getElementById("mn-sync-badge");
+  const timeEl = document.getElementById("mn-sync-time");
+  if (!_medinetData || !_medinetData.syncedAt) {
+    badge.textContent = "Sin datos";
+    badge.style.cssText = "padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500;background:#fef2f2;color:#b91c1c";
+    timeEl.textContent = "";
+    return;
+  }
+  const syncDate = new Date(_medinetData.syncedAt);
+  const ageMin = Math.floor((Date.now() - syncDate.getTime()) / 60000);
+  if (ageMin < 20) {
+    badge.textContent = "Actualizado";
+    badge.style.cssText = "padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500;background:#ecfdf5;color:#065f46";
+  } else if (ageMin < 60) {
+    badge.textContent = `Hace ${ageMin} min`;
+    badge.style.cssText = "padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500;background:#fffbeb;color:#92400e";
+  } else {
+    badge.textContent = "Desactualizado";
+    badge.style.cssText = "padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500;background:#fef2f2;color:#b91c1c";
+  }
+  timeEl.textContent = "Sync: " + syncDate.toLocaleString("es-CL");
+}
+
+function mnPopulateSucursales() {
+  const sel = document.getElementById("mn-sucursal");
+  if (!_medinetData || !_medinetData.sucursales) return;
+  const keys = Object.keys(_medinetData.sucursales);
+  sel.innerHTML = "";
+  if (keys.length > 1) {
+    const opt = document.createElement("option");
+    opt.value = "__all__"; opt.textContent = "Todas";
+    sel.appendChild(opt);
+  }
+  keys.forEach(k => {
+    const opt = document.createElement("option");
+    opt.value = k; opt.textContent = _medinetData.sucursales[k].nombre || k;
+    sel.appendChild(opt);
+  });
+  _medinetSucursal = sel.value;
+}
+
+function mnGetProfs() {
+  if (!_medinetData || !_medinetData.sucursales) return [];
+  const keys = _medinetSucursal === "__all__" ? Object.keys(_medinetData.sucursales) : [_medinetSucursal];
+  let profs = [];
+  keys.forEach(k => {
+    const s = _medinetData.sucursales[k];
+    if (!s || !s.profesionales) return;
+    s.profesionales.forEach(p => profs.push({ ...p, sucursal: s.nombre, sucursalId: k }));
+  });
+  if (_medinetSearch) {
+    const q = _medinetSearch.toLowerCase();
+    profs = profs.filter(p => (p.nombre||"").toLowerCase().includes(q) || (p.especialidad||"").toLowerCase().includes(q));
+  }
+  return profs;
+}
+
+function mnGetDates() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const days = _medinetData ? (_medinetData.daysAhead || 14) : 14;
+  const dates = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i); dates.push(d);
+  }
+  return dates;
+}
+
+function mnIso(d) { return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
+function mnDayLabel(d) { return ["Dom","Lun","Mar","Mie","Jue","Vie","Sab"][d.getDay()] + " " + d.getDate() + "/" + (d.getMonth()+1); }
+
+function mnSlotCount(prof, iso) {
+  if (!prof.slots) return 0;
+  for (const s of prof.slots) if (s.fecha === iso) return s.horas.length;
+  return 0;
+}
+
+function mnSlotHoras(prof, iso) {
+  if (!prof.slots) return [];
+  for (const s of prof.slots) if (s.fecha === iso) return s.horas;
+  return [];
+}
+
+function mnRender() {
+  const dates = mnGetDates();
+  const profs = mnGetProfs();
+  const todayIso = mnIso(new Date());
+
+  let totalSlots = 0, profsWithSlots = 0;
+  profs.forEach(p => {
+    const ps = (p.slots||[]).reduce((s,sl) => s + sl.horas.length, 0);
+    totalSlots += ps;
+    if (ps > 0) profsWithSlots++;
+  });
+
+  document.getElementById("mn-summary").innerHTML =
+    `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:24px;font-weight:700;color:#166534">${profs.length}</div><div style="font-size:12px;color:#15803d">Profesionales</div></div>` +
+    `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:24px;font-weight:700;color:#166534">${profsWithSlots}</div><div style="font-size:12px;color:#15803d">Con disponibilidad</div></div>` +
+    `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:24px;font-weight:700;color:#1e40af">${totalSlots}</div><div style="font-size:12px;color:#2563eb">Horas totales</div></div>` +
+    `<div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:24px;font-weight:700;color:#6b21a8">${_medinetData ? _medinetData.daysAhead : 14}</div><div style="font-size:12px;color:#7c3aed">Dias cobertura</div></div>`;
+
+  if (!profs.length) {
+    document.getElementById("mn-grid").innerHTML = '<p style="text-align:center;color:#666;padding:40px">Sin profesionales que coincidan.</p>';
+    return;
+  }
+
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr><th style="text-align:left;padding:8px 6px;background:#f8fafc;border-bottom:2px solid #e2e8f0;position:sticky;left:0;z-index:3;min-width:200px">Profesional</th>';
+  dates.forEach(d => {
+    const iso = mnIso(d);
+    html += `<th style="padding:8px 4px;background:#f8fafc;border-bottom:2px solid #e2e8f0;text-align:center;font-size:11px;font-weight:500;${iso===todayIso?'color:#0d9488;border-bottom-color:#0d9488':''}">${mnDayLabel(d)}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  profs.forEach(prof => {
+    html += '<tr><td style="padding:6px;border-bottom:1px solid #f1f5f9;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid #e2e8f0">';
+    html += `<div style="display:flex;align-items:center;gap:6px">`;
+    if (prof.avatar_url) {
+      const src = prof.avatar_url.startsWith("http") ? prof.avatar_url : "https://clinyco.medinetapp.com" + prof.avatar_url;
+      html += `<img src="${src}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" onerror="this.style.display='none'" />`;
+    }
+    const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    html += `<div><div style="font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px" title="${esc(prof.nombre)}">${esc(prof.nombre)}</div>`;
+    html += `<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">${esc(prof.especialidad||"")}</div></div></div></td>`;
+
+    dates.forEach(d => {
+      const iso = mnIso(d);
+      const count = mnSlotCount(prof, iso);
+      let bg = "", fg = "#94a3b8";
+      if (count > 0 && count <= 2) { bg = "background:#dcfce7;"; fg = "#166534"; }
+      else if (count > 2 && count <= 5) { bg = "background:#bbf7d0;"; fg = "#15803d"; }
+      else if (count > 5) { bg = "background:#86efac;"; fg = "#047857"; }
+      html += `<td style="padding:4px;text-align:center;border-bottom:1px solid #f1f5f9"><div style="${bg}color:${fg};border-radius:4px;padding:4px 2px;font-weight:500;font-size:12px;cursor:${count>0?'pointer':'default'}"`;
+      if (count > 0) {
+        html += ` onmouseenter="mnShowDetail(event,'${prof.id}','${iso}')" onmouseleave="mnHideDetail()"`;
+      }
+      html += `>${count > 0 ? count : '-'}</div></td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById("mn-grid").innerHTML = html;
+}
+
+window.mnShowDetail = function(event, profId, fecha) {
+  const profs = mnGetProfs();
+  const prof = profs.find(p => String(p.id) === String(profId));
+  if (!prof) return;
+  const horas = mnSlotHoras(prof, fecha);
+  if (!horas.length) return;
+  const dateObj = new Date(fecha + "T12:00:00");
+  const label = dateObj.toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" });
+  const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  const popup = document.getElementById("mn-detail-popup");
+  popup.innerHTML = `<h4 style="margin:0 0 4px;color:#f8fafc;font-size:13px">${esc(prof.nombre)}</h4>` +
+    `<div style="color:#94a3b8;margin-bottom:6px;font-size:11px">${esc(label)} (${horas.length} horas)</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:4px">${horas.map(h => `<span style="background:#0f172a;padding:2px 8px;border-radius:4px;font-family:monospace;font-size:12px;color:#e2e8f0">${esc(h)}</span>`).join("")}</div>`;
+  popup.style.display = "block";
+  const rect = event.target.getBoundingClientRect();
+  let left = rect.left + rect.width/2 - 130;
+  if (left < 8) left = 8;
+  if (left + 260 > window.innerWidth - 8) left = window.innerWidth - 268;
+  let top = rect.bottom + 8;
+  if (top + 200 > window.innerHeight) top = rect.top - 200;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+};
+
+window.mnHideDetail = function() {
+  document.getElementById("mn-detail-popup").style.display = "none";
+};
+
 // ── Tabs ──
 function showTab(name) {
   document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {} };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
