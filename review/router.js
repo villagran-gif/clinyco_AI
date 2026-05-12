@@ -1208,4 +1208,32 @@ router.post("/marketing/costs/bulk", wrap(async (req, res) => {
   });
 }));
 
+// ═══════════ MEDINET AVAILABILITY (proxy to VPS Chile) ═══════════
+const MEDINET_VPS_URL = (process.env.MEDINET_VPS_URL || "http://69.6.226.132:3001").replace(/\/+$/, "");
+
+router.get("/medinet/slots", wrap(async (_req, res) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(`${MEDINET_VPS_URL}/api/slots`, { signal: controller.signal });
+    if (!r.ok) throw new Error(`VPS returned ${r.status}`);
+    const data = await r.json();
+    res.json(data);
+  } finally {
+    clearTimeout(timer);
+  }
+}));
+
+router.get("/medinet/sync-status", wrap(async (_req, res) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const r = await fetch(`${MEDINET_VPS_URL}/api/sync-status`, { signal: controller.signal });
+    if (!r.ok) throw new Error(`VPS returned ${r.status}`);
+    res.json(await r.json());
+  } finally {
+    clearTimeout(timer);
+  }
+}));
+
 export default router;
