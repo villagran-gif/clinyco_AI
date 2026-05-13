@@ -1488,16 +1488,13 @@ function mnGetDates() {
 function mnIso(d) { return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
 function mnDayLabel(d) { return ["Dom","Lun","Mar","Mie","Jue","Vie","Sab"][d.getDay()] + " " + d.getDate() + "/" + (d.getMonth()+1); }
 
-function mnSlotCount(prof, iso) {
-  if (!prof.slots) return 0;
-  for (const s of prof.slots) if (s.fecha === iso) return s.horas.length;
-  return 0;
+function mnSlotInfo(prof, iso) {
+  if (!prof.slots) return { disponibles: 0, ocupados: 0, total: 0, horas: [] };
+  for (const s of prof.slots) {
+    if (s.fecha === iso) return { disponibles: s.disponibles || s.horas.length, ocupados: s.ocupados || 0, total: s.total || s.horas.length, horas: s.horas };
+  }
+  return { disponibles: 0, ocupados: 0, total: 0, horas: [] };
 }
-
-function mnSlotHoras(prof, iso) {
-  if (!prof.slots) return [];
-  for (const s of prof.slots) if (s.fecha === iso) return s.horas;
-  return [];
 }
 
 function mnRender() {
@@ -1543,16 +1540,20 @@ function mnRender() {
 
     dates.forEach(d => {
       const iso = mnIso(d);
-      const count = mnSlotCount(prof, iso);
+      const info = mnSlotInfo(prof, iso);
+      const count = info.disponibles;
       let bg = "", fg = "#94a3b8";
       if (count > 0 && count <= 2) { bg = "background:#dcfce7;"; fg = "#166534"; }
       else if (count > 2 && count <= 5) { bg = "background:#bbf7d0;"; fg = "#15803d"; }
       else if (count > 5) { bg = "background:#86efac;"; fg = "#047857"; }
+      let label = '-';
+      if (count > 0 && info.total > count) label = `${count}/${info.total}`;
+      else if (count > 0) label = String(count);
       html += `<td style="padding:4px;text-align:center;border-bottom:1px solid #f1f5f9"><div style="${bg}color:${fg};border-radius:4px;padding:4px 2px;font-weight:500;font-size:12px;cursor:${count>0?'pointer':'default'}"`;
       if (count > 0) {
         html += ` onmouseenter="mnShowDetail(event,'${prof.id}','${iso}')" onmouseleave="mnHideDetail()"`;
       }
-      html += `>${count > 0 ? count : '-'}</div></td>`;
+      html += `>${label}</div></td>`;
     });
     html += '</tr>';
   });
@@ -1564,15 +1565,16 @@ window.mnShowDetail = function(event, profId, fecha) {
   const profs = mnGetProfs();
   const prof = profs.find(p => String(p.id) === String(profId));
   if (!prof) return;
-  const horas = mnSlotHoras(prof, fecha);
-  if (!horas.length) return;
+  const info = mnSlotInfo(prof, fecha);
+  if (!info.horas.length) return;
   const dateObj = new Date(fecha + "T12:00:00");
   const label = dateObj.toLocaleDateString("es-CL", { weekday: "long", day: "numeric", month: "long" });
   const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
   const popup = document.getElementById("mn-detail-popup");
+  const ocLine = info.ocupados > 0 ? ` | <span style="color:#fbbf24">${info.ocupados} ocupados</span> | ${info.total} total` : '';
   popup.innerHTML = `<h4 style="margin:0 0 4px;color:#f8fafc;font-size:13px">${esc(prof.nombre)}</h4>` +
-    `<div style="color:#94a3b8;margin-bottom:6px;font-size:11px">${esc(label)} (${horas.length} horas)</div>` +
-    `<div style="display:flex;flex-wrap:wrap;gap:4px">${horas.map(h => `<span style="background:#0f172a;padding:2px 8px;border-radius:4px;font-family:monospace;font-size:12px;color:#e2e8f0">${esc(h)}</span>`).join("")}</div>`;
+    `<div style="color:#94a3b8;margin-bottom:6px;font-size:11px">${esc(label)} — <span style="color:#6ee7b7">${info.disponibles} disponibles</span>${ocLine}</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:4px">${info.horas.map(h => `<span style="background:#0f172a;padding:2px 8px;border-radius:4px;font-family:monospace;font-size:12px;color:#e2e8f0">${esc(h)}</span>`).join("")}</div>`;
   popup.style.display = "block";
   const rect = event.target.getBoundingClientRect();
   let left = rect.left + rect.width/2 - 130;

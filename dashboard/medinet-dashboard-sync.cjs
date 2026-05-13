@@ -10,6 +10,8 @@
  *   DASHBOARD_DATA_DIR  — output directory (default: ./data)
  *   MEDINET_DAYS        — days ahead to fetch (default: 14)
  *   MEDINET_CONCURRENCY — max parallel professional fetches (default: 3)
+ *   MEDINET_JWT_USERNAME — JWT username for all-appointments endpoint (optional)
+ *   MEDINET_JWT_PASSWORD — JWT password for all-appointments endpoint (optional)
  */
 
 const fs = require('fs');
@@ -35,6 +37,83 @@ const SUCURSALES = (process.env.MEDINET_SUCURSALES || '39').split(',').map(s => 
 const DATA_DIR = process.env.DASHBOARD_DATA_DIR || path.join(__dirname, 'data');
 const DAYS_AHEAD = Number(process.env.MEDINET_DAYS) || 14;
 const CONCURRENCY = Number(process.env.MEDINET_CONCURRENCY) || 3;
+
+let _jwtToken = null;
+
+async function loginJwt() {
+  // Try credentials in priority order. MEDINET_USER/MEDINET_USER_KEY is the active
+  // service account; MEDINET_JWT_USERNAME/PASSWORD may be a legacy/inactive account.
+  const candidates = [
+    [process.env.MEDINET_USER, process.env.MEDINET_USER_KEY],
+    [process.env.MEDINET_JWT_USERNAME, process.env.MEDINET_JWT_PASSWORD],
+    [process.env.MEDINET_EMAIL, process.env.MEDINET_EMAIL_KEY],
+  ];
+  for (const [username, password] of candidates) {
+    if (!username || !password) continue;
+    try {
+      const res = await fetch(`${BASE_URL}/token-login/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          console.log(`  JWT login OK (user=${username})`);
+          return data.token;
+        }
+      } else {
+        console.log(`  JWT login failed for ${username}: ${res.status}`);
+      }
+    } catch (err) {
+      console.log(`  JWT login error for ${username}: ${err.message}`);
+    }
+  }
+  return null;
+}
+
+let _jwtAttempted = false;
+
+async function getJwtToken() {
+  if (_jwtToken) return _jwtToken;
+  if (_jwtAttempted) return null;
+  _jwtAttempted = true;
+  _jwtToken = await loginJwt();
+  return _jwtToken;
+}
+
+async function fetchAllAppointments(branchId, startDate, endDate) {
+  const jwt = await getJwtToken();
+  if (!jwt) return null;
+  try {
+    const url = `${BASE_URL}/api-public/schedule/appointment/all-appointments/${startDate}/${endDate}/?branch_id=${branchId}`;
+    const res = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `MEDINET_JWT ${jwt}`,
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function buildOccupiedMap(appointments) {
+  const map = {};
+  if (!Array.isArray(appointments)) return map;
+  for (const apt of appointments) {
+    const profId = apt.professional_id || apt.profesional_id || apt.profesional;
+    const fecha = apt.date || apt.fecha || '';
+    if (!profId || !fecha) continue;
+    const key = `${profId}_${fecha}`;
+    map[key] = (map[key] || 0) + 1;
+  }
+  return map;
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -179,7 +258,7 @@ async function processBatch(items, concurrency, fn) {
   return results;
 }
 
-async function fetchProfessionalSlots(sucursalId, prof) {
+async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
   const especialidadId = prof.especialidad_id || prof.specialtyId || '1';
   const profesionalId = prof.id;
 
@@ -230,7 +309,11 @@ async function fetchProfessionalSlots(sucursalId, prof) {
       return d >= today && d < end;
     })
     .sort()
-    .map(fecha => ({ fecha, horas: slotsByDate[fecha].sort() }));
+    .map(fecha => {
+      const horas = slotsByDate[fecha].sort();
+      const ocupados = (occupiedMap || {})[`${profesionalId}_${fecha}`] || 0;
+      return { fecha, horas, disponibles: horas.length, ocupados, total: horas.length + ocupados };
+    });
 
   return {
     id: profesionalId,
@@ -242,6 +325,7 @@ async function fetchProfessionalSlots(sucursalId, prof) {
     alert: prof.agendaweb_alert || prof.alert_text || prof.alert || '',
     slots,
     total_horas: slots.reduce((sum, s) => sum + s.horas.length, 0),
+    total_ocupados: slots.reduce((sum, s) => sum + s.ocupados, 0),
   };
 }
 
@@ -256,8 +340,20 @@ async function syncSucursal(sucursalId) {
 
   console.log(`  Found ${profesionales.length} professionals`);
 
+  // Fetch occupied appointments via JWT (if credentials available)
+  const today = new Date();
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + DAYS_AHEAD);
+  const startIso = today.toISOString().slice(0, 10);
+  const endIso = endDate.toISOString().slice(0, 10);
+  const appointments = await fetchAllAppointments(sucursalId, startIso, endIso);
+  const occupiedMap = buildOccupiedMap(appointments);
+  if (appointments) {
+    console.log(`  Appointments loaded: ${Array.isArray(appointments) ? appointments.length : 0} (occupied data available)`);
+  }
+
   const enriched = await processBatch(profesionales, CONCURRENCY, async (prof) => {
-    return fetchProfessionalSlots(sucursalId, prof);
+    return fetchProfessionalSlots(sucursalId, prof, occupiedMap);
   });
 
   // Sort: professionals with more slots first
