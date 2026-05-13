@@ -41,30 +41,44 @@ const CONCURRENCY = Number(process.env.MEDINET_CONCURRENCY) || 3;
 let _jwtToken = null;
 
 async function loginJwt() {
-  const username = process.env.MEDINET_JWT_USERNAME || process.env.MEDINET_USER || '';
-  const password = process.env.MEDINET_JWT_PASSWORD || process.env.MEDINET_USER_KEY || '';
-  if (!username || !password) return null;
-  try {
-    const res = await fetch(`${BASE_URL}/token-login/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) {
-      console.log(`  JWT login failed: ${res.status}`);
-      return null;
+  // Try credentials in priority order. MEDINET_USER/MEDINET_USER_KEY is the active
+  // service account; MEDINET_JWT_USERNAME/PASSWORD may be a legacy/inactive account.
+  const candidates = [
+    [process.env.MEDINET_USER, process.env.MEDINET_USER_KEY],
+    [process.env.MEDINET_JWT_USERNAME, process.env.MEDINET_JWT_PASSWORD],
+    [process.env.MEDINET_EMAIL, process.env.MEDINET_EMAIL_KEY],
+  ];
+  for (const [username, password] of candidates) {
+    if (!username || !password) continue;
+    try {
+      const res = await fetch(`${BASE_URL}/token-login/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          console.log(`  JWT login OK (user=${username})`);
+          return data.token;
+        }
+      } else {
+        console.log(`  JWT login failed for ${username}: ${res.status}`);
+      }
+    } catch (err) {
+      console.log(`  JWT login error for ${username}: ${err.message}`);
     }
-    const data = await res.json();
-    return data.token || null;
-  } catch (err) {
-    console.log(`  JWT login error: ${err.message}`);
-    return null;
   }
+  return null;
 }
+
+let _jwtAttempted = false;
 
 async function getJwtToken() {
   if (_jwtToken) return _jwtToken;
+  if (_jwtAttempted) return null;
+  _jwtAttempted = true;
   _jwtToken = await loginJwt();
   return _jwtToken;
 }
