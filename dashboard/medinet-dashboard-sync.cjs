@@ -40,10 +40,9 @@ const CONCURRENCY = Number(process.env.MEDINET_CONCURRENCY) || 3;
 
 let _jwtToken = null;
 
-async function getJwtToken() {
-  if (_jwtToken) return _jwtToken;
-  const username = process.env.MEDINET_JWT_USERNAME;
-  const password = process.env.MEDINET_JWT_PASSWORD;
+async function loginJwt() {
+  const username = process.env.MEDINET_JWT_USERNAME || process.env.MEDINET_USER || '';
+  const password = process.env.MEDINET_JWT_PASSWORD || process.env.MEDINET_USER_KEY || '';
   if (!username || !password) return null;
   try {
     const res = await fetch(`${BASE_URL}/token-login/`, {
@@ -52,13 +51,22 @@ async function getJwtToken() {
       body: JSON.stringify({ username, password }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.log(`  JWT login failed: ${res.status}`);
+      return null;
+    }
     const data = await res.json();
-    _jwtToken = data.token || null;
-    return _jwtToken;
-  } catch {
+    return data.token || null;
+  } catch (err) {
+    console.log(`  JWT login error: ${err.message}`);
     return null;
   }
+}
+
+async function getJwtToken() {
+  if (_jwtToken) return _jwtToken;
+  _jwtToken = await loginJwt();
+  return _jwtToken;
 }
 
 async function fetchAllAppointments(branchId, startDate, endDate) {
