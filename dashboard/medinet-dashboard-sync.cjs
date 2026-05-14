@@ -29,6 +29,7 @@ const SUCURSAL_NAMES = {
   '39': 'Antofagasta Mall Arauco Express',
   '38': 'Endoscopia',
   '41': 'Santiago',
+  '4': 'Calama - DiagnoSalud',
   '2': 'Telemedicina Médica',
   '3': 'Telemedicina Nutrición/Psicología',
 };
