@@ -29,6 +29,7 @@ const SUCURSAL_NAMES = {
   '39': 'Antofagasta Mall Arauco Express',
   '38': 'Endoscopia',
   '41': 'Santiago',
+  '4': 'Calama - DiagnoSalud',
   '2': 'Telemedicina Médica',
   '3': 'Telemedicina Nutrición/Psicología',
 };
@@ -85,7 +86,10 @@ async function getJwtToken() {
 
 async function fetchAllAppointments(branchId, startDate, endDate) {
   const jwt = await getJwtToken();
-  if (!jwt) return null;
+  if (!jwt) {
+    console.log('  JWT unavailable — occupied data will be empty');
+    return null;
+  }
   try {
     const url = `${BASE_URL}/api-public/schedule/appointment/all-appointments/${startDate}/${endDate}/?branch_id=${branchId}`;
     const res = await fetch(url, {
@@ -95,22 +99,58 @@ async function fetchAllAppointments(branchId, startDate, endDate) {
       },
       signal: AbortSignal.timeout(20000),
     });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
+    if (!res.ok) {
+      console.log(`  all-appointments HTTP ${res.status} for branch ${branchId}`);
+      return null;
+    }
+    const body = await res.json();
+    // Endpoint may return a bare array or a wrapped object (DRF pagination, etc.)
+    const list = Array.isArray(body)
+      ? body
+      : (body.results || body.appointments || body.data || body.citas || []);
+    if (!Array.isArray(body)) {
+      console.log(`  all-appointments wrapped response keys: [${Object.keys(body).join(', ')}] → extracted ${list.length} items`);
+    }
+    return list;
+  } catch (err) {
+    console.log(`  all-appointments error: ${err.message}`);
     return null;
   }
+}
+
+// Appointments and proximos-cupos-all share no professional id or RUN —
+// the only common fields are nombres + paterno, so occupancy is keyed by name.
+function normName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function profNameKey(nombres, paterno) {
+  return `${normName(nombres)}|${normName(paterno)}`;
+}
+
+// Appointment dates come as "2026/05/14"; slot dates as "2026-05-14".
+function normFecha(fecha) {
+  return String(fecha || '').slice(0, 10).replace(/\//g, '-');
 }
 
 function buildOccupiedMap(appointments) {
   const map = {};
   if (!Array.isArray(appointments)) return map;
+  let skipped = 0;
   for (const apt of appointments) {
-    const profId = apt.professional_id || apt.profesional_id || apt.profesional;
-    const fecha = apt.date || apt.fecha || '';
-    if (!profId || !fecha) continue;
-    const key = `${profId}_${fecha}`;
+    const prof = apt.profesional || apt.professional || {};
+    const nameKey = profNameKey(prof.nombres, prof.paterno);
+    const fecha = normFecha(apt.fecha || apt.date);
+    if (nameKey === '|' || !fecha) { skipped++; continue; }
+    const key = `${nameKey}_${fecha}`;
     map[key] = (map[key] || 0) + 1;
+  }
+  if (appointments.length > 0) {
+    console.log(`  Occupied map: ${Object.keys(map).length} name-date keys from ${appointments.length} appointments (${skipped} skipped)`);
   }
   return map;
 }
@@ -265,6 +305,9 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
   // Build full name: "nombres paterno" (API uses these fields)
   const fullName = [prof.nombres || prof.nombre || prof.name, prof.paterno || prof.materno || ''].filter(Boolean).join(' ').trim();
 
+  // Occupancy is keyed by name (appointments carry no professional id)
+  const nameKey = profNameKey(prof.nombres || prof.nombre || prof.name, prof.paterno);
+
   // Use cupos from the initial API response (already filtered by sucursal)
   let cupos = Array.isArray(prof.cupos) ? prof.cupos : [];
 
@@ -311,7 +354,7 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
     .sort()
     .map(fecha => {
       const horas = slotsByDate[fecha].sort();
-      const ocupados = (occupiedMap || {})[`${profesionalId}_${fecha}`] || 0;
+      const ocupados = (occupiedMap || {})[`${nameKey}_${fecha}`] || 0;
       return { fecha, horas, disponibles: horas.length, ocupados, total: horas.length + ocupados };
     });
 
