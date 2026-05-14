@@ -344,7 +344,15 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
     // Non-fatal: we still have the initial cupos from proximos-cupos-all
   }
 
-  const slots = Object.keys(slotsByDate)
+  // Include dates that have appointments but no free slots (fully booked),
+  // so a 0-availability day still renders as "0/N" instead of disappearing.
+  const allDates = new Set(Object.keys(slotsByDate));
+  const occPrefix = `${nameKey}_`;
+  for (const occKey of Object.keys(occupiedMap || {})) {
+    if (occKey.startsWith(occPrefix)) allDates.add(occKey.slice(occPrefix.length));
+  }
+
+  const slots = [...allDates]
     .filter(fecha => {
       const d = new Date(fecha + 'T00:00:00');
       const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -353,7 +361,7 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
     })
     .sort()
     .map(fecha => {
-      const horas = slotsByDate[fecha].sort();
+      const horas = (slotsByDate[fecha] || []).sort();
       const ocupados = (occupiedMap || {})[`${nameKey}_${fecha}`] || 0;
       return { fecha, horas, disponibles: horas.length, ocupados, total: horas.length + ocupados };
     });

@@ -1492,7 +1492,7 @@ function mnRender() {
       const info = mnSlotInfo(prof, iso);
       const count = info.disponibles;
       let bg = "", fg = "#94a3b8";
-      if (count > 0) {
+      if (count > 0 || info.total > 0) {
         // Color por % de cupos libres: rojo = muy vacío, verde = bien ocupado
         const pctFree = info.total > 0 ? info.disponibles / info.total : 1;
         if (pctFree > 0.75)      { bg = "background:#fecaca;"; fg = "#991b1b"; }
@@ -1503,6 +1503,7 @@ function mnRender() {
       let label = '-';
       if (count > 0 && info.total > count) label = `${count}/${info.total}`;
       else if (count > 0) label = String(count);
+      else if (info.total > 0) label = `0/${info.total}`;
       html += `<td style="padding:4px;text-align:center;border-bottom:1px solid #f1f5f9"><div style="${bg}color:${fg};border-radius:4px;padding:4px 2px;font-weight:500;font-size:12px;cursor:${count>0?'pointer':'default'}"`;
       if (count > 0) {
         html += ` onmouseenter="mnShowDetail(event,'${prof.id}','${iso}')" onmouseleave="mnHideDetail()"`;
