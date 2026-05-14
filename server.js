@@ -45,6 +45,7 @@ import {
   onTicketAuditsObserved as onEugeniaTicketAuditsObserved
 } from "./eugenia/index.js";
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
+import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
@@ -63,6 +64,7 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/review", reviewRouter);
 app.use("/zaps", zapsRouter);
+app.use("/melania", createMelaniaHandoffRouter());
 
 app.use((req, res, next) => {
   if (req.path.startsWith("/debug")) {
