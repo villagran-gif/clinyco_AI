@@ -86,7 +86,10 @@ async function getJwtToken() {
 
 async function fetchAllAppointments(branchId, startDate, endDate) {
   const jwt = await getJwtToken();
-  if (!jwt) return null;
+  if (!jwt) {
+    console.log('  JWT unavailable — occupied data will be empty');
+    return null;
+  }
   try {
     const url = `${BASE_URL}/api-public/schedule/appointment/all-appointments/${startDate}/${endDate}/?branch_id=${branchId}`;
     const res = await fetch(url, {
@@ -96,9 +99,21 @@ async function fetchAllAppointments(branchId, startDate, endDate) {
       },
       signal: AbortSignal.timeout(20000),
     });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
+    if (!res.ok) {
+      console.log(`  all-appointments HTTP ${res.status} for branch ${branchId}`);
+      return null;
+    }
+    const body = await res.json();
+    // Endpoint may return a bare array or a wrapped object (DRF pagination, etc.)
+    const list = Array.isArray(body)
+      ? body
+      : (body.results || body.appointments || body.data || body.citas || []);
+    if (!Array.isArray(body)) {
+      console.log(`  all-appointments wrapped response keys: [${Object.keys(body).join(', ')}] → extracted ${list.length} items`);
+    }
+    return list;
+  } catch (err) {
+    console.log(`  all-appointments error: ${err.message}`);
     return null;
   }
 }
@@ -106,12 +121,19 @@ async function fetchAllAppointments(branchId, startDate, endDate) {
 function buildOccupiedMap(appointments) {
   const map = {};
   if (!Array.isArray(appointments)) return map;
+  let skipped = 0;
   for (const apt of appointments) {
-    const profId = apt.professional_id || apt.profesional_id || apt.profesional;
-    const fecha = apt.date || apt.fecha || '';
-    if (!profId || !fecha) continue;
+    const profId = apt.professional_id || apt.profesional_id || apt.profesional
+      || (apt.professional && apt.professional.id) || (apt.profesional && apt.profesional.id);
+    let fecha = apt.date || apt.fecha || apt.fecha_cita || apt.start || '';
+    // Normalize datetime ("2026-05-18T14:40:00") → "2026-05-18"
+    if (typeof fecha === 'string' && fecha.length > 10) fecha = fecha.slice(0, 10);
+    if (!profId || !fecha) { skipped++; continue; }
     const key = `${profId}_${fecha}`;
     map[key] = (map[key] || 0) + 1;
+  }
+  if (appointments.length > 0) {
+    console.log(`  Occupied map: ${Object.keys(map).length} prof-date keys from ${appointments.length} appointments (${skipped} skipped); sample appt keys: [${Object.keys(appointments[0]).join(', ')}]`);
   }
   return map;
 }
