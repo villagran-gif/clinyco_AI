@@ -118,22 +118,39 @@ async function fetchAllAppointments(branchId, startDate, endDate) {
   }
 }
 
+// Appointments and proximos-cupos-all share no professional id or RUN —
+// the only common fields are nombres + paterno, so occupancy is keyed by name.
+function normName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function profNameKey(nombres, paterno) {
+  return `${normName(nombres)}|${normName(paterno)}`;
+}
+
+// Appointment dates come as "2026/05/14"; slot dates as "2026-05-14".
+function normFecha(fecha) {
+  return String(fecha || '').slice(0, 10).replace(/\//g, '-');
+}
+
 function buildOccupiedMap(appointments) {
   const map = {};
   if (!Array.isArray(appointments)) return map;
   let skipped = 0;
   for (const apt of appointments) {
-    const profId = apt.professional_id || apt.profesional_id || apt.profesional
-      || (apt.professional && apt.professional.id) || (apt.profesional && apt.profesional.id);
-    let fecha = apt.date || apt.fecha || apt.fecha_cita || apt.start || '';
-    // Normalize datetime ("2026-05-18T14:40:00") → "2026-05-18"
-    if (typeof fecha === 'string' && fecha.length > 10) fecha = fecha.slice(0, 10);
-    if (!profId || !fecha) { skipped++; continue; }
-    const key = `${profId}_${fecha}`;
+    const prof = apt.profesional || apt.professional || {};
+    const nameKey = profNameKey(prof.nombres, prof.paterno);
+    const fecha = normFecha(apt.fecha || apt.date);
+    if (nameKey === '|' || !fecha) { skipped++; continue; }
+    const key = `${nameKey}_${fecha}`;
     map[key] = (map[key] || 0) + 1;
   }
   if (appointments.length > 0) {
-    console.log(`  Occupied map: ${Object.keys(map).length} prof-date keys from ${appointments.length} appointments (${skipped} skipped); sample appt keys: [${Object.keys(appointments[0]).join(', ')}]`);
+    console.log(`  Occupied map: ${Object.keys(map).length} name-date keys from ${appointments.length} appointments (${skipped} skipped)`);
   }
   return map;
 }
@@ -288,6 +305,9 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
   // Build full name: "nombres paterno" (API uses these fields)
   const fullName = [prof.nombres || prof.nombre || prof.name, prof.paterno || prof.materno || ''].filter(Boolean).join(' ').trim();
 
+  // Occupancy is keyed by name (appointments carry no professional id)
+  const nameKey = profNameKey(prof.nombres || prof.nombre || prof.name, prof.paterno);
+
   // Use cupos from the initial API response (already filtered by sucursal)
   let cupos = Array.isArray(prof.cupos) ? prof.cupos : [];
 
@@ -334,7 +354,7 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
     .sort()
     .map(fecha => {
       const horas = slotsByDate[fecha].sort();
-      const ocupados = (occupiedMap || {})[`${profesionalId}_${fecha}`] || 0;
+      const ocupados = (occupiedMap || {})[`${nameKey}_${fecha}`] || 0;
       return { fecha, horas, disponibles: horas.length, ocupados, total: horas.length + ocupados };
     });
 
