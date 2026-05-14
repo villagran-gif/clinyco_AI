@@ -29,6 +29,11 @@
  *   MELANIA_INGEST_DAYS_AHEAD                default 7
  *   MELANIA_INGEST_STATES                    CSV de estado.id a procesar, default "1,2,6"
  *   MELANIA_TZ_OFFSET                        default "-04:00" (Chile horario estándar)
+ *
+ * Mapa de estados Medinet (verificado 2026-05-14 con datos reales):
+ *   1 Agendado · 2 Confirmado · 3 En Sala de Espera · 4 En Atención
+ *   5 Atendido · 6 Re-Agendado · 7 Cancelada
+ *   Accionables para MelanIA: 1, 2, 6.
  */
 
 const MEDINET_BASE = "https://clinyco.medinetapp.com";
@@ -69,6 +74,9 @@ const SYNTHETIC_NAME_HINTS = [
   "PACIENTE NUEVO",
   "NUEVO X DIA",
   "PACIENTES INDICADOS",
+  "TELEMEDICINA SOLO",
+  "DIAGNOSALUD",
+  "ALTAS ALTAS",
 ];
 
 // ----------------------------------------------------------------
@@ -133,24 +141,39 @@ async function fetchAppointments(jwt, branchId, fromDate, toDate) {
 // ----------------------------------------------------------------
 // Normalize + filter
 // ----------------------------------------------------------------
+/**
+ * Normaliza a móvil chileno canónico "+569XXXXXXXX" (12 chars).
+ * - Arregla los que solo les falta el prefijo (9XXXXXXXX → +569XXXXXXXX).
+ * - Acepta los ya completos (569XXXXXXXX con o sin +).
+ * - Rechaza (devuelve "") todo lo que no se pueda normalizar a móvil
+ *   válido: truncados, fijos, longitudes raras.
+ * - Rechaza placeholders de 8 dígitos repetidos (00000000, 44444444,
+ *   99999999) que Medinet usa para slots administrativos.
+ */
 function normalizePhone(raw) {
   if (!raw) return "";
-  const trimmed = String(raw).trim();
-  // Conserva un + inicial, descarta todo lo no-dígito.
-  const hasPlus = trimmed.startsWith("+");
-  const digits = trimmed.replace(/\D/g, "");
-  return digits ? (hasPlus ? `+${digits}` : digits) : "";
+  const digits = String(raw).replace(/\D/g, "");
+
+  let canonical;
+  if (digits.length === 11 && digits.startsWith("569")) {
+    canonical = digits;
+  } else if (digits.length === 9 && digits.startsWith("9")) {
+    canonical = `56${digits}`;
+  } else {
+    return ""; // no normalizable a móvil chileno
+  }
+
+  // Rechaza relleno: los 8 dígitos del abonado todos iguales.
+  const subscriber = canonical.slice(3);
+  if (/^(\d)\1{7}$/.test(subscriber)) return "";
+
+  return `+${canonical}`;
 }
 
 function isSyntheticPatient(paciente) {
   const run = String(paciente?.run || "").trim();
   if (SYNTHETIC_RUNS.has(run)) return true;
   if (!run) return true; // sin RUN = slot administrativo
-
-  const phone = normalizePhone(paciente?.telefono || paciente?.telefono_2);
-  // +56 9 9999 9999 y similares de relleno
-  if (/^\+?569?9{6,}$/.test(phone)) return true;
-  if (!phone) return true;
 
   const fullName = [paciente?.nombres, paciente?.paterno, paciente?.materno]
     .filter(Boolean)
@@ -183,8 +206,10 @@ function normalize(appt) {
     return { skip: "paciente sintético / slot administrativo" };
   }
 
-  const phone = normalizePhone(paciente.telefono || paciente.telefono_2);
-  if (!phone) return { skip: "sin teléfono" };
+  // Intenta telefono y, si no normaliza, telefono_2.
+  const phone =
+    normalizePhone(paciente.telefono) || normalizePhone(paciente.telefono_2);
+  if (!phone) return { skip: "teléfono inválido o ausente" };
 
   // fecha "2026/05/12" + hora "15:30" → ISO con offset Chile
   const fecha = String(appt?.fecha || "").replace(/\//g, "-");
