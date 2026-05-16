@@ -231,6 +231,10 @@ function normalize(appt) {
       external_id: Number(appt.id),
       branch_id: Number(appt?.sucursal?.id),
       branch_name: appt?.sucursal?.nombre || null,
+      // sucursal.direccion viene poblada para sucursales físicas y null
+      // para telemedicina. MelanIA lo usa para el mensaje de confirmación.
+      // Single source of truth = Medinet; cambios propagan al próximo upsert.
+      branch_address: appt?.sucursal?.direccion || null,
       specialty: appt?.especialidad_nombre || null,
       professional: joinName(appt?.profesional) || null,
       appointment_at: appointmentAtIso,
