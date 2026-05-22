@@ -25,7 +25,7 @@
  *   SELL_MEDINET_BACKEND_URL                 default https://sell-medinet-backend.onrender.com
  *   SELL_MEDINET_INTAKE_TOKEN                = CONFIRMATIONS_INTAKE_TOKEN del backend
  * Env opcionales:
- *   MELANIA_INGEST_BRANCH_IDS                CSV, default "39,38,41,2,3"
+ *   MELANIA_INGEST_BRANCH_IDS                CSV, default "39,38,41,4,2,3"
  *   MELANIA_INGEST_DAYS_AHEAD                default 7
  *   MELANIA_INGEST_STATES                    CSV de estado.id a procesar, default "1,2,6"
  *   MELANIA_TZ_OFFSET                        default "-04:00" (Chile horario estándar)
@@ -42,7 +42,7 @@ const BACKEND_URL = (
 ).replace(/\/+$/, "");
 const INTAKE_TOKEN = process.env.SELL_MEDINET_INTAKE_TOKEN || "";
 
-const BRANCH_IDS = (process.env.MELANIA_INGEST_BRANCH_IDS || "39,38,41,2,3")
+const BRANCH_IDS = (process.env.MELANIA_INGEST_BRANCH_IDS || "39,38,41,4,2,3")
   .split(",")
   .map((s) => Number(s.trim()))
   .filter(Number.isFinite);
