@@ -47,6 +47,8 @@ import {
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
 import { createSupportClient } from "./support-client/index.js";
+import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
+import { sendChatwootReply } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
@@ -2786,7 +2788,7 @@ async function sendManagedReply({
   }
 
   try {
-    await sendConversationReply(appId, conversationId, finalReply);
+    await sendConversationReply(appId, conversationId, finalReply, info);
   } catch (sendError) {
     console.error("SEND_REPLY_ERROR:", sendError.message);
     await saveConversationEvent({
@@ -2850,6 +2852,10 @@ function resJsonSkip(reason) {
 }
 
 function extractConversationInfo(payload) {
+  // Chatwoot Cloud: normalizamos al mismo shape `info` que Sunco (chatwoot-adapter).
+  if (isChatwootPayload(payload)) {
+    return parseChatwootInbound(payload);
+  }
   const appId = payload?.app?.id || payload?.app?._id || payload?.appId || SUNCO_APP_ID || null;
   const event = Array.isArray(payload?.events) ? payload.events[0] : null;
   const eventPayload = event?.payload || {};
@@ -4372,7 +4378,11 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
   return formatReplyForWhatsApp(reply);
 }
 
-async function sendConversationReply(appId, conversationId, reply) {
+async function sendConversationReply(appId, conversationId, reply, info = null) {
+  // Transport-aware: si la conversación viene de Chatwoot, responder por su API.
+  if (info?.transport === "chatwoot") {
+    return sendChatwootReply({ conversationId, content: reply });
+  }
   if (!ZENDESK_SUBDOMAIN || !SUNCO_KEY_ID || !SUNCO_KEY_SECRET) {
     throw new Error("Missing ZENDESK_SUBDOMAIN or SUNCO credentials");
   }
@@ -4720,7 +4730,7 @@ app.post("/ticket-updated", async (req, res) => {
   }
 });
 
-app.post("/messages", async (req, res) => {
+const handleInboundWebhook = async (req, res) => {
   try {
     console.log("===== /messages webhook =====");
     console.log("Headers:", safeJson(req.headers));
@@ -6304,7 +6314,28 @@ app.post("/messages", async (req, res) => {
     console.error("ERROR /messages:", error.message);
     return res.status(500).json({ ok: false, error: error.message });
   }
-});
+};
+
+function requireChatwootBearer(req, res, next) {
+  const expected = process.env.CHATWOOT_ADAPTER_TOKEN;
+  if (!expected) {
+    return res.status(500).json({ ok: false, error: "CHATWOOT_ADAPTER_TOKEN no configurado" });
+  }
+  const got = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (got !== expected) return res.status(401).json({ ok: false, error: "unauthorized" });
+  next();
+}
+
+// Sunshine Conversations (camino actual, intacto).
+app.post("/messages", handleInboundWebhook);
+
+// Mitad 1 Chatwoot: misma lógica de Antonia, alimentada por Chatwoot Cloud vía el
+// dispatcher (sell-medinet). Opt-in y paralelo — con el flag apagado no se monta
+// y el camino Sunco queda byte-idéntico.
+if (process.env.CHATWOOT_ADAPTER_ENABLED === "true") {
+  app.post("/chatwoot/inbound", requireChatwootBearer, handleInboundWebhook);
+  console.log("[chatwoot-adapter] montado POST /chatwoot/inbound");
+}
 
 const PORT = process.env.PORT || 10000;
 await initDb();
