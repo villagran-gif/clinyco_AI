@@ -2383,6 +2383,12 @@ function updateIdentityChannelContext(state, info = null, channelLabel = null) {
     state.identity.whatsappPhone = whatsappPhone;
     if (isWhatsappChannel) {
       state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || new Date().toISOString();
+      // El teléfono de WhatsApp ES identidad mínima: sembrarlo en c_tel1 si está
+      // vacío, así el resolver no vuelve a pedirlo (identity_min ya satisfecho).
+      // Aplica igual a WhatsApp por Sunco y por Chatwoot. No pisa un valor existente.
+      if (state.contactDraft && !state.contactDraft.c_tel1) {
+        state.contactDraft.c_tel1 = whatsappPhone;
+      }
     }
   }
 }
