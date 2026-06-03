@@ -1570,6 +1570,10 @@ function isStillLatestUserMessage(conversationId, expectedMessageId) {
 }
 
 function isRealHumanBusinessTakeover(info) {
+  // Chatwoot: el adapter ya distinguió agente humano (sender.type "user") del
+  // echo del propio bot (agent_bot). Ver chatwoot-adapter/parse.js.
+  if (info?.transport === "chatwoot") return !!info?.isHumanAgent;
+
   const sourceType = info?.sourceType || "";
   const name = normalizeKey(info?.authorDisplayName || info?.channelDisplayName || "");
   const contentType = info?.rawMessage?.content?.type || "";
@@ -4777,7 +4781,7 @@ const handleInboundWebhook = async (req, res) => {
 
       // ── EugenIA observes human agent comments but never mutates Antonia state ──
       try {
-        const businessText = info?.rawMessage?.content?.text || userText || "";
+        const businessText = info?.businessText || info?.rawMessage?.content?.text || userText || "";
         const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, businessText);
         const resolverForObservation = {
           ...resolverNext,
