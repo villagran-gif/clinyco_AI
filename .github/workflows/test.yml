@@ -1,0 +1,26 @@
+name: test
+
+# Gate mínimo de CI para el cliente de Support (support-client/).
+# Antes de este workflow el "verde" era solo local: Netlify corre checks
+# de sitio estático (neutral, no-op para este backend Node) y no ejecutaba
+# los tests. Acá corremos la suite de contrato que valida que los backends
+# zendesk/satellite/mirror devuelven la misma shape Zendesk.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  support-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      # --ignore-scripts evita el postinstall de Playwright (descarga de
+      # Chromium ~100MB) que la suite support-client no necesita.
+      - run: npm ci --ignore-scripts
+      - run: npm run test:support-client
