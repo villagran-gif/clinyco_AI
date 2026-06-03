@@ -55,3 +55,43 @@ test("stripConversationNamespace quita el prefijo cw:", () => {
   assert.equal(stripConversationNamespace("cw:1038"), "1038");
   assert.equal(stripConversationNamespace("1038"), "1038");
 });
+
+// --- Refinamiento takeover: agente humano vs bot ---
+test("outgoing de agente humano (sender.type 'user') → isHumanAgent true", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    message_type: "outgoing",
+    content: "te ayudo yo",
+    sender: { id: 2, name: "Agente", type: "user" },
+  });
+  assert.equal(info.authorType, "business");
+  assert.equal(info.senderType, "user");
+  assert.equal(info.isHumanAgent, true);
+  assert.equal(info.businessText, "te ayudo yo");
+});
+
+test("outgoing del bot (sender.type 'agent_bot') → isHumanAgent false (echo, no takeover)", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    message_type: "outgoing",
+    content: "soy Antonia",
+    sender: { id: 3, name: "Antonia", type: "agent_bot" },
+  });
+  assert.equal(info.senderType, "agent_bot");
+  assert.equal(info.isHumanAgent, false);
+});
+
+test("incoming (paciente) nunca es human agent", () => {
+  assert.equal(parseChatwootInbound(incoming).isHumanAgent, false);
+});
+
+test("sender_type top-level capitalizado ('User') también cuenta como agente", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    message_type: "outgoing",
+    content: "x",
+    sender: { id: 2, name: "A" },
+    sender_type: "User",
+  });
+  assert.equal(info.isHumanAgent, true);
+});
