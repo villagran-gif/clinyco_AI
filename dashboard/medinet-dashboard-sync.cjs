@@ -140,17 +140,22 @@ function normFecha(fecha) {
 function buildOccupiedMap(appointments) {
   const map = {};
   if (!Array.isArray(appointments)) return map;
-  let skipped = 0;
+  let skipped = 0, cancelled = 0;
   for (const apt of appointments) {
+    // Skip cancelled / annulled appointments — they don't occupy a slot
+    const estadoName = String((apt.estado && apt.estado.nombre) || '').toLowerCase();
+    if (estadoName.includes('cancel') || estadoName.includes('anul')) { cancelled++; continue; }
     const prof = apt.profesional || apt.professional || {};
     const nameKey = profNameKey(prof.nombres, prof.paterno);
+    // proximos-cupos-all returns the same prof once per specialty, so key includes especialidad
+    const esp = normName(apt.especialidad_nombre || apt.especialidad || '');
     const fecha = normFecha(apt.fecha || apt.date);
     if (nameKey === '|' || !fecha) { skipped++; continue; }
-    const key = `${nameKey}_${fecha}`;
+    const key = `${nameKey}|${esp}_${fecha}`;
     map[key] = (map[key] || 0) + 1;
   }
   if (appointments.length > 0) {
-    console.log(`  Occupied map: ${Object.keys(map).length} name-date keys from ${appointments.length} appointments (${skipped} skipped)`);
+    console.log(`  Occupied map: ${Object.keys(map).length} keys from ${appointments.length} appointments (${cancelled} canceladas, ${skipped} skipped)`);
   }
   return map;
 }
@@ -305,8 +310,11 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
   // Build full name: "nombres paterno" (API uses these fields)
   const fullName = [prof.nombres || prof.nombre || prof.name, prof.paterno || prof.materno || ''].filter(Boolean).join(' ').trim();
 
-  // Occupancy is keyed by name (appointments carry no professional id)
+  // Occupancy is keyed by name + especialidad: proximos-cupos-all lists the same
+  // prof once per specialty, so without especialidad all his appts conflate.
   const nameKey = profNameKey(prof.nombres || prof.nombre || prof.name, prof.paterno);
+  const espKey = normName(prof.especialidad || prof.specialty || '');
+  const occKey = `${nameKey}|${espKey}`;
 
   // Use cupos from the initial API response (already filtered by sucursal)
   let cupos = Array.isArray(prof.cupos) ? prof.cupos : [];
@@ -347,9 +355,9 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
   // Include dates that have appointments but no free slots (fully booked),
   // so a 0-availability day still renders as "0/N" instead of disappearing.
   const allDates = new Set(Object.keys(slotsByDate));
-  const occPrefix = `${nameKey}_`;
-  for (const occKey of Object.keys(occupiedMap || {})) {
-    if (occKey.startsWith(occPrefix)) allDates.add(occKey.slice(occPrefix.length));
+  const occPrefix = `${occKey}_`;
+  for (const k of Object.keys(occupiedMap || {})) {
+    if (k.startsWith(occPrefix)) allDates.add(k.slice(occPrefix.length));
   }
 
   const slots = [...allDates]
@@ -362,7 +370,7 @@ async function fetchProfessionalSlots(sucursalId, prof, occupiedMap) {
     .sort()
     .map(fecha => {
       const horas = (slotsByDate[fecha] || []).sort();
-      const ocupados = (occupiedMap || {})[`${nameKey}_${fecha}`] || 0;
+      const ocupados = (occupiedMap || {})[`${occKey}_${fecha}`] || 0;
       return { fecha, horas, disponibles: horas.length, ocupados, total: horas.length + ocupados };
     });
 
