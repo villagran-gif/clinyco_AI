@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
+import { createLeadAlertsRouter } from "./lead-alerts/index.js";
 import {
   dbEnabled,
   initDb,
@@ -6479,6 +6480,12 @@ app.post("/messages", handleInboundWebhook);
 if (process.env.CHATWOOT_ADAPTER_ENABLED === "true") {
   app.post("/chatwoot/inbound", requireChatwootBearer, handleInboundWebhook);
   console.log("[chatwoot-adapter] montado POST /chatwoot/inbound");
+}
+
+// lead-alerts: notifica a María Paz por WAHA ante leads calificados (opt-in + dry-run).
+if (process.env.LEAD_ALERT_ENABLED === "true") {
+  app.use("/lead-alerts", createLeadAlertsRouter());
+  console.log("[lead-alerts] montado /lead-alerts (health + tick)");
 }
 
 const PORT = process.env.PORT || 10000;

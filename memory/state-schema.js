@@ -11,7 +11,8 @@ export function buildInitialConversationState() {
       c_aseguradora: null,
       c_modalidad: null,
       c_direccion: null,
-      c_comuna: null
+      c_comuna: null,
+      c_ciudad_atencion: null
     },
     dealDraft: {
       dealPipelineId: null,
