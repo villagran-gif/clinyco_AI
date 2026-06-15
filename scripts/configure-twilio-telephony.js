@@ -8,7 +8,7 @@
  *
  * Optional overrides:
  *   FRAPPE_SITE_URL    - default https://crm-yqh-dgj.m.frappe.cloud
- *   TWILIO_NUMBER      - default +19129134589
+ *   TWILIO_NUMBER      - default +56229148460 (Santiago fijo)
  *   TELEPHONY_AGENTS   - comma-separated agent emails (default villagran@clinyco.cl)
  *
  * Actions (idempotent, safe to re-run):
@@ -40,7 +40,7 @@ const FRAPPE_KEY = required('FRAPPE_CLOUD_API_KEY');
 const FRAPPE_SECRET = required('FRAPPE_CLOUD_API_SECRET');
 const TWILIO_SID = required('TWILIO_ACCOUNT_SID');
 const TWILIO_TOKEN = required('TWILIO_AUTH_TOKEN');
-const TWILIO_NUMBER = process.env.TWILIO_NUMBER || '+19129134589';
+const TWILIO_NUMBER = process.env.TWILIO_NUMBER || '+56229148460';
 const AGENTS = (process.env.TELEPHONY_AGENTS || 'villagran@clinyco.cl')
   .split(',')
   .map((s) => s.trim())
