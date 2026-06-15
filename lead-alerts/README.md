@@ -53,6 +53,7 @@ Cron sugerido (cada 2–5 min en el VPS):
 |---|---|---|
 | `LEAD_ALERT_ENABLED` | `false` | Monta la ruta `/lead-alerts`. |
 | `LEAD_ALERT_DRY_RUN` | `true` | Si ≠ `false`, NO envía por WAHA (loguea). |
+| `LEAD_ALERT_ASK_LOCATION` | `false` | Activa que Antonia pregunte ciudad de residencia + de atención al detectar interés en agendar. |
 | `LEAD_ALERT_MARIA_PAZ_PHONE` | — | Teléfono de María Paz (E.164, ej. `+569...`). Destinatario de la alerta. |
 | `LEAD_ALERT_WAHA_SESSION` | `default` | Sesión WAHA conectada desde la que se envía. |
 | `LEAD_ALERT_AGENT_NAME` | `Gabriela` | Nombre en `agent_registry` para el recordatorio al agente (su `waha_phone` sale de la DB). |
@@ -64,13 +65,16 @@ Cron sugerido (cada 2–5 min en el VPS):
 | `WAHA_API_URL`, `WAHA_API_KEY` | — | Reusadas de la instancia WAHA existente (ya en el VPS). |
 | `CHATWOOT_ACCOUNT_ID` | `162472` | Para construir el link a la conversación. |
 
-## Depende del cerebro (fase 2, pendiente)
+## Captura de ciudad en el cerebro (opt-in: `LEAD_ALERT_ASK_LOCATION`)
 
-Para que el filtro duro tenga datos, Antonia debe **preguntar y guardar**:
-- **comuna de residencia** → `contactDraft.c_comuna` (ya se extrae cuando se menciona; falta preguntarla),
-- **ciudad de atención/operación** → `contactDraft.c_ciudad_atencion` (campo nuevo; ya está en el state-schema).
+Cuando un lead muestra interés en agendar (stage de handoff) y el flag está activo, Antonia
+pregunta (intercepción en `server.js`, envío verbatim, captura el turno siguiente vía
+`system.awaitingLocationField`):
+1. **residencia** → `"{nombre} ¿desde qué ciudad nos escribes?"` → `contactDraft.c_comuna`,
+2. **ciudad de atención** → `"¿Tu intención es concretar este procedimiento o cirugía en Santiago o en Antofagasta?"` (Santiago primero) → `contactDraft.c_ciudad_atencion`.
 
-Mientras eso no exista, el filtro duro deja todo en `skipped` (no envía nada) — es inerte y seguro.
+Con el flag apagado el flujo de conversación queda **byte-idéntico**. Sin estos datos el filtro
+duro deja todo en `skipped` (inerte y seguro).
 
 ## Seguridad / no-regresión
 

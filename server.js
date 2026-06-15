@@ -4345,6 +4345,49 @@ function shouldUseResolverQuestion(state, decision, latestUserText = "") {
   return true;
 }
 
+// ── lead-alerts fase 2: preguntas de ubicación (opt-in vía LEAD_ALERT_ASK_LOCATION) ──
+// Se piden SOLO cuando el paciente muestra interés en agendar (stage de handoff) y el
+// flag está activo. Residencia (texto libre) + ciudad de atención (Santiago/Antofagasta,
+// Santiago primero). Sirven para el filtro duro de la alerta a María Paz.
+function buildLocationQuestion(state) {
+  const firstName = String(state?.contactDraft?.c_nombres || "").trim().split(/\s+/)[0] || "";
+  if (!state?.contactDraft?.c_comuna) {
+    const saludo = firstName ? `${firstName} ` : "";
+    return { field: "residence", text: `${saludo}¿desde qué ciudad nos escribes?` };
+  }
+  if (!state?.contactDraft?.c_ciudad_atencion) {
+    return {
+      field: "attention",
+      text: "¿Tu intención es concretar este procedimiento o cirugía en Santiago o en Antofagasta?"
+    };
+  }
+  return null;
+}
+
+function captureLocationAnswer(state, text) {
+  const field = state.system.awaitingLocationField;
+  if (!field) return;
+  const raw = String(text || "").trim();
+  if (field === "residence") {
+    if (raw) {
+      state.contactDraft.c_comuna = detectComuna(raw) || titleCaseWords(raw).slice(0, 40);
+    }
+    state.system.awaitingLocationField = null;
+    return;
+  }
+  if (field === "attention") {
+    const key = normalizeKey(raw);
+    if (key.includes("SANTIAGO")) {
+      state.contactDraft.c_ciudad_atencion = "Santiago";
+      state.system.awaitingLocationField = null;
+    } else if (key.includes("ANTOFAGASTA")) {
+      state.contactDraft.c_ciudad_atencion = "Antofagasta";
+      state.system.awaitingLocationField = null;
+    }
+    // Si no reconoce ninguna, mantiene el flag para re-preguntar.
+  }
+}
+
 function buildOpenAISystemPrompt() {
   return `
 Eres Antonia, asistente de Clinyco.
@@ -5076,6 +5119,9 @@ const handleInboundWebhook = async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+    if (process.env.LEAD_ALERT_ASK_LOCATION === "true" && state.system.awaitingLocationField) {
+      captureLocationAnswer(state, userText);
+    }
     state.leadScore = calculateLeadScore(state);
     try {
       await ensureCustomerContext({
@@ -6308,6 +6354,29 @@ const handleInboundWebhook = async (req, res) => {
 
     if (resolverDecision) {
       resolverDecision.leadScore = state.leadScore || null;
+    }
+
+    // ── lead-alerts fase 2 (opt-in): preguntar ciudad de residencia + de atención sólo
+    // cuando el paciente muestra interés en agendar (stage de handoff) y faltan datos. ──
+    if (process.env.LEAD_ALERT_ASK_LOCATION === "true"
+        && ["ready_for_handoff", "agenda_without_direct_access", "handoff_without_call"].includes(resolverContext.stage)
+        && (!state.contactDraft.c_comuna || !state.contactDraft.c_ciudad_atencion)) {
+      const locationQuestion = buildLocationQuestion(state);
+      if (locationQuestion) {
+        state.system.awaitingLocationField = locationQuestion.field;
+        return res.json(await sendManagedReply({
+          appId,
+          conversationId,
+          messageId,
+          userText,
+          reply: locationQuestion.text,
+          kind: "ask_location",
+          state,
+          info,
+          channelLabel,
+          resolverDecision: buildResolverQuestionDecision(state, "ask_location")
+        }));
+      }
     }
 
     const unknownScheduleRequest = detectUnknownProfessionalScheduleRequest(userText);

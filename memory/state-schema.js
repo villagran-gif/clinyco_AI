@@ -120,6 +120,7 @@ export function buildInitialConversationState() {
       introducedAsAntonia: false,
       handoffReason: null,
       lastQuestionKey: null,
+      awaitingLocationField: null,
       lastInboundMessageId: null,
       lastOutboundFingerprint: null,
       lastOutboundText: null,
