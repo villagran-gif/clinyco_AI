@@ -1416,7 +1416,7 @@ export async function searchSlotsNoAuth({ query, branchId = DEFAULT_BRANCH_ID })
       : await fetchProximosCuposAll(branchId);
   } catch (e) {
     console.log(`[medinet-api] searchSlotsNoAuth fetch failed:`, e.message);
-    return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: "No pude consultar las horas disponibles en este momento.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/" };
+    return { source: "api_noauth", professional: null, specialty: null, available_slots: [], patient_reply: "¡Gracias! Ya quedó registrada tu solicitud. 🙌 En este momento no puedo mostrarte las horas en línea, así que una agente te contactará a la brevedad para coordinar tu hora.\n\nSi prefieres avanzar tú, también puedes agendar directamente aquí: https://clinyco.medinetapp.com/agendaweb/planned/" };
   }
 
   if (!Array.isArray(professionals) || !professionals.length) {
