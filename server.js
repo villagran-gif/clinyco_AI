@@ -5954,7 +5954,7 @@ const handleInboundWebhook = async (req, res) => {
         });
 
         const searchReply = antoniaResponse?.patient_reply
-          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+          || "¡Gracias! Ya quedó registrada tu solicitud. 🙌 En este momento no puedo mostrarte las horas en línea, así que una agente te contactará a la brevedad para coordinar tu hora.\n\nSi prefieres avanzar tú, también puedes agendar directamente aquí: https://clinyco.medinetapp.com/agendaweb/planned/";
         if (searchReply) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
@@ -6413,7 +6413,7 @@ const handleInboundWebhook = async (req, res) => {
         });
 
         const searchReply2 = antoniaResponse?.patient_reply
-          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+          || "¡Gracias! Ya quedó registrada tu solicitud. 🙌 En este momento no puedo mostrarte las horas en línea, así que una agente te contactará a la brevedad para coordinar tu hora.\n\nSi prefieres avanzar tú, también puedes agendar directamente aquí: https://clinyco.medinetapp.com/agendaweb/planned/";
         if (searchReply2) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
