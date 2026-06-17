@@ -31,7 +31,9 @@ Chatwoot Cloud ─webhook─→ sell-medinet-backend (chatwoot.raw_events)
   el store. El cliente outbound lo quita antes de pegarle a la API.
 - `eventType` → `"conversation:message"` (lo que chequea la ruta).
 - `message_type: incoming` → `authorType "user"` (paciente); `outgoing` →
-  `"business"` (agente/bot; la ruta lo trata como takeover/echo).
+  `"business"`. Si el outgoing es de un **agente humano** (`sender.type "user"`)
+  → `isHumanAgent=true` → la ruta hace **takeover** (pausa Antonia); si es del
+  **bot** (`agent_bot`) → `isHumanAgent=false` → se ignora como echo.
 
 ## Env (opt-in)
 
@@ -47,8 +49,17 @@ Chatwoot Cloud ─webhook─→ sell-medinet-backend (chatwoot.raw_events)
 **Seguridad / no-regresión**: opt-in y **paralelo a Sunco**. Con el flag apagado,
 la ruta no se monta y el camino `/messages` (Sunco) queda byte-idéntico.
 
+## ⚠️ Requisito: Antonia debe responder como AgentBot
+
+Para distinguir el **echo del propio bot** de un **agente humano** en los mensajes
+`outgoing`, Antonia debe responder vía un **AgentBot de Chatwoot** (su `sender.type`
+queda como `agent_bot`). Así: agente humano (`user`) → takeover (pausa Antonia);
+echo del bot (`agent_bot`) → ignorado. Si Antonia respondiera con un token de
+agente normal (`user`), sus propios echoes se verían como "agente humano" y se
+auto-pausaría.
+
 ## Pendiente (refinamientos)
 
-- Detección fina agente-humano vs bot para el takeover (hoy: incoming=user,
-  outgoing=business; el guard `isRecentOutboundEcho` cubre los echoes del bot).
 - Adjuntos (hoy solo texto).
+- Backstop por contenido (`isRecentOutboundEcho`) en el path `business`, por si el
+  AgentBot no estuviera configurado.

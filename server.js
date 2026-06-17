@@ -1570,6 +1570,10 @@ function isStillLatestUserMessage(conversationId, expectedMessageId) {
 }
 
 function isRealHumanBusinessTakeover(info) {
+  // Chatwoot: el adapter ya distinguió agente humano (sender.type "user") del
+  // echo del propio bot (agent_bot). Ver chatwoot-adapter/parse.js.
+  if (info?.transport === "chatwoot") return !!info?.isHumanAgent;
+
   const sourceType = info?.sourceType || "";
   const name = normalizeKey(info?.authorDisplayName || info?.channelDisplayName || "");
   const contentType = info?.rawMessage?.content?.type || "";
@@ -2380,6 +2384,12 @@ function updateIdentityChannelContext(state, info = null, channelLabel = null) {
     state.identity.whatsappPhone = whatsappPhone;
     if (isWhatsappChannel) {
       state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || new Date().toISOString();
+      // El teléfono de WhatsApp ES identidad mínima: sembrarlo en c_tel1 si está
+      // vacío, así el resolver no vuelve a pedirlo (identity_min ya satisfecho).
+      // Aplica igual a WhatsApp por Sunco y por Chatwoot. No pisa un valor existente.
+      if (state.contactDraft && !state.contactDraft.c_tel1) {
+        state.contactDraft.c_tel1 = whatsappPhone;
+      }
     }
   }
 }
@@ -4965,7 +4975,7 @@ const handleInboundWebhook = async (req, res) => {
 
       // ── EugenIA observes human agent comments but never mutates Antonia state ──
       try {
-        const businessText = info?.rawMessage?.content?.text || userText || "";
+        const businessText = info?.businessText || info?.rawMessage?.content?.text || userText || "";
         const resolverNext = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, businessText);
         const resolverForObservation = {
           ...resolverNext,
