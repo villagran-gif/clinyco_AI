@@ -267,34 +267,57 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
 }
 
 /**
- * Fetch without authentication — for /api/ endpoints that are publicly accessible.
- * Proven to work via curl without any token (get-check-cupos, cupos-disponibles, agendaweb-add, etc.).
+ * Fetch a "public" endpoint, with an authenticated retry as a safety net.
+ *
+ * Several /api/ endpoints (proximos-cupos-all, proximos-cupos, get_por_ubicacion)
+ * used to be reachable without a token, but Medinet now answers some of them with
+ * HTTP 401/403 "Las credenciales de autenticación no se proveyeron." When that
+ * happens we retry ONCE with the canonical auth for the path (Token for /api/*,
+ * MEDINET_JWT for /api-public/*, resolved by buildHeaders).
+ *
+ * Truly-public endpoints (agendaweb HTML picker-fecha, agendaweb-add) keep their
+ * original byte-identical happy path: the retry only fires on an auth rejection
+ * and only when the caller didn't already provide an Authorization header.
  */
 async function noAuthFetch(path, { method = "GET", headers = {}, body = null, timeout = 15000 } = {}) {
   const url = `${BASE_URL}${path}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
 
-  try {
-    const options = {
-      method,
-      headers,
-      signal: controller.signal,
-    };
-    if (body) options.body = body;
-
-    const res = await fetch(url, options);
-    const contentType = res.headers.get("content-type") || "";
-    const data = contentType.includes("application/json") ? await res.json() : await res.text();
-
-    if (!res.ok) {
-      const msg = typeof data === "object" ? JSON.stringify(data) : String(data).slice(0, 300);
-      throw new Error(`Medinet ${method} ${path} → ${res.status}: ${msg}`);
+  const doFetch = async (extraHeaders) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const options = {
+        method,
+        headers: extraHeaders ? { ...headers, ...extraHeaders } : headers,
+        signal: controller.signal,
+      };
+      if (body) options.body = body;
+      return await fetch(url, options);
+    } finally {
+      clearTimeout(timer);
     }
-    return data;
-  } finally {
-    clearTimeout(timer);
+  };
+
+  let res = await doFetch();
+
+  // Endpoint now requires auth → retry once with the canonical credentials.
+  if ((res.status === 401 || res.status === 403) && !headers.Authorization) {
+    let auth = null;
+    try {
+      const h = await buildHeaders(path);
+      auth = h.Authorization || null;
+    } catch { /* no credentials configured — fall through and surface the 401/403 */ }
+    if (auth) res = await doFetch({ Authorization: auth });
   }
+
+  const contentType = res.headers.get("content-type") || "";
+  const data = contentType.includes("application/json") ? await res.json() : await res.text();
+
+  if (!res.ok) {
+    const msg = typeof data === "object" ? JSON.stringify(data) : String(data).slice(0, 300);
+    throw new Error(`Medinet ${method} ${path} → ${res.status}: ${msg}`);
+  }
+  return data;
 }
 
 // ─── Professionals ──────────────────────────────────────────────
@@ -633,7 +656,8 @@ function isAgendawebBusinessError(error) {
 // ─── No-auth slot search endpoints ──────────────────────────────
 
 /**
- * Full API-only slot search. No auth required.
+ * Full API-only slot search. Tries anonymous, retries with Token if Medinet
+ * requires auth (noAuthFetch handles the retry transparently).
  * Returns ALL professionals + next available slots for a branch.
  * Response: [{ id, nombres, paterno, especialidad, especialidad_id, tipo_cita,
  *   duracion_cita, avatar_url, agendaweb_alert, is_resource,
@@ -647,7 +671,7 @@ export async function fetchProximosCuposAll(ubicacionId) {
 }
 
 /**
- * Slot search filtered by specialty. No auth required.
+ * Slot search filtered by specialty. Anonymous first, Token retry on auth error.
  * Same response shape as proximos-cupos-all but filtered to one specialty.
  */
 export async function fetchProximosCupos(ubicacionId, especialidadId) {
@@ -658,7 +682,7 @@ export async function fetchProximosCupos(ubicacionId, especialidadId) {
 }
 
 /**
- * Fetch specialties for a branch. No auth required.
+ * Fetch specialties for a branch. Anonymous first, Token retry on auth error.
  * Response: [{ id, nombre, ubicaciones, ... }]
  */
 export async function fetchSpecialtiesByBranchNoAuth(ubicacionId) {
