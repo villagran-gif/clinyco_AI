@@ -4,6 +4,11 @@ Organic publishing + insights for Instagram and Facebook, via the Graph API,
 using **our own** Meta app (`chatwoot`, App ID `1697421917913182`) in
 **Standard Access**.
 
+**Multi-page by design.** Auto-discovers every Facebook Page the system-user
+token has access to (Clínyco, Fonasapad, Rodrigo Villagrán Cirugía, …) plus the
+Instagram Business account linked to each. Add a Page in Business Manager and
+it shows up automatically on the next call — no env-var changes needed.
+
 ## Why Standard Access (no App Review)
 
 Per Meta's docs, Standard Access "only works for users who have a role on your
@@ -15,12 +20,13 @@ third-party accounts ("reselling").
 
 ## Requirements
 
-1. Instagram account in **Professional** (Business/Creator) mode
-2. IG account **linked to a Facebook Page** in the same Business Manager
+1. Instagram accounts in **Professional** (Business/Creator) mode
+2. Each IG account **linked to its Facebook Page** in the same Business Manager
 3. A system-user token with these scopes:
    - `instagram_business_basic`
    - `instagram_business_content_publish`
    - `instagram_business_manage_insights`
+   - `pages_show_list`
    - `pages_read_engagement`
    - `pages_manage_posts`
 
@@ -31,35 +37,56 @@ third-party accounts ("reselling").
 
 ```
 META_CONTENT_TOKEN=   # long-lived system-user token (scopes above)
-META_PAGE_ID=         # Facebook Page id
-META_IG_USER_ID=      # optional; auto-discovered from the Page when empty
 META_API_VERSION=v21.0
+# Optional: comma-separated allowlist if the token has access to more
+# pages than we want to manage. Empty = expose all.
+META_PAGE_IDS=
 ```
 
 ## Usage
 
 ```js
-import { bootstrap, instagram, facebook } from "./meta-content/index.js";
+import { listPages, findPage, instagram, facebook } from "./meta-content/index.js";
 
-const ctx = await bootstrap();              // resolves IG id from the Page
+// --- Discover all manageable Pages (cached after first call) ---
+const pages = await listPages();
+// [{ pageId, name, accessToken, igUserId, igUsername }, ...]
+
+// --- Pick one by name (case-insensitive, substring match) ---
+const clinyco = await findPage("Clínyco");
+// { pageId: "364477330337013", name: "Clínyco", accessToken: "...", igUserId: "...", igUsername: "clinyco" }
 
 // --- Read (safe) ---
-await facebook.listPosts(ctx.pageId, { limit: 25 });
-await instagram.listMedia(ctx.igUserId, { limit: 25 });
-await instagram.getMediaInsights(mediaId);
+await facebook.listPosts(clinyco.pageId, { token: clinyco.accessToken, limit: 25 });
+await instagram.listMedia(clinyco.igUserId, { token: clinyco.accessToken, limit: 25 });
+await instagram.getMediaInsights(mediaId, { token: clinyco.accessToken });
 
 // --- Facebook write (defaults to DRAFT) ---
-await facebook.createPost(ctx.pageId, { message: "…" });            // unpublished
-await facebook.createPost(ctx.pageId, { message: "…", publish: true }); // live
+await facebook.createPost(clinyco.pageId, {
+  message: "…",
+  token: clinyco.accessToken,
+}); // unpublished
+await facebook.createPost(clinyco.pageId, {
+  message: "…",
+  publish: true,
+  token: clinyco.accessToken,
+}); // live
 
 // --- Instagram write (two explicit steps, never auto-publishes) ---
-const { id } = await instagram.createMediaContainer(ctx.igUserId, {
+const { id } = await instagram.createMediaContainer(clinyco.igUserId, {
   imageUrl: "https://…/creative.jpg",
   caption: "…",
+  token: clinyco.accessToken,
 });
 // review id, then explicitly:
-await instagram.publishContainer(ctx.igUserId, id);
+await instagram.publishContainer(clinyco.igUserId, id, {
+  token: clinyco.accessToken,
+});
 ```
+
+Always pass the per-page `accessToken` for writes — Meta's auth model prefers
+the narrowest token, and using the page-scoped one means revoking access to
+one page doesn't affect the others.
 
 ## Gotchas
 
@@ -70,7 +97,10 @@ await instagram.publishContainer(ctx.igUserId, id);
   immediately or not at all.
 - **Images must be public URLs.** Local files are rejected — host generated
   creatives first.
-- **Rate limit:** 100 IG API-published posts / 24h (carousels count as 1).
+- **Rate limit:** 100 IG API-published posts / 24h **per IG account** (carousels
+  count as 1).
+- **Page tokens are per-page.** A token for the Clínyco Page can't post to
+  Fonasapad — always use the matching `accessToken` from `findPage()`.
 
 ## Smoke test
 
@@ -78,4 +108,5 @@ await instagram.publishContainer(ctx.igUserId, id);
 node scripts/test-meta-content.mjs
 ```
 
-Read-only: resolves the IG link and lists recent posts. Publishes nothing.
+Read-only: discovers every Page, lists recent FB posts + IG media for each.
+Publishes nothing. Exits non-zero if any Page fails.
