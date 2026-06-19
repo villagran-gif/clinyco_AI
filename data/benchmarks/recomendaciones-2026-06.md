@@ -24,11 +24,23 @@
 
 **👨‍⚕️ Técnico**: Stories impulsan retention y signal "active creator" al algoritmo. Stories archive no es queryable vía API pública — para tendencias hay que registrarlas diariamente con un cron. Por ahora medimos sólo el snapshot live (visible en el tab Social IG/FB cuando haya).
 
-### 4. Aplicar formato @drpiskulich a @doctorvillagran
+### 4. Aplicar las 5 tácticas del playbook Piskulich a @doctorvillagran
 
-⏳ **Pendiente — análisis profundo de @drpiskulich corriendo, llegará en una actualización**.
+**Corrección importante**: el cirujano es **Erick Piskulich**, no Antonio; su handle de IG es **@dr.piskulich** (NO @drpiskulich, ese es TikTok). El "+800%" reportado por Cosas.pe en 2020 es **claim de marketing auto-reportado, no auditado**, y corresponde a 2017→2020 (3 años, no 1). Lo tratamos como inspiración táctica, no como KPI.
 
-Hipótesis preliminar: la cuenta del Doctor publica ~1.9 IG/semana, bajo el optimal de 2-4 healthcare. Subir a 2-3 posts/sem + Stories diarios. Mantener carrusel educativo (ya es su formato top con avg 184 engagement vs video 85).
+**Las 5 tácticas trasladables (ver `playbook-drpiskulich` para el detalle)**:
+
+1. **Narrativa personal del cirujano > contenido educativo genérico.** Piskulich vende su biografía (tuvo obesidad mórbida, llegó a 128 kg, sufrió bullying). Articular la historia de origen del Dr. Villagrán es más rentable que más infografías genéricas. Acción: 1 carrusel "mi historia" pinned + 4 Reels al año con ángulos distintos de esa historia.
+
+2. **Hook = mythbusting + alerta a desinformación.** Fórmula del Piskulich top-performing: `🚨 ALERTA + mito popular + por qué es falso + CTA share`. Alto save+share rate, sin riesgo regulatorio (no es promesa estética). Acción: 1 post/semana de Villagrán con este formato.
+
+3. **Funnel sin Linktree.** Piskulich va directo: bio IG → sitio propio → botón WhatsApp visible. Solo 2 clicks. Linktree suma 1 click extra + lo ven como spam. Acción: revisar bio de Villagrán y eliminar intermediarios.
+
+4. **YouTube long-form "Historias que Sanan".** Piskulich produce entrevistas-podcast con pacientes que **consienten cara y nombre** en formato 12-25 min. Esto soluciona el dilema de privacidad: el paciente quiere contar su historia (no exponer su cuerpo). Después se extrae 5-10 clips/episodio para Reels. Acción: 1 episodio/mes piloto.
+
+5. **Cross-platform vía TV/podcasts mainstream.** Piskulich apareció en TV (No Somos TV) y podcast Todo Good. Cada aparición se convierte en semanas de contenido derivado. Acción: identificar 2-3 podcasts chilenos de salud-conversación o farándula para Villagrán este trimestre.
+
+Su cadencia actual en IG: ~1.9 posts/semana, bajo el optimal de 2-4 healthcare. Subir a 2-3 posts/sem (priorizando carruseles, ya gana 2.2x sobre Reels en su cuenta) + Stories diarios + 1 long-form/mes en YouTube.
 
 ### 5. Investigar el drop de seguidores de @doctorvillagran
 
@@ -85,4 +97,5 @@ Hipótesis preliminar: la cuenta del Doctor publica ~1.9 IG/semana, bajo el opti
 
 - Datos de benchmarks: ver tab Benchmarks (`/api/social/benchmarks`)
 - Datos de cuentas propias: tab Social IG/FB (`/api/social/contact-sheet`)
-- Próxima actualización planificada: **Julio 2026** (incorpora playbook completo de @drpiskulich + análisis de competidor @cirugiabariatrica_chile)
+- **Playbook completo @dr.piskulich**: tab Playbook (`/api/social/playbook`) — 2.100 palabras, 20 fuentes
+- Próxima actualización planificada: **Julio 2026** (incorpora análisis de competidor @cirugiabariatrica_chile + revisión de KPIs vs metas)

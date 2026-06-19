@@ -1470,6 +1470,29 @@ router.get(
   }),
 );
 
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — playbooks tácticos (análisis profundo de cuentas top)
+//  GET /api/review/social/playbook[?file=...]
+//  Files under data/benchmarks/playbook-<handle>-YYYY-MM.md.
+// ═══════════════════════════════════════════════════════════════════
+router.get(
+  "/social/playbook",
+  wrap(async (req, res) => {
+    const allFiles = listBenchmarkReports({ prefix: "playbook-" });
+    if (!allFiles.length) {
+      return res.status(404).type("text/html").send(
+        "<p>Sin playbooks disponibles. " +
+          "Guarda uno como <code>data/benchmarks/playbook-&lt;handle&gt;-YYYY-MM.md</code>.</p>",
+      );
+    }
+    const requested = req.query.file ? String(req.query.file) : allFiles[0];
+    const currentFile = allFiles.includes(requested) ? requested : allFiles[0];
+    const markdown = readBenchmarkReport(currentFile);
+    const html = renderBenchmarksPage({ markdown, currentFile, allFiles });
+    res.type("text/html").send(html);
+  }),
+);
+
 function sortPosts(posts, sort) {
   const byKey = (k) => (a, b) => (b[k] ?? 0) - (a[k] ?? 0);
   switch (sort) {
