@@ -2,6 +2,8 @@
 
 > Estrategia de publicación construida sobre dos insumos: (1) los benchmarks de la industria (ver tab Benchmarks) y (2) la data en vivo de @clinyco.cl, @doctorvillagran y @fonasapad (ver tab Social IG/FB). Se actualiza mensualmente.
 
+> **Decisión estratégica de junio (confirmada por dirección)**: fortalecer **@fonasapad** y **@clinyco.cl** como caras principales de marca, diversificar el peso de marca hacia el equipo Clínyco. La cuenta @doctorvillagran sigue activa pero deja de ser el único motor de marca. Este giro se refleja en todas las prioridades de abajo.
+
 ---
 
 ## 🎯 Prioridades del mes
@@ -55,25 +57,54 @@ Su cadencia actual en IG: ~1.9 posts/semana, bajo el optimal de 2-4 healthcare. 
 
 ---
 
-## 📊 Plan operativo semanal
+## 📊 Plan operativo semanal (revisado tras decisión estratégica)
 
-| Cuenta | Posts/sem | Stories/día | Días sweet-spot |
-|---|---|---|---|
-| @clinyco.cl | 3-4 | 1-2 | Lun, Mié, Vie |
-| @doctorvillagran | 3 (subir desde 1.9) | 2-3 | Mar, Vie, Dom |
-| @fonasapad | 0-1 | 0 | (cuenta dormida, tracking-only) |
+| Cuenta | Posts/sem | Stories/día | Días sweet-spot | Rol en la marca |
+|---|---|---|---|---|
+| @clinyco.cl | 4-5 (subir desde 3.5) | 2-3 | Lun, Mié, Vie | **Cara principal de marca** — equipo multidisciplinario con rostros |
+| @fonasapad | 7 (uno por día) | 1-2 | Diario | **Re-publicación curada** de los mejores posts de @clinyco.cl + @doctorvillagran, con aprobación 1-clic por WhatsApp (Allison + Rodrigo) |
+| @doctorvillagran | 2-3 | 1-2 | Mar, Vie, Dom | **Activo del equipo, no único motor** — sigue produciendo carrusel educativo, pero parte del foco se redistribuye a @clinyco.cl |
 
-## 🎨 Mix de contenido recomendado (basado en data interna)
+### Flujo de @fonasapad (1-clic + WhatsApp)
 
-### @clinyco.cl
-- 50% videos cortos educativos (Reels 15-30 seg) — formato VIDEO ya es el top con avg 36.4
-- 30% carruseles educativos (FONASA, procedimientos, equipo)
-- 20% testimonios con cara tapada o solo voz
+1. Cada noche, el sistema selecciona el siguiente post elegible (mejores primero) del catálogo histórico de @clinyco.cl + @doctorvillagran que NO se haya re-publicado todavía.
+2. Genera preview (imagen + caption adaptado a la voz Fonasa+Bono PAD) y lo deja en una cola en el dashboard.
+3. Envía un WhatsApp a **Allison (+56 9 3426 6846)** y a **Rodrigo (+56 9 8729 7033)** con la preview + 2 botones: **Aprobar** / **Rechazar**.
+4. Cualquiera de los dos aprueba → publica en @fonasapad (Facebook al instante; Instagram crea el "container" y publica en el momento, porque IG no soporta borradores que duren).
+5. Si ninguno responde antes de la hora de publicación (sweet-spot del día), envía un recordatorio. Si tampoco entonces, salta ese día y registra el motivo.
 
-### @doctorvillagran
+Una vez agotado el material histórico, @fonasapad pasa a publicar **en cadencia conjunta** de ambas cuentas en vivo, con el mismo flujo de aprobación.
+
+## 🎨 Mix de contenido recomendado (basado en data interna + decisión estratégica)
+
+### @clinyco.cl (cara principal de marca)
+- 40% carruseles educativos del **equipo Clínyco** (cirujano + nutricionista + psicólogo en cámara), mostrando que la marca es multidisciplinaria, no un solo rostro
+- 30% Reels cortos educativos (15-30 seg) — formato VIDEO ya es el top con avg 36.4
+- 20% testimonios con cara tapada o solo voz, narrados por miembros del equipo
+- 10% contenido de seguridad y protocolo (criterios de selección, anestesia, manejo de complicaciones) — refuerza confianza institucional
+
+### @fonasapad (re-publicación curada)
+- 100% backfill ordenado de los mejores posts históricos de @clinyco.cl + @doctorvillagran (mejores primero), adaptando caption a la voz Fonasa+Bono PAD donde tenga sentido
+- Stories: 1-2 diarias re-compartiendo el post del día y la última story de las otras cuentas
+
+### @doctorvillagran (activo del equipo, no único motor)
 - 60% carruseles educativos (el formato gana 2x sobre Reels: 184 vs 85)
-- 30% Reels de testimonios (formato ganador #3 en cuenta: ♥428, ♥302)
-- 10% Stories con CTA de "preguntas al doctor" (rescatar comentarios para próxima publicación)
+- 25% Reels de testimonios (formato ganador #3: ♥428, ♥302)
+- 15% Stories con caja de preguntas, alimentadas por comentarios de la semana
+
+## 🛠️ Implementación de @fonasapad — qué falta (bloqueante)
+
+WhatsApp **no permite mensajes proactivos** fuera de las 24h sin una **plantilla aprobada por Meta**. Las plantillas activas hoy (`llamada_perdida_followup_v2`, `contactarprimera`) son de servicio al paciente, no sirven para esto.
+
+**Acción**: crear y enviar a aprobación una plantilla nueva en WhatsApp Business Manager. Propuesta:
+
+- **Nombre interno**: `fonasapad_aprobar_post`
+- **Categoría**: `UTILITY`
+- **Idioma**: `es`
+- **Body**: `Hola {{1}}, hay un post listo para revisar en @fonasapad. Cuenta origen: {{2}}. Fecha post original: {{3}}. Engagement original: {{4}}.`
+- **Buttons** (URL): `✅ Aprobar` ({{1}} = token-aprobar) y `❌ Rechazar` ({{2}} = token-rechazar). Los URLs apuntan a `https://clinyco-ai.netlify.app/api/queue/...` con tokens de un solo uso firmados con HMAC.
+
+Aprobación de Meta tarda 1-24h. Mientras tanto, el flujo funciona **sin WhatsApp**: el dashboard tiene un tab "Cola fonasapad" donde Allison o Rodrigo pueden aprobar/rechazar con un clic, y queda registrado quién aprobó cada uno.
 
 ## 🚫 Qué NO hacer este mes
 
