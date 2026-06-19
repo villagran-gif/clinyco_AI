@@ -1974,9 +1974,31 @@ async function colaDecide(id, action) {
   });
   const data = await r.json();
   if (!data.ok) {
-    alert(data.error || "Acción fallida");
+    // Pedimos el estado real del row para mostrar diagnóstico útil
+    let extra = "";
+    try {
+      const ins = await fetch(`${API_BASE}/queue/inspect/${id}`);
+      const insJson = await ins.json();
+      if (insJson.ok) {
+        const row = insJson.row;
+        extra = `\n\nEstado actual del row id=${id}:` +
+          `\n  status: ${row.status}` +
+          `\n  decided_by: ${row.decided_by ?? "—"}` +
+          `\n  decided_at: ${row.decided_at ?? "—"}` +
+          `\n  publish_error: ${row.publish_error ?? "—"}` +
+          `\n  fonasapad_ig_id: ${row.fonasapad_ig_id ?? "—"}` +
+          `\n  fonasapad_fb_id: ${row.fonasapad_fb_id ?? "—"}` +
+          `\n\nSugerencia: si status es 'failed' o 'approved' sin ids, pulsa de nuevo Aprobar — ahora reintenta la publicación automáticamente.`;
+      }
+    } catch {}
+    alert((data.error || "Acción fallida") + extra);
+  } else if (data.idempotent && data.published) {
+    alert(data.message || "Ya estaba publicado.");
   } else if (data.published) {
-    // OK silencioso, refresca
+    if (data.retried) {
+      alert("Publicado tras reintento.");
+    }
+    // si es el primer intento exitoso, silencioso y refresca
   } else if (data.rejected && !data.nextCandidate) {
     alert("Rechazado. No quedan más candidatos en la ventana de 6 meses.");
   }
@@ -2022,9 +2044,13 @@ async function colaNotifyCalendar() {
   const r = await fetch(`${API_BASE}/queue/notify-calendar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const data = await r.json();
   if (data.ok) {
-    alert("📅 Evento enviado al Calendar configurado.");
+    const link = data.eventHtmlLink ? `\n\nVer en Calendar: ${data.eventHtmlLink}` : "";
+    alert(`📅 Evento creado.\n\nID: ${data.eventId ?? "—"}${link}\n\nSi usas el fallback (sin DWD), llega al inbox de villagran@clinyco.cl como invitación — Acepta para que entre al calendario.`);
+  } else if (data.skipped) {
+    alert("⏭ Calendar saltado: " + data.error);
   } else {
-    alert("No se pudo enviar al Calendar: " + (data.error || "ver logs"));
+    const hint = data.hint ? `\n\n💡 Causa probable:\n${data.hint}` : "";
+    alert("❌ No se pudo enviar al Calendar.\n\nError técnico:\n" + (data.error || "ver logs") + hint);
   }
 }
 async function colaCronTick() {
