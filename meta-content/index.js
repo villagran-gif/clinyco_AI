@@ -68,23 +68,40 @@ export async function listPages({ refresh = false, token } = {}) {
   return cached;
 }
 
-// Find a page by id, exact name (case-insensitive), or substring match.
+// Find a page by id, Instagram username (with or without @), exact name
+// (accent-insensitive), or substring match against either name or username.
 // Throws with the available options when no match is found.
 export async function findPage(query, { token } = {}) {
   const pages = await listPages({ token });
   if (!query) {
     throw new Error("findPage requires a page id or name");
   }
-  const q = String(query).toLowerCase().trim();
+  const raw = String(query);
+  const q = normalize(query);
   const match =
-    pages.find((p) => p.pageId === String(query)) ||
-    pages.find((p) => p.name.toLowerCase() === q) ||
-    pages.find((p) => p.name.toLowerCase().includes(q));
+    pages.find((p) => p.pageId === raw) ||
+    pages.find((p) => normalize(p.name) === q) ||
+    pages.find((p) => normalize(p.igUsername) === q) ||
+    pages.find((p) => normalize(p.name).includes(q)) ||
+    pages.find((p) => normalize(p.igUsername).includes(q));
   if (!match) {
-    const available = pages.map((p) => `"${p.name}" (${p.pageId})`).join(", ");
+    const available = pages
+      .map((p) => `"${p.name}" / @${p.igUsername ?? "-"} (${p.pageId})`)
+      .join(", ");
     throw new Error(`No page matched "${query}". Available: ${available}`);
   }
   return match;
+}
+
+// Lowercase, strip diacritics ("Clínyco" → "clinyco"), drop a leading "@",
+// trim whitespace. Exported so scripts can do the same matching off-band.
+export function normalize(s) {
+  return String(s ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/^@/, "")
+    .trim();
 }
 
 function parseAllowlist(raw) {
