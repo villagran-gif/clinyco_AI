@@ -14,9 +14,6 @@
 //   node scripts/extract-meta-image-urls.mjs --account=clinyco --months=2 --no-carousel-children
 import fs from "node:fs";
 import { findPage, instagram } from "../meta-content/index.js";
-import { graphGet } from "../meta-content/client.js";
-
-const DAY_MS = 86_400_000;
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.account) {
@@ -24,50 +21,23 @@ if (!args.account) {
   process.exit(1);
 }
 const monthsBack = Number(args.months ?? 2);
-const includeChildren = !args["no-carousel-children"];
+const includeCarouselChildren = !args["no-carousel-children"];
 
 async function main() {
   const page = await findPage(args.account);
   console.error(`→ ${page.name} (@${page.igUsername}) — últimos ${monthsBack} meses`);
   if (!page.igUserId) throw new Error(`${page.name} has no linked Instagram account`);
 
-  const items = await fetchWindowWithImageFields(page.igUserId, monthsBack, page.accessToken);
-  console.error(`  ${items.length} posts en la ventana`);
+  const posts = await instagram.fetchWindowWithImages(page.igUserId, {
+    monthsBack,
+    includeCarouselChildren,
+    token: page.accessToken,
+  });
+  console.error(`  ${posts.length} posts en la ventana`);
 
-  const posts = [];
-  for (const m of items) {
-    const entry = {
-      id: m.id,
-      timestamp: m.timestamp,
-      date: m.timestamp?.slice(0, 10) ?? null,
-      mediaType: m.media_type,
-      caption: (m.caption ?? "").slice(0, 200),
-      permalink: m.permalink,
-      engagement: (m.like_count ?? 0) + (m.comments_count ?? 0),
-      likes: m.like_count ?? 0,
-      comments: m.comments_count ?? 0,
-      images: [],
-    };
-    if (m.media_type === "IMAGE" && m.media_url) {
-      entry.images.push({ url: m.media_url, kind: "image" });
-    } else if (m.media_type === "VIDEO" && m.thumbnail_url) {
-      entry.images.push({ url: m.thumbnail_url, kind: "video-cover" });
-    } else if (m.media_type === "CAROUSEL_ALBUM" && includeChildren) {
-      try {
-        const kids = await graphGet(`/${m.id}/children`, {
-          params: { fields: "id,media_type,media_url,thumbnail_url" },
-          token: page.accessToken,
-        });
-        for (const child of kids.data ?? []) {
-          const url = child.media_url || child.thumbnail_url;
-          if (url) entry.images.push({ url, kind: child.media_type?.toLowerCase() ?? "child", childId: child.id });
-        }
-      } catch (err) {
-        console.error(`  ⚠ carousel ${m.id}: ${err.message}`);
-      }
-    }
-    posts.push(entry);
-  }
+  // Trim caption for size (raw fetch returns full caption — only need a
+  // snippet for downstream image-pattern study; permalink covers the rest).
+  for (const p of posts) p.caption = p.caption.slice(0, 200);
 
   const payload = {
     account: {
@@ -89,30 +59,6 @@ async function main() {
   } else {
     process.stdout.write(serialized);
   }
-}
-
-async function fetchWindowWithImageFields(igUserId, monthsBack, token) {
-  const cutoff = Date.now() - monthsBack * 30 * DAY_MS;
-  const all = [];
-  let after;
-  for (let safety = 0; safety < 100; safety++) {
-    const page = await instagram.listMedia(igUserId, {
-      limit: 100,
-      after,
-      token,
-      fields:
-        "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink,like_count,comments_count",
-    });
-    if (!page.data.length) break;
-    for (const m of page.data) {
-      const ts = m.timestamp ? new Date(m.timestamp).getTime() : 0;
-      if (ts && ts < cutoff) return all;
-      all.push(m);
-    }
-    after = page.paging?.cursors?.after;
-    if (!after) break;
-  }
-  return all;
 }
 
 function parseArgs(argv) {

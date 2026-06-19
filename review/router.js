@@ -84,6 +84,8 @@ import {
   metaBillingSummary,
   getPool,
 } from "./db.js";
+import { findPage, instagram } from "../meta-content/index.js";
+import { renderContactSheet } from "../meta-content/contact-sheet.js";
 
 const router = Router();
 
@@ -1235,5 +1237,45 @@ router.get("/medinet/sync-status", wrap(async (_req, res) => {
     clearTimeout(timer);
   }
 }));
+
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — visual pattern contact sheet
+//  GET /api/review/social/contact-sheet?account=clinyco&months=2
+//  Live fetch from Meta. Returns an HTML page (CSS grid of every image)
+//  for in-browser pattern study. No data is persisted server-side.
+// ═══════════════════════════════════════════════════════════════════
+router.get(
+  "/social/contact-sheet",
+  wrap(async (req, res) => {
+    const account = String(req.query.account || "").trim();
+    const monthsBack = Math.min(Math.max(Number(req.query.months) || 2, 1), 12);
+    if (!account) {
+      return res
+        .status(400)
+        .type("text/plain")
+        .send(
+          "Missing ?account=<name>. Try ?account=clinyco&months=2 or ?account=doctorvillagran&months=6",
+        );
+    }
+    const page = await findPage(account);
+    if (!page.igUserId) {
+      return res
+        .status(404)
+        .type("text/plain")
+        .send(`Page "${page.name}" has no linked Instagram account.`);
+    }
+    const posts = await instagram.fetchWindowWithImages(page.igUserId, {
+      monthsBack,
+      token: page.accessToken,
+    });
+    const html = renderContactSheet({
+      account: { name: page.name, igUsername: page.igUsername },
+      monthsBack,
+      posts,
+      generatedAt: new Date().toISOString(),
+    });
+    res.type("text/html").send(html);
+  }),
+);
 
 export default router;
