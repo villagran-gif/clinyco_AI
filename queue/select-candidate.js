@@ -32,15 +32,16 @@ export async function listElegibles() {
     });
     for (const p of posts) {
       if (seen.has(p.id)) continue;
-      const firstImage = p.images?.[0]?.url ?? null;
-      if (!firstImage) continue; // sin imagen no podemos previsualizar
+      const images = (p.images ?? []).filter((i) => i?.url);
+      if (!images.length) continue; // sin imágenes no podemos previsualizar ni publicar
       pool.push({
         sourceAccount: accountKey,
         sourceMediaId: p.id,
         sourcePermalink: p.permalink,
         sourceCaption: p.caption,
         sourceMediaType: p.mediaType,
-        sourceImageUrl: firstImage,
+        sourceImageUrl: images[0].url,        // backward compat (la primera)
+        sourceImageUrls: images,              // todas, para carrusel completo
         sourceTimestamp: p.timestamp,
         sourceEngagement: p.engagement ?? 0,
         ig_user_id: page.igUserId,
@@ -70,6 +71,7 @@ export async function selectNextCandidate() {
       sourceCaption: cand.sourceCaption,
       sourceMediaType: cand.sourceMediaType,
       sourceImageUrl: cand.sourceImageUrl,
+      sourceImageUrls: cand.sourceImageUrls,
       sourceTimestamp: cand.sourceTimestamp,
       sourceEngagement: cand.sourceEngagement,
     });

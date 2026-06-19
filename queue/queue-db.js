@@ -26,6 +26,7 @@ export async function ensureTable() {
       source_caption    TEXT,
       source_media_type TEXT,
       source_image_url  TEXT NOT NULL,
+      source_image_urls JSONB,
       source_timestamp  TIMESTAMPTZ,
       source_engagement INTEGER NOT NULL DEFAULT 0,
       adapted_caption   TEXT,
@@ -39,6 +40,20 @@ export async function ensureTable() {
       publish_error     TEXT,
       created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+  `);
+  // Migration 020 idempotente: la primera deploy levanta este ALTER
+  // sin tocar nada si la columna ya existe.
+  await getPool().query(`
+    ALTER TABLE fonasapad_queue
+      ADD COLUMN IF NOT EXISTS source_image_urls JSONB
+  `);
+  await getPool().query(`
+    UPDATE fonasapad_queue
+       SET source_image_urls = jsonb_build_array(
+             jsonb_build_object('url', source_image_url, 'kind', 'image')
+           )
+     WHERE source_image_urls IS NULL
+       AND source_image_url IS NOT NULL
   `);
   await getPool().query(
     `CREATE INDEX IF NOT EXISTS idx_fonasapad_queue_status
@@ -73,13 +88,18 @@ export async function enqueueCandidate(candidate) {
     return null;
   }
   const token = newActionToken();
+  // sourceImageUrls debe ser un array de {url, kind, childId?}. Si solo
+  // viene sourceImageUrl, lo envolvemos en un array de 1.
+  const imageUrls = candidate.sourceImageUrls
+    ?? (candidate.sourceImageUrl ? [{ url: candidate.sourceImageUrl, kind: "image" }] : []);
+  if (!imageUrls.length) throw new Error("enqueueCandidate: necesita al menos 1 imagen");
   const result = await getPool().query(
     `INSERT INTO fonasapad_queue (
        source_account, source_media_id, source_permalink, source_caption,
-       source_media_type, source_image_url, source_timestamp, source_engagement,
-       adapted_caption, action_token
+       source_media_type, source_image_url, source_image_urls,
+       source_timestamp, source_engagement, adapted_caption, action_token
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING *`,
     [
       candidate.sourceAccount,
@@ -87,7 +107,8 @@ export async function enqueueCandidate(candidate) {
       candidate.sourcePermalink ?? null,
       candidate.sourceCaption ?? null,
       candidate.sourceMediaType ?? null,
-      candidate.sourceImageUrl,
+      imageUrls[0].url,                 // mantenemos la primera por compatibilidad
+      JSON.stringify(imageUrls),        // todas, para el carrusel real
       candidate.sourceTimestamp ?? null,
       candidate.sourceEngagement ?? 0,
       candidate.adaptedCaption ?? null,
