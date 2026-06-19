@@ -8,11 +8,11 @@ import { markdownToHtml } from "./markdown.js";
 
 const DIR = "data/benchmarks";
 
-export function listBenchmarkReports() {
+export function listBenchmarkReports({ prefix = "" } = {}) {
   if (!fs.existsSync(DIR)) return [];
   return fs
     .readdirSync(DIR)
-    .filter((f) => f.endsWith(".md"))
+    .filter((f) => f.endsWith(".md") && (!prefix || f.startsWith(prefix)))
     .sort() // YYYY-MM filenames sort lexically = chronologically
     .reverse(); // newest first
 }
@@ -164,8 +164,11 @@ function escape(s) {
 
 function humanize(filename) {
   // medical-2026-06.md → "Medical · 2026-06"
+  // recomendaciones-2026-06.md → "Recomendaciones · 2026-06"
   return filename
     .replace(/\.md$/, "")
-    .replace(/^(\w+)-(\d{4})-(\d{2})$/, "$1 · $2-$3")
-    .replace(/^medical/i, "Medical");
+    .replace(/^(\w+)-(\d{4})-(\d{2})$/, (_, kind, y, m) => {
+      const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+      return `${label} · ${y}-${m}`;
+    });
 }

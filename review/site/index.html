@@ -182,6 +182,7 @@
     <button onclick="showTab('medinet')" style="background:#0d9488;color:#fff;border-radius:6px">Medinet</button>
     <button onclick="showTab('social')" style="background:#7c3aed;color:#fff;border-radius:6px">Social IG/FB</button>
     <button onclick="showTab('benchmarks')" style="background:#0891b2;color:#fff;border-radius:6px">Benchmarks</button>
+    <button onclick="showTab('recomendaciones')" style="background:#f59e0b;color:#fff;border-radius:6px">Recomendaciones</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -1378,6 +1379,29 @@
               style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
     </div>
   </div>
+
+  <div id="tab-recomendaciones" class="tab-content">
+    <div style="margin-bottom:12px">
+      <h2 style="margin:0 0 4px">Recomendaciones estratégicas — mes actual</h2>
+      <p style="margin:0;color:#475569;font-size:13px">
+        Estrategia de publicación construida sobre (a) los benchmarks de la industria y (b) la data en vivo de
+        las 3 cuentas. Se actualiza mensualmente. Cada métrica incluye explicación bilingüe:
+        <b>🧒 básico</b> para que todo el equipo entienda, <b>👨‍⚕️ técnico</b> con la definición precisa y fuentes.
+      </p>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px">
+      <a href="/api/social/follower-trend?account=doctorvillagran&days=90" target="_blank" rel="noopener"
+         style="color:#f59e0b;text-decoration:none">↗ Tendencia seguidores @doctorvillagran</a>
+      <a href="/api/social/follower-trend?account=clinyco&days=90" target="_blank" rel="noopener"
+         style="color:#f59e0b;text-decoration:none">↗ Tendencia seguidores @clinyco.cl</a>
+      <a id="recomendaciones-open-new" href="/api/social/recommendations" target="_blank" rel="noopener"
+         style="margin-left:auto;color:#f59e0b;text-decoration:none">↗ abrir doc en pestaña nueva</a>
+    </div>
+    <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc">
+      <iframe id="recomendaciones-frame" src="about:blank"
+              style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -1622,7 +1646,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
@@ -1630,6 +1654,11 @@ function loadBenchmarks() {
   document.getElementById("benchmarks-frame").src = `${API_BASE}/social/benchmarks`;
   document.getElementById("benchmarks-open-new").href = `${API_BASE}/social/benchmarks`;
   window._benchmarksLoaded = true;
+}
+function loadRecomendaciones() {
+  document.getElementById("recomendaciones-frame").src = `${API_BASE}/social/recommendations`;
+  document.getElementById("recomendaciones-open-new").href = `${API_BASE}/social/recommendations`;
+  window._recomendacionesLoaded = true;
 }
 
 // Social IG/FB contact sheet — opens /api/social/contact-sheet via the
