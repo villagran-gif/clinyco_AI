@@ -52,6 +52,7 @@ import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
 import { start as startFonasapadCron } from "./queue/cron.js";
+import { start as startMonthlyCron } from "./queue/monthly-cron.js";
 import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
 import {
   searchSlotsViaApi,
@@ -6504,4 +6505,5 @@ app.listen(PORT, () => {
   }
   startZapsPoller();
   startFonasapadCron();
+  startMonthlyCron();
 });
