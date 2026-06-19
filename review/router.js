@@ -83,8 +83,11 @@ import {
   getMetaBilling,
   metaBillingSummary,
   getPool,
-  dbEnabled,
 } from "./db.js";
+// dbEnabled lives in the ROOT db.js (review/db.js no lo exporta).
+// review/db.js es una capa de queries del review dashboard; las primitivas
+// de pool/feature-flag están en /db.js.
+import { dbEnabled } from "../db.js";
 import { findPage, instagram, facebook } from "../meta-content/index.js";
 import { renderContactSheet } from "../meta-content/contact-sheet.js";
 import { discoverAccount, discoverMany } from "../meta-content/business-discovery.js";
