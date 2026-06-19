@@ -163,12 +163,21 @@ function escape(s) {
 }
 
 function humanize(filename) {
-  // medical-2026-06.md            → "Medical · 2026-06"
-  // recomendaciones-2026-06.md    → "Recomendaciones · 2026-06"
-  // playbook-drpiskulich-2026-06.md → "Playbook · @drpiskulich · 2026-06"
+  // medical-2026-06.md                  → "Medical · 2026-06"
+  // recomendaciones-2026-06.md          → "Recomendaciones · 2026-06"
+  // playbook-drpiskulich-2026-06.md     → "Playbook · @drpiskulich · 2026-06"
+  // competidores-chile-2026-06.md       → "Competidores · @chile · 2026-06"
+  // competidores-chile-2026-06-v2.md    → "Competidores · @chile · 2026-06 · v2"
   const stem = filename.replace(/\.md$/, "");
   const playbook = /^playbook-([\w.]+)-(\d{4})-(\d{2})$/.exec(stem);
   if (playbook) return `Playbook · @${playbook[1]} · ${playbook[2]}-${playbook[3]}`;
+  // <kind>-<slug>-YYYY-MM[-vN]  (handles competidores-* and any future 3-segment kind)
+  const tagged = /^(\w+)-([\w.]+)-(\d{4})-(\d{2})(?:-(v\d+))?$/.exec(stem);
+  if (tagged) {
+    const label = tagged[1].charAt(0).toUpperCase() + tagged[1].slice(1);
+    const variant = tagged[5] ? ` · ${tagged[5]}` : "";
+    return `${label} · @${tagged[2]} · ${tagged[3]}-${tagged[4]}${variant}`;
+  }
   const simple = /^(\w+)-(\d{4})-(\d{2})$/.exec(stem);
   if (simple) {
     const label = simple[1].charAt(0).toUpperCase() + simple[1].slice(1);
