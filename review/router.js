@@ -1682,6 +1682,64 @@ router.get("/queue/history", wrap(async (req, res) => {
   res.json({ items: await queueRecentHistory(limit) });
 }));
 
+// ── Diagnósticos ────────────────────────────────────────────────────
+// Inspecciona un row específico de la cola (cualquier estado). Útil
+// para debug "ya decidido?" — devuelve el row tal cual está en DB.
+router.get("/queue/inspect/:id", wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "id inválido" });
+  const row = await getQueueById(id);
+  if (!row) return res.status(404).json({ error: "no encontrado" });
+  res.json({ ok: true, row });
+}));
+
+// Resumen completo del estado de la cola: cuántos en cada estado,
+// últimos 5 rejected/published/failed, configuración de env vars
+// (sin filtrar valores sensibles — solo presencia de la clave).
+router.get("/queue/diag", wrap(async (_req, res) => {
+  await ensureQueueTable();
+  const pending = await getPending();
+  const recent = await queueRecentHistory(20);
+  // Conteo por estado (todos los rows, no solo los recientes)
+  const counts = dbEnabled()
+    ? (await getPool().query(
+        `SELECT status, COUNT(*)::int AS n FROM fonasapad_queue GROUP BY status`,
+      )).rows
+    : [];
+  res.json({
+    ok: true,
+    pendingHead: pending[0] ?? null,
+    pendingCount: pending.length,
+    countsByStatus: counts,
+    recentHistory: recent.slice(0, 10).map((r) => ({
+      id: r.id,
+      status: r.status,
+      source_account: r.source_account,
+      source_media_id: r.source_media_id,
+      decided_by: r.decided_by,
+      decided_at: r.decided_at,
+      publish_error: r.publish_error,
+      fonasapad_ig_id: r.fonasapad_ig_id,
+      fonasapad_fb_id: r.fonasapad_fb_id,
+    })),
+    config: {
+      // Solo presencia, no valor
+      META_CONTENT_TOKEN: Boolean(process.env.META_CONTENT_TOKEN),
+      ANTHROPIC_API_KEY: Boolean(process.env.ANTHROPIC_API_KEY),
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),
+      GOOGLE_PRIVATE_KEY: Boolean(process.env.GOOGLE_PRIVATE_KEY),
+      FONASAPAD_CALENDAR_USE_DWD: process.env.FONASAPAD_CALENDAR_USE_DWD ?? null,
+      FONASAPAD_CALENDAR_USER: process.env.FONASAPAD_CALENDAR_USER ?? null,
+      FONASAPAD_CALENDAR_EXTRA_ATTENDEE: process.env.FONASAPAD_CALENDAR_EXTRA_ATTENDEE ?? null,
+      FONASAPAD_CALENDAR_ID: process.env.FONASAPAD_CALENDAR_ID ?? null,
+      FONASAPAD_CRON_ENABLED: process.env.FONASAPAD_CRON_ENABLED ?? null,
+      FONASAPAD_MONTHLY_CRON_ENABLED: process.env.FONASAPAD_MONTHLY_CRON_ENABLED ?? null,
+      PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL ?? null,
+    },
+    note: "Si Calendar no llega y GOOGLE_PRIVATE_KEY=true, la causa más común es que la Calendar API NO esté habilitada en el proyecto de Google Cloud de la service account. Revisa: console.cloud.google.com → APIs & Services → Library → 'Google Calendar API' → Enable.",
+  });
+}));
+
 // Manda al calendar del usuario configurado (villagran@clinyco.cl por
 // default) el candidato head de la cola, sin esperar al cron. Útil para
 // probar el wiring de Google Calendar.
@@ -1700,9 +1758,28 @@ router.post("/queue/notify-calendar", wrap(async (req, res) => {
     || `${req.protocol}://${req.get("host")}`.replace(/\/api\/review$/, "");
   try {
     const result = await notifyCandidateViaCalendar({ row, publicBaseUrl });
-    res.json({ ok: true, result });
+    if (result?.skipped) {
+      return res.status(503).json({
+        ok: false,
+        skipped: true,
+        error: "Google no configurado: faltan GOOGLE_SERVICE_ACCOUNT_EMAIL y/o GOOGLE_PRIVATE_KEY en las env vars de Render.",
+      });
+    }
+    res.json({ ok: true, eventId: result?.event?.id ?? null, eventHtmlLink: result?.event?.htmlLink ?? null });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    // Diagnóstico fino: distinguimos error de auth (token) vs Calendar API.
+    const msg = err.message || String(err);
+    let hint = null;
+    if (/Calendar API has not been used|disabled|Enable it/i.test(msg)) {
+      hint = "La Google Calendar API NO está habilitada en el proyecto GCP de la service account. Habilítala en console.cloud.google.com → APIs & Services → Library → 'Google Calendar API' → Enable. Tarda 1-2 min en propagar.";
+    } else if (/invalid_grant|unauthorized_client/i.test(msg)) {
+      hint = "Si FONASAPAD_CALENDAR_USE_DWD=true, falta la delegación domain-wide en Workspace Admin clinyco.cl. Si no quieres mover a admin, pon FONASAPAD_CALENDAR_USE_DWD=false (default) y los eventos llegan por invitación a villagran@clinyco.cl.";
+    } else if (/invalid_request|signature/i.test(msg)) {
+      hint = "GOOGLE_PRIVATE_KEY probablemente mal formateado. Pega el valor COMPLETO incluyendo '-----BEGIN PRIVATE KEY-----' y '-----END PRIVATE KEY-----' (los \\n se desescapan automáticamente).";
+    } else if (/forbidden|insufficient/i.test(msg)) {
+      hint = "El service account no tiene scope/permiso para Calendar. Si usas DWD, agrega https://www.googleapis.com/auth/calendar.events en Workspace Admin. Sin DWD: revisa que el Calendar destino esté compartido con el service account email.";
+    }
+    res.status(500).json({ ok: false, error: msg, hint });
   }
 }));
 
@@ -1783,25 +1860,70 @@ router.post("/queue/cron-tick", wrap(async (_req, res) => {
 
 // Lógica compartida: aprobar publica + marca; rechazar marca y dispara
 // el siguiente candidato. La parte clave de "publica sí o sí" vive aquí.
+//
+// Idempotencia: si el row ya está en otro estado, NO falla con "ya
+// decidido" — interpreta lo que pidió el usuario en el contexto del
+// estado actual:
+//   pending  + approve → marca + publica
+//   pending  + reject  → marca + select next
+//   approved + approve → reintenta publicación (caso "primer attempt falló")
+//   failed   + approve → reintenta publicación (caso "publish failed")
+//   published + approve → no-op idempotente (devuelve ok con los ids)
+//   rejected + reject  → no-op idempotente
+//   * + cualquier otra combo inválida → error explícito con el status actual
 async function processDecision({ id, action, actor, note }) {
+  const current = await getQueueById(id);
+  if (!current) return { ok: false, error: `Row id=${id} no existe en la cola` };
+
+  // ── REJECT path ──
   if (action === "reject") {
+    if (current.status === "rejected") {
+      const next = await selectNextCandidate();
+      return { ok: true, rejected: current, nextCandidate: next, idempotent: true };
+    }
+    if (current.status !== "pending") {
+      return { ok: false, error: `Row id=${id} está en estado "${current.status}", no se puede rechazar` };
+    }
     const rejected = await markDecided(id, { status: "rejected", decidedBy: actor, note });
-    if (!rejected) return { ok: false, error: "No se pudo marcar como rechazado (ya decidido?)" };
-    // Adelantar el siguiente inmediatamente. Si no queda nada, devolvemos
-    // el rechazo a secas para que el dashboard avise.
     const next = await selectNextCandidate();
     return { ok: true, rejected, nextCandidate: next };
   }
-  // approve → publicar + marcar
-  const approved = await markDecided(id, { status: "approved", decidedBy: actor, note });
-  if (!approved) return { ok: false, error: "No se pudo marcar como aprobado (ya decidido?)" };
+
+  // ── APPROVE path ──
+  if (current.status === "published") {
+    return {
+      ok: true,
+      published: current,
+      idempotent: true,
+      message: `Ya estaba publicado (IG=${current.fonasapad_ig_id ?? "—"}, FB=${current.fonasapad_fb_id ?? "—"})`,
+    };
+  }
+  if (current.status === "rejected") {
+    return { ok: false, error: `Row id=${id} fue rechazado antes; no se puede aprobar` };
+  }
+  // Si está pending, lo marcamos como approved primero.
+  let approved = current;
+  if (current.status === "pending") {
+    approved = await markDecided(id, { status: "approved", decidedBy: actor, note });
+    if (!approved) {
+      // Race condition raro: otra request lo movió entre nuestro getById y el UPDATE.
+      const re = await getQueueById(id);
+      return { ok: false, error: `No se pudo marcar como aprobado. Estado actual: ${re?.status ?? "desconocido"}` };
+    }
+  }
+  // Para status approved/failed simplemente reintentamos publicar.
   try {
     const pub = await publishApproved(approved);
     const published = await markPublished(approved.id, { igId: pub.igId, fbId: pub.fbId });
-    return { ok: true, published, partialErrors: { ig: pub.igError, fb: pub.fbError } };
+    return {
+      ok: true,
+      published,
+      partialErrors: { ig: pub.igError, fb: pub.fbError },
+      retried: current.status === "failed" || current.status === "approved",
+    };
   } catch (err) {
     await markFailed(approved.id, err.message);
-    return { ok: false, error: `Publicación falló: ${err.message}` };
+    return { ok: false, error: `Publicación falló: ${err.message}`, retried: current.status === "failed" };
   }
 }
 
