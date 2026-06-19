@@ -91,6 +91,22 @@ import {
   readBenchmarkReport,
   renderBenchmarksPage,
 } from "../meta-content/benchmarks-page.js";
+import {
+  ensureTable as ensureQueueTable,
+  enqueueCandidate,
+  getPending,
+  getById as getQueueById,
+  getByToken as getQueueByToken,
+  markDecided,
+  markPublished,
+  markFailed,
+  recentHistory as queueRecentHistory,
+} from "../queue/queue-db.js";
+import {
+  selectNextCandidate,
+  countRemainingElegibles,
+} from "../queue/select-candidate.js";
+import { publishApproved } from "../queue/publish-to-fonasapad.js";
 
 const router = Router();
 
@@ -1517,6 +1533,170 @@ router.get(
     res.type("text/html").send(html);
   }),
 );
+
+// ═══════════════════════════════════════════════════════════════════
+//  FONASAPAD QUEUE — re-publicación con aprobación 1-clic
+//  Lógica "publica sí o sí ese día":
+//    GET  /queue/list                       → JSON con pendientes + el head
+//    POST /queue/select-next                → fuerza inserción de próximo candidato
+//    POST /queue/decide                     → aprobar/rechazar desde dashboard (Allison/Rodrigo)
+//    GET  /queue/action/:token              → confirmación HTML (botones del WhatsApp futuro)
+//    POST /queue/action/:token              → ejecución del token (aprobar o rechazar)
+//    GET  /queue/history                    → últimos N decididos (auditoría)
+//  Rechazar dispara automáticamente el next candidate; aprobar publica
+//  inmediato a IG + FB de @fonasapad y marca como published.
+// ═══════════════════════════════════════════════════════════════════
+
+router.get("/queue/list", wrap(async (_req, res) => {
+  await ensureQueueTable();
+  const [pending, remaining] = await Promise.all([
+    getPending(),
+    countRemainingElegibles(),
+  ]);
+  res.json({
+    head: pending[0] ?? null,
+    pendingCount: pending.length,
+    remainingElegibles: remaining,
+    pending,
+  });
+}));
+
+router.post("/queue/select-next", wrap(async (_req, res) => {
+  const row = await selectNextCandidate();
+  if (!row) {
+    return res.status(404).json({
+      error: "No hay más posts elegibles en la ventana de 6 meses de @clinyco.cl + @doctorvillagran que no hayan pasado por la cola.",
+    });
+  }
+  res.json({ ok: true, candidate: row });
+}));
+
+// Decisión desde el dashboard. body: { id, action: 'approve'|'reject', actor, note }
+router.post("/queue/decide", wrap(async (req, res) => {
+  const id = Number(req.body.id);
+  const action = String(req.body.action || "").toLowerCase();
+  const actor = String(req.body.actor || "dashboard").toLowerCase();
+  const note = req.body.note ? String(req.body.note).slice(0, 500) : null;
+  if (!id || !["approve", "reject"].includes(action)) {
+    return res.status(400).json({ error: "Faltan id o action (approve|reject)" });
+  }
+  const result = await processDecision({ id, action, actor, note });
+  res.json(result);
+}));
+
+// Las URLs firmadas que iban a ir en los botones del WhatsApp (cuando
+// Meta apruebe la plantilla). Por ahora ya quedan funcionales — un
+// clic desde el celular ejecuta la acción. GET muestra una página de
+// confirmación; POST la ejecuta.
+router.get("/queue/action/:token", wrap(async (req, res) => {
+  const row = await getQueueByToken(String(req.params.token));
+  if (!row) return res.status(404).type("text/html").send(actionErrorPage("Token inválido o expirado."));
+  res.type("text/html").send(actionConfirmPage(row));
+}));
+
+router.post("/queue/action/:token", wrap(async (req, res) => {
+  const row = await getQueueByToken(String(req.params.token));
+  if (!row) return res.status(404).type("text/html").send(actionErrorPage("Token inválido o expirado."));
+  if (row.status !== "pending") {
+    return res.type("text/html").send(actionErrorPage(`Este candidato ya está en estado: ${row.status}.`));
+  }
+  const action = String(req.body?.action || req.query?.action || "").toLowerCase();
+  const actor = String(req.body?.actor || req.query?.actor || "whatsapp").toLowerCase();
+  if (!["approve", "reject"].includes(action)) {
+    return res.status(400).type("text/html").send(actionErrorPage("Acción inválida."));
+  }
+  const result = await processDecision({ id: row.id, action, actor, note: null });
+  res.type("text/html").send(actionResultPage(result));
+}));
+
+router.get("/queue/history", wrap(async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query?.limit) || 50, 1), 200);
+  res.json({ items: await queueRecentHistory(limit) });
+}));
+
+// Lógica compartida: aprobar publica + marca; rechazar marca y dispara
+// el siguiente candidato. La parte clave de "publica sí o sí" vive aquí.
+async function processDecision({ id, action, actor, note }) {
+  if (action === "reject") {
+    const rejected = await markDecided(id, { status: "rejected", decidedBy: actor, note });
+    if (!rejected) return { ok: false, error: "No se pudo marcar como rechazado (ya decidido?)" };
+    // Adelantar el siguiente inmediatamente. Si no queda nada, devolvemos
+    // el rechazo a secas para que el dashboard avise.
+    const next = await selectNextCandidate();
+    return { ok: true, rejected, nextCandidate: next };
+  }
+  // approve → publicar + marcar
+  const approved = await markDecided(id, { status: "approved", decidedBy: actor, note });
+  if (!approved) return { ok: false, error: "No se pudo marcar como aprobado (ya decidido?)" };
+  try {
+    const pub = await publishApproved(approved);
+    const published = await markPublished(approved.id, { igId: pub.igId, fbId: pub.fbId });
+    return { ok: true, published, partialErrors: { ig: pub.igError, fb: pub.fbError } };
+  } catch (err) {
+    await markFailed(approved.id, err.message);
+    return { ok: false, error: `Publicación falló: ${err.message}` };
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function actionShell(body) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"/>
+<title>Cola fonasapad</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+body{margin:0;font:15px/1.55 -apple-system,system-ui,sans-serif;background:#f8fafc;color:#1e293b;padding:24px}
+.wrap{max-width:680px;margin:0 auto;background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{margin:0 0 8px;font-size:18px}
+img.preview{max-width:100%;border-radius:8px;margin:12px 0;border:1px solid #e2e8f0}
+.meta{font-size:12px;color:#64748b;margin-bottom:8px}
+.cap{background:#f1f5f9;padding:12px;border-radius:6px;white-space:pre-wrap;font-size:13px;margin-bottom:18px}
+.btns{display:flex;gap:10px;flex-wrap:wrap}
+button{padding:12px 20px;border:0;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;flex:1;min-width:140px}
+.ok{background:#16a34a;color:#fff}
+.no{background:#dc2626;color:#fff}
+.note{padding:14px;background:#fef9c3;border-left:4px solid #ca8a04;border-radius:4px;font-size:13px;margin-bottom:12px}
+.ok-msg{padding:14px;background:#dcfce7;border-left:4px solid #16a34a;border-radius:4px}
+.err{padding:14px;background:#fee2e2;border-left:4px solid #dc2626;border-radius:4px}
+</style></head><body><div class="wrap">${body}</div></body></html>`;
+}
+function actionConfirmPage(row) {
+  const cap = row.adapted_caption || row.source_caption || "";
+  return actionShell(`
+    <h1>¿Republicar este post en @fonasapad?</h1>
+    <div class="meta">Origen: <b>${escapeHtml(row.source_account)}</b> ·
+      ${escapeHtml((row.source_timestamp || "").slice(0,10))} ·
+      ${escapeHtml(row.source_media_type ?? "")} ·
+      ${row.source_engagement} interacciones</div>
+    <img class="preview" src="${escapeHtml(row.source_image_url)}" alt=""/>
+    <div class="cap">${escapeHtml(cap.slice(0, 600))}</div>
+    <form method="post" class="btns">
+      <button type="submit" name="action" value="approve" class="ok">✅ Aprobar y publicar</button>
+      <button type="submit" name="action" value="reject" class="no">❌ Rechazar y traer otro</button>
+    </form>`);
+}
+function actionResultPage(result) {
+  if (!result.ok) return actionShell(`<h1>No se pudo procesar</h1><div class="err">${escapeHtml(result.error)}</div>`);
+  if (result.published) {
+    const ids = `IG: <code>${escapeHtml(result.published.fonasapad_ig_id ?? "—")}</code> · FB: <code>${escapeHtml(result.published.fonasapad_fb_id ?? "—")}</code>`;
+    return actionShell(`<h1>✅ Publicado en @fonasapad</h1><div class="ok-msg">${ids}</div>`);
+  }
+  if (result.rejected) {
+    if (result.nextCandidate) {
+      return actionShell(`<h1>❌ Rechazado — siguiente candidato listo</h1>
+        <div class="note">El siguiente mejor post ya está encolado. La revisión llegará por el canal acordado.</div>`);
+    }
+    return actionShell(`<h1>❌ Rechazado — no quedan más candidatos</h1>
+      <div class="note">Se agotaron los posts elegibles de los últimos 6 meses. Toca volver a sembrar la cola más adelante.</div>`);
+  }
+  return actionShell(`<h1>OK</h1><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`);
+}
+function actionErrorPage(msg) {
+  return actionShell(`<h1>Error</h1><div class="err">${escapeHtml(msg)}</div>`);
+}
 
 function sortPosts(posts, sort) {
   const byKey = (k) => (a, b) => (b[k] ?? 0) - (a[k] ?? 0);

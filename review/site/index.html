@@ -185,6 +185,7 @@
     <button onclick="showTab('recomendaciones')" style="background:#f59e0b;color:#fff;border-radius:6px">Recomendaciones</button>
     <button onclick="showTab('playbook')" style="background:#dc2626;color:#fff;border-radius:6px">Playbooks</button>
     <button onclick="showTab('competidores')" style="background:#be185d;color:#fff;border-radius:6px">Competidores</button>
+    <button onclick="showTab('cola')" style="background:#16a34a;color:#fff;border-radius:6px">Cola fonasapad</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -1444,6 +1445,25 @@
               style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
     </div>
   </div>
+
+  <div id="tab-cola" class="tab-content">
+    <div style="margin-bottom:12px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
+      <h2 style="margin:0 0 4px">Cola de re-publicación @fonasapad</h2>
+      <span id="cola-counts" style="font-size:12px;color:#64748b"></span>
+      <button onclick="colaSelectNext()" style="margin-left:auto;padding:6px 12px;background:#16a34a;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer">⏭ Traer siguiente</button>
+      <button onclick="loadCola(true)" style="padding:6px 12px;background:#475569;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer">↻ Refrescar</button>
+    </div>
+    <p style="margin:0 0 14px;color:#475569;font-size:13px">
+      Mejor post histórico (últimos 6 meses) de @clinyco.cl + @doctorvillagran que aún no se ha re-publicado en @fonasapad.
+      <b>Rechazar trae el siguiente al instante</b> — el día se publica sí o sí. Cuando WhatsApp esté listo, esto también
+      llega como mensaje a Allison (+56 9 3426 6846) y Rodrigo (+56 9 8729 7033).
+    </p>
+    <div id="cola-head" style="margin-bottom:24px"></div>
+    <h3 style="margin:18px 0 8px;font-size:14px;color:#475569">Resto de la cola</h3>
+    <div id="cola-rest" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px"></div>
+    <h3 style="margin:24px 0 8px;font-size:14px;color:#475569">Últimas decisiones</h3>
+    <div id="cola-history" style="font-size:12px"></div>
+  </div>
 </main>
 
 <script>
@@ -1688,7 +1708,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones, playbook: loadPlaybook, competidores: loadCompetidores };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones, playbook: loadPlaybook, competidores: loadCompetidores, cola: loadCola };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
 
@@ -1696,6 +1716,119 @@ function loadCompetidores() {
   document.getElementById("competidores-frame").src = `${API_BASE}/social/competitors`;
   document.getElementById("competidores-open-new").href = `${API_BASE}/social/competitors`;
   window._competidoresLoaded = true;
+}
+
+// ── Cola fonasapad ────────────────────────────────────────────────
+async function loadCola(force) {
+  if (!force && window._colaLoaded) return;
+  window._colaLoaded = true;
+  await renderColaList();
+  await renderColaHistory();
+}
+function colaEsc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+async function renderColaList() {
+  const r = await fetch(`${API_BASE}/queue/list`);
+  const data = await r.json();
+  document.getElementById("cola-counts").textContent =
+    `${data.pendingCount} pendiente(s) · ${data.remainingElegibles} elegibles sin encolar todavía`;
+  const head = data.head;
+  const headEl = document.getElementById("cola-head");
+  if (!head) {
+    headEl.innerHTML = `<div style="padding:24px;background:#f1f5f9;border-radius:8px;text-align:center;color:#64748b">
+      No hay posts pendientes. Aprieta <b>Traer siguiente</b> para encolar el próximo mejor post de
+      @clinyco.cl + @doctorvillagran.
+    </div>`;
+  } else {
+    const dateStr = (head.source_timestamp || "").slice(0, 10);
+    const cap = colaEsc((head.adapted_caption || head.source_caption || "").slice(0, 500));
+    headEl.innerHTML = `
+      <div style="display:flex;gap:18px;background:#0d1117;color:#c9d1d9;padding:18px;border-radius:10px;flex-wrap:wrap">
+        <img src="${colaEsc(head.source_image_url)}" alt="" style="width:240px;height:240px;object-fit:cover;border-radius:8px;background:#000"/>
+        <div style="flex:1;min-width:260px">
+          <div style="font-size:11px;color:#8b949e;margin-bottom:6px">
+            Origen <b style="color:#c9d1d9">${colaEsc(head.source_account)}</b> ·
+            ${colaEsc(dateStr)} · ${colaEsc(head.source_media_type ?? "")} ·
+            <b style="color:#f78166">${head.source_engagement}</b> interacciones
+          </div>
+          <div style="white-space:pre-wrap;font-size:13px;line-height:1.55;margin-bottom:14px;max-height:200px;overflow:auto">${cap}</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button onclick="colaDecide(${head.id}, 'approve')"
+              style="padding:10px 18px;background:#16a34a;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
+              ✅ Aprobar y publicar
+            </button>
+            <button onclick="colaDecide(${head.id}, 'reject')"
+              style="padding:10px 18px;background:#dc2626;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
+              ❌ Rechazar y traer otro
+            </button>
+            ${head.source_permalink ? `<a href="${colaEsc(head.source_permalink)}" target="_blank" style="padding:10px 14px;color:#58a6ff;text-decoration:none;font-size:13px;align-self:center">ver post original ↗</a>` : ""}
+          </div>
+        </div>
+      </div>`;
+  }
+  const restEl = document.getElementById("cola-rest");
+  const rest = (data.pending || []).slice(1);
+  restEl.innerHTML = rest.length === 0
+    ? `<div style="color:#94a3b8;font-size:12px;grid-column:1/-1">— sin más pendientes —</div>`
+    : rest.map((row) => {
+        const dateStr = (row.source_timestamp || "").slice(0, 10);
+        return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+          <img src="${colaEsc(row.source_image_url)}" alt="" style="width:100%;height:180px;object-fit:cover;background:#0d1117"/>
+          <div style="padding:10px;font-size:12px">
+            <div style="color:#64748b;margin-bottom:4px">${colaEsc(row.source_account)} · ${colaEsc(dateStr)} · ♥${row.source_engagement}</div>
+            <div style="white-space:nowrap;text-overflow:ellipsis;overflow:hidden;margin-bottom:8px">${colaEsc((row.source_caption || "").slice(0,90))}</div>
+            <div style="display:flex;gap:6px">
+              <button onclick="colaDecide(${row.id}, 'approve')" style="flex:1;padding:6px;background:#16a34a;color:#fff;border:0;border-radius:4px;font-size:11px;cursor:pointer">✅</button>
+              <button onclick="colaDecide(${row.id}, 'reject')" style="flex:1;padding:6px;background:#dc2626;color:#fff;border:0;border-radius:4px;font-size:11px;cursor:pointer">❌</button>
+            </div>
+          </div>
+        </div>`;
+      }).join("");
+}
+async function renderColaHistory() {
+  try {
+    const r = await fetch(`${API_BASE}/queue/history?limit=20`);
+    const data = await r.json();
+    const hEl = document.getElementById("cola-history");
+    hEl.innerHTML = (data.items || []).map((row) => {
+      const when = (row.decided_at || "").slice(0, 16).replace("T", " ");
+      const color = row.status === "published" ? "#16a34a"
+                  : row.status === "rejected" ? "#dc2626"
+                  : "#ca8a04";
+      return `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;display:flex;gap:10px;align-items:center">
+        <span style="color:${color};font-weight:600;width:90px">${colaEsc(row.status)}</span>
+        <span style="color:#64748b;width:120px">${colaEsc(when)}</span>
+        <span style="color:#64748b;width:80px">${colaEsc(row.decided_by ?? "")}</span>
+        <span style="flex:1">${colaEsc(row.source_account)} · ${colaEsc((row.source_caption || "").slice(0, 80))}</span>
+      </div>`;
+    }).join("") || `<div style="color:#94a3b8">Sin decisiones todavía</div>`;
+  } catch (e) { /* silencioso */ }
+}
+async function colaSelectNext() {
+  const r = await fetch(`${API_BASE}/queue/select-next`, { method: "POST" });
+  const data = await r.json();
+  if (!r.ok) { alert(data.error || "No se pudo traer siguiente"); }
+  await renderColaList();
+}
+async function colaDecide(id, action) {
+  const r = await fetch(`${API_BASE}/queue/decide`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, action, actor: "dashboard" }),
+  });
+  const data = await r.json();
+  if (!data.ok) {
+    alert(data.error || "Acción fallida");
+  } else if (data.published) {
+    // OK silencioso, refresca
+  } else if (data.rejected && !data.nextCandidate) {
+    alert("Rechazado. No quedan más candidatos en la ventana de 6 meses.");
+  }
+  await renderColaList();
+  await renderColaHistory();
 }
 
 function loadBenchmarks() {
