@@ -1,6 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { notifyMelaniaAfterBooking } = require('./melania-notify');
 
 const AGENDA_URL = 'https://clinyco.medinetapp.com/agendaweb/planned/';
 const DEFAULT_BRANCH_NAME = process.env.MEDINET_BRANCH_NAME || 'Antofagasta Mall Arauco Express';
@@ -666,6 +667,18 @@ async function bookSlot() {
         emailSent: emailSpan
       };
     });
+
+    // Step 14.5: Notificar a MelanIA al instante para que dispare el WhatsApp
+    // de confirmación sin esperar al cron del poller. La cita queda con su
+    // external_id real de Medinet, así no se duplica con el poller.
+    if (successResult.success) {
+      await notifyMelaniaAfterBooking({
+        branchId: selectedBranch.value,
+        slotDate,
+        slotTime,
+        rut,
+      });
+    }
 
     // Step 15: Click TERMINAR
     await page.locator('button.btn-primary[onclick="controlStepper(0, 0)"]').click().catch(() => {});
