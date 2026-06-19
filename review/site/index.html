@@ -1436,13 +1436,21 @@
       </p>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px">
+      <div style="display:flex;gap:0;border:1px solid #be185d;border-radius:6px;overflow:hidden">
+        <button id="comp-mode-curated" onclick="setCompMode('curated')" style="padding:6px 14px;background:#be185d;color:#fff;border:0;cursor:pointer;font-size:12px;font-weight:600">📄 Análisis curado</button>
+        <button id="comp-mode-live" onclick="setCompMode('live')" style="padding:6px 14px;background:#fff;color:#be185d;border:0;cursor:pointer;font-size:12px;font-weight:600">📡 En vivo (Meta)</button>
+      </div>
       <a id="competidores-open-new" href="/api/social/competitors" target="_blank" rel="noopener"
-         style="color:#be185d;text-decoration:none">↗ abrir análisis en pestaña nueva</a>
-      <span style="margin-left:auto;color:#94a3b8">El contexto sensible sobre la baja de @doctorvillagran se trata en una nota interna aparte, no aquí.</span>
+         style="color:#be185d;text-decoration:none">↗ abrir en pestaña nueva</a>
+      <span style="margin-left:auto;color:#94a3b8">Contexto sensible sobre la baja de @doctorvillagran se trata en nota interna aparte.</span>
     </div>
-    <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc">
+    <div id="competidores-curated" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc">
       <iframe id="competidores-frame" src="about:blank"
               style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
+    </div>
+    <div id="competidores-live" style="display:none">
+      <div id="competidores-live-meta" style="font-size:12px;color:#64748b;margin-bottom:10px"></div>
+      <div id="competidores-live-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
     </div>
   </div>
 
@@ -1719,6 +1727,108 @@ function loadCompetidores() {
   document.getElementById("competidores-frame").src = `${API_BASE}/social/competitors`;
   document.getElementById("competidores-open-new").href = `${API_BASE}/social/competitors`;
   window._competidoresLoaded = true;
+}
+function setCompMode(mode) {
+  const curatedBox = document.getElementById("competidores-curated");
+  const liveBox = document.getElementById("competidores-live");
+  const btnCurated = document.getElementById("comp-mode-curated");
+  const btnLive = document.getElementById("comp-mode-live");
+  if (mode === "live") {
+    curatedBox.style.display = "none";
+    liveBox.style.display = "block";
+    btnLive.style.background = "#be185d"; btnLive.style.color = "#fff";
+    btnCurated.style.background = "#fff"; btnCurated.style.color = "#be185d";
+    document.getElementById("competidores-open-new").href = `${API_BASE}/social/competitor-discover/all`;
+    if (!window._compLiveLoaded) renderCompLive();
+  } else {
+    curatedBox.style.display = "block";
+    liveBox.style.display = "none";
+    btnCurated.style.background = "#be185d"; btnCurated.style.color = "#fff";
+    btnLive.style.background = "#fff"; btnLive.style.color = "#be185d";
+    document.getElementById("competidores-open-new").href = `${API_BASE}/social/competitors`;
+  }
+}
+function compEsc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function compFmtNum(n) {
+  if (n == null) return "—";
+  if (n >= 1000000) return (n/1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n/1000).toFixed(1) + "K";
+  return String(n);
+}
+async function renderCompLive() {
+  const meta = document.getElementById("competidores-live-meta");
+  const grid = document.getElementById("competidores-live-grid");
+  meta.textContent = "Consultando Meta — primera carga puede tardar 10-20 seg (consulta a ~19 cuentas)…";
+  grid.innerHTML = "";
+  let json;
+  try {
+    const r = await fetch(`${API_BASE}/social/competitor-discover/all`);
+    json = await r.json();
+  } catch (e) {
+    meta.textContent = "Error: " + e.message;
+    return;
+  }
+  if (!json.ok) { meta.textContent = "Error: " + (json.error || "respuesta inválida"); return; }
+  window._compLiveLoaded = true;
+  const ageTxt = json.ageMinutes === 0 ? "recién consultado" : `cache de hace ${json.ageMinutes} min`;
+  meta.innerHTML = `Datos REALES desde Meta Business Discovery API · ${ageTxt}.
+    <a href="#" onclick="window._compLiveLoaded=false;renderCompLive();return false" style="color:#be185d">↻ refrescar (consulta Meta de nuevo)</a>`;
+  const groups = json.groups || {};
+  const byGroup = {};
+  for (const acc of json.accounts) {
+    const g = acc.group || "otros";
+    (byGroup[g] = byGroup[g] || []).push(acc);
+  }
+  let html = "";
+  for (const [g, items] of Object.entries(byGroup)) {
+    html += `<div style="grid-column:1/-1;font-size:13px;font-weight:600;color:#475569;margin:14px 0 4px">${compEsc(groups[g] || g)}</div>`;
+    // Ordenar dentro del grupo por followers desc, errores al final
+    items.sort((a, b) => (b.target?.followersCount ?? -1) - (a.target?.followersCount ?? -1));
+    for (const acc of items) {
+      const t = acc.target || {};
+      if (acc.error) {
+        html += `<div style="background:#fef9c3;border:1px solid #ca8a04;border-radius:8px;padding:10px;font-size:12px">
+          <b>@${compEsc(t.username || acc.handle)}</b><br>
+          <span style="color:#92400e">⚠ ${compEsc(acc.error)}</span>
+          <div style="color:#92400e;font-size:11px;margin-top:4px">${compEsc(acc.why || "")}</div>
+        </div>`;
+        continue;
+      }
+      const tops = (acc.recent || [])
+        .slice()
+        .sort((a, b) => (b.engagement ?? 0) - (a.engagement ?? 0))
+        .slice(0, 3);
+      const topsHtml = tops.map((m) => {
+        const when = (m.timestamp || "").slice(0, 10);
+        return `<a href="${compEsc(m.permalink)}" target="_blank" style="display:flex;justify-content:space-between;font-size:11px;color:#475569;text-decoration:none;padding:3px 0;border-top:1px solid #e2e8f0">
+          <span>${compEsc(when)} · ${compEsc(m.media_type || "")}</span>
+          <span style="color:#dc2626">♥${m.like_count ?? 0} · 💬${m.comments_count ?? 0}</span>
+        </a>`;
+      }).join("");
+      const avgEng = (acc.recent || []).length
+        ? Math.round((acc.recent.reduce((s, m) => s + (m.engagement ?? 0), 0) / acc.recent.length))
+        : 0;
+      html += `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:12px">
+        <div style="display:flex;gap:10px;margin-bottom:8px">
+          ${t.profilePictureUrl ? `<img src="${compEsc(t.profilePictureUrl)}" style="width:42px;height:42px;border-radius:50%;object-fit:cover"/>` : ""}
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600">@${compEsc(t.username || acc.handle)}</div>
+            <div style="color:#94a3b8;font-size:11px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden">${compEsc(t.name || "")}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:14px;margin-bottom:8px;font-variant-numeric:tabular-nums">
+          <div><div style="font-size:16px;font-weight:600">${compFmtNum(t.followersCount)}</div><div style="font-size:10px;color:#94a3b8">SEGUIDORES</div></div>
+          <div><div style="font-size:16px;font-weight:600">${compFmtNum(t.mediaCount)}</div><div style="font-size:10px;color:#94a3b8">POSTS</div></div>
+          <div><div style="font-size:16px;font-weight:600">${compFmtNum(avgEng)}</div><div style="font-size:10px;color:#94a3b8">♥+💬 PROM</div></div>
+        </div>
+        <div style="color:#64748b;font-size:11px;margin-bottom:6px;font-style:italic">${compEsc(acc.why || "")}</div>
+        ${tops.length ? `<div style="margin-top:6px"><div style="font-size:10px;color:#94a3b8;letter-spacing:0.5px;margin-bottom:2px">TOP 3 POSTS RECIENTES</div>${topsHtml}</div>` : ""}
+      </div>`;
+    }
+  }
+  grid.innerHTML = html;
 }
 
 // ── Cola fonasapad ────────────────────────────────────────────────
