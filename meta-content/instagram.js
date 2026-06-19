@@ -86,6 +86,25 @@ export async function getAccountInsights(igUserId, {
   return json.data ?? [];
 }
 
+// Pull the currently-active Instagram Stories for an account (the live
+// last-24h ring). Stories archive isn't queryable via the public Graph API
+// once they expire, so the "is this account using Stories actively?"
+// question can only be answered by sampling current Stories or by
+// recording them daily into our own storage.
+//
+// Each story carries: id, media_type (IMAGE | VIDEO), media_url,
+// thumbnail_url (videos only), timestamp, permalink, caption.
+export async function listStories(igUserId, {
+  fields = "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink",
+  token,
+} = {}) {
+  const json = await graphGet(`/${igUserId}/stories`, {
+    params: { fields },
+    token,
+  });
+  return json.data ?? [];
+}
+
 // Pull a month-bounded window of media with the fields needed to render
 // thumbnails (image_url for IMAGE, thumbnail_url for VIDEO covers,
 // children expanded for CAROUSEL_ALBUM). Returns a normalized post shape:

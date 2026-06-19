@@ -3,29 +3,12 @@
 // Given posts (already normalized — each post has source: "instagram" or
 // "facebook"), emits a self-contained HTML page with a CSS grid of cards.
 // Each card carries: engagement metrics, source badge, every image side-by-
-// side, caption snippet, and the permalink. The page is self-contained
-// (inline CSS) so the route handler can stream it straight to the browser.
+// side, caption snippet, and the permalink. Stories (live last-24h IG ring)
+// are rendered as a separate strip above the post grid when available.
+// The page is self-contained (inline CSS) so the route handler can stream
+// it straight to the browser.
 
-const SORT_LABEL = {
-  engagement: "engagement (♥ + 💬 + ↗)",
-  likes: "likes (♥)",
-  comments: "comentarios (💬)",
-  shares: "compartidos (↗, solo FB)",
-  recent: "más recientes primero",
-  oldest: "más antiguos primero",
-};
-
-const METRIC_EXPLANATIONS = {
-  engagement:
-    "Suma de interacciones públicas. En Instagram: likes + comentarios. En Facebook: likes/reactions + comentarios + compartidos. NO incluye alcance, vistas ni saves (requieren /insights de Meta).",
-  likes:
-    "♥ del post. En Facebook agrupa todas las reactions (like, love, wow, etc.).",
-  comments: "Número de comentarios públicos al post.",
-  shares:
-    "Veces que el post fue compartido fuera de la página. Solo disponible para Facebook — Instagram no expone shares en API pública.",
-  recent: "Ordenado por fecha de publicación descendente.",
-  oldest: "Ordenado por fecha de publicación ascendente.",
-};
+import { explain } from "./glossary.js";
 
 const SOURCE_LABEL = {
   all: "Instagram + Facebook",
@@ -85,12 +68,13 @@ export function renderContactSheet({
   source = "all",
   sort = "engagement",
   posts,
+  stories = [],
   counts = { ig: 0, fb: 0 },
   generatedAt,
 }) {
   const totalImages = posts.reduce((s, p) => s + p.images.length, 0);
-  const sortLabel = SORT_LABEL[sort] ?? sort;
-  const sortExplain = METRIC_EXPLANATIONS[sort] ?? "";
+  const sortGloss = explain(sort);
+  const sortLabel = sortGloss?.name ?? sort;
   const sourceLabel = SOURCE_LABEL[source] ?? source;
 
   const cards = posts.length
@@ -158,12 +142,91 @@ export function renderContactSheet({
   header.page .meta b { color: #c9d1d9; font-weight: 600; }
   header.page .explain {
     margin-top: 8px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: #161b22;
     border-left: 3px solid #f78166;
     border-radius: 4px;
     color: #c9d1d9;
     font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .explain-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    line-height: 1.55;
+  }
+  .explain-tag {
+    flex: 0 0 auto;
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+  .explain-tag.basic { background: #1f6feb; color: #fff; }
+  .explain-tag.tech { background: #6e3edc; color: #fff; }
+  .explain-sources { color: #8b949e; font-size: 11px; padding-top: 2px; }
+  .explain-sources code {
+    background: #21262d;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    color: #c9d1d9;
+  }
+  .stories {
+    background: #161b22;
+    border-bottom: 1px solid #21262d;
+    padding: 12px 32px;
+  }
+  .stories-head {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .story-pill {
+    background: linear-gradient(135deg, #f56040, #c13584, #833ab4);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 3px 10px;
+    border-radius: 12px;
+  }
+  .story-pill b { font-weight: 700; }
+  .stories-hint { color: #8b949e; font-size: 11px; }
+  .stories-strip {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .story {
+    flex: 0 0 auto;
+    width: 120px;
+    text-decoration: none;
+    color: #c9d1d9;
+  }
+  .story img {
+    width: 120px;
+    height: 200px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid #21262d;
+    background: #0d1117;
+  }
+  .story-meta {
+    display: block;
+    font-size: 10px;
+    color: #8b949e;
+    padding-top: 4px;
+    text-align: center;
   }
   main {
     display: grid;
@@ -269,9 +332,61 @@ export function renderContactSheet({
     <b>${posts.length}</b> posts (${counts.ig} IG + ${counts.fb} FB) · <b>${totalImages}</b> imágenes ·
     Generado ${escape(generatedAt)}
   </div>
-  ${sortExplain ? `<div class="explain"><b>¿Qué es "${escape(sortLabel)}"?</b> ${escape(sortExplain)}</div>` : ""}
+  ${sortGloss ? renderExplainPanel(sortGloss) : ""}
 </header>
+${renderStoriesStrip(stories)}
 <main>${cards}</main>
 </body>
 </html>`;
+}
+
+function renderExplainPanel(g) {
+  const sources = g.sources?.length
+    ? `<div class="explain-sources">Fuentes: ${g.sources.map((s) => `<code>${escape(s)}</code>`).join(" · ")}</div>`
+    : "";
+  return `
+    <div class="explain">
+      <div class="explain-row">
+        <span class="explain-tag basic">🧒 Básico</span>
+        <span>${escape(g.basic)}</span>
+      </div>
+      <div class="explain-row">
+        <span class="explain-tag tech">👨‍⚕️ Técnico</span>
+        <span>${escape(g.technical)}</span>
+      </div>
+      ${sources}
+    </div>`;
+}
+
+function renderStoriesStrip(stories) {
+  if (!stories.length) return "";
+  const items = stories
+    .map((s) => {
+      const url = s.media_type === "VIDEO" ? s.thumbnail_url : s.media_url;
+      if (!url) return "";
+      const ago = humanAgo(s.timestamp);
+      return `
+        <a class="story" href="${escape(s.permalink ?? "#")}" target="_blank" rel="noopener" title="${escape(ago)}">
+          <img loading="lazy" src="${escape(url)}" alt="" />
+          <span class="story-meta">${escape(s.media_type ?? "")} · ${escape(ago)}</span>
+        </a>`;
+    })
+    .join("");
+  return `
+    <section class="stories">
+      <div class="stories-head">
+        <span class="story-pill">STORIES activas <b>${stories.length}</b></span>
+        <span class="stories-hint">Estos son los Stories de las últimas 24 h. El archivo histórico no es consultable vía API — para tendencias hay que registrarlos diariamente.</span>
+      </div>
+      <div class="stories-strip">${items}</div>
+    </section>`;
+}
+
+function humanAgo(timestamp) {
+  if (!timestamp) return "?";
+  const ms = Date.now() - new Date(timestamp).getTime();
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "<1h";
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }

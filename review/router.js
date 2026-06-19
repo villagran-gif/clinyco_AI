@@ -1273,14 +1273,18 @@ router.get(
     }
     const page = await findPage(account);
 
-    // Fetch IG + FB in parallel; gracefully degrade if one source is empty
-    // or unavailable (e.g. an account with no linked IG).
-    const [igPosts, fbPosts] = await Promise.all([
+    // Fetch IG posts + FB posts + IG Stories (live last-24h) in parallel.
+    // Stories silently degrade to empty if the endpoint refuses — same
+    // pattern as the other sources.
+    const [igPosts, fbPosts, stories] = await Promise.all([
       source !== "fb" && page.igUserId
         ? instagram.fetchWindowWithImages(page.igUserId, { monthsBack, token: page.accessToken })
         : Promise.resolve([]),
       source !== "ig"
         ? facebook.fetchWindowWithImages(page.pageId, { monthsBack, token: page.accessToken })
+        : Promise.resolve([]),
+      source !== "fb" && page.igUserId
+        ? instagram.listStories(page.igUserId, { token: page.accessToken }).catch(() => [])
         : Promise.resolve([]),
     ]);
 
@@ -1292,12 +1296,129 @@ router.get(
       source,
       sort,
       posts,
+      stories,
       counts: { ig: igPosts.length, fb: fbPosts.length },
       generatedAt: new Date().toISOString(),
     });
     res.type("text/html").send(html);
   }),
 );
+
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — follower-count trend over time
+//  GET /api/review/social/follower-trend?account=<name>&days=<1..90>
+//  Renders a self-contained HTML page with an inline SVG sparkline
+//  for daily follower counts. Used to investigate growth / decline.
+// ═══════════════════════════════════════════════════════════════════
+router.get(
+  "/social/follower-trend",
+  wrap(async (req, res) => {
+    const account = String(req.query.account || "").trim();
+    const days = Math.min(Math.max(Number(req.query.days) || 90, 7), 90);
+    if (!account) {
+      return res.status(400).type("text/plain")
+        .send("Missing ?account=<name>. Example: ?account=doctorvillagran&days=90");
+    }
+    const page = await findPage(account);
+    if (!page.igUserId) {
+      return res.status(404).type("text/plain")
+        .send(`Page "${page.name}" has no linked Instagram account.`);
+    }
+    const until = Math.floor(Date.now() / 1000);
+    const since = until - days * 86400;
+    let series = [];
+    let warn = "";
+    try {
+      const insights = await instagram.getAccountInsights(page.igUserId, {
+        metrics: "follower_count",
+        period: "day",
+        since,
+        until,
+        token: page.accessToken,
+      });
+      const followerMetric = insights.find((m) => m.name === "follower_count");
+      series = followerMetric?.values ?? [];
+    } catch (err) {
+      warn = err.message;
+    }
+    res.type("text/html").send(renderFollowerTrendPage({
+      account: { name: page.name, igUsername: page.igUsername },
+      days,
+      series,
+      warn,
+      generatedAt: new Date().toISOString(),
+    }));
+  }),
+);
+
+function renderFollowerTrendPage({ account, days, series, warn, generatedAt }) {
+  const points = series
+    .map((v) => ({ date: v.end_time?.slice(0, 10) ?? "", value: Number(v.value) || 0 }))
+    .filter((p) => p.date);
+  const head = points[0];
+  const tail = points[points.length - 1];
+  const delta = head && tail ? tail.value - head.value : 0;
+  const deltaPct = head && head.value ? ((delta / head.value) * 100).toFixed(2) : "—";
+  const max = points.reduce((m, p) => Math.max(m, p.value), 0);
+  const min = points.reduce((m, p) => Math.min(m, p.value), Infinity);
+  const range = max - min || 1;
+  const W = 880;
+  const H = 260;
+  const PAD = 32;
+  const path = points
+    .map((p, i) => {
+      const x = PAD + (i / Math.max(points.length - 1, 1)) * (W - 2 * PAD);
+      const y = H - PAD - ((p.value - min) / range) * (H - 2 * PAD);
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const safe = (s) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  const deltaCss = delta < 0 ? "color:#f85149" : delta > 0 ? "color:#56d364" : "color:#8b949e";
+  return `<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"/><title>Follower trend — ${safe(account.name)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { margin:0; background:#0d1117; color:#c9d1d9; font:14px/1.5 -apple-system,system-ui,sans-serif; padding:24px 32px; }
+  h1 { margin:0 0 4px; font-size:18px; }
+  .sub { color:#8b949e; font-size:12px; margin-bottom:20px; }
+  .stats { display:flex; gap:32px; margin-bottom:20px; flex-wrap:wrap; }
+  .stat { background:#161b22; padding:12px 16px; border-radius:6px; min-width:140px; }
+  .stat .v { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .stat .l { font-size:11px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; }
+  svg { background:#161b22; border:1px solid #21262d; border-radius:6px; }
+  .explain { margin-top:16px; padding:12px 14px; background:#161b22; border-left:3px solid #f78166; border-radius:4px; font-size:12px; line-height:1.6; }
+  .explain b { color:#f78166; }
+  .warn { background:#3d1f1f; border:1px solid #f85149; padding:8px 12px; border-radius:4px; color:#f85149; font-size:12px; margin-bottom:16px; }
+</style></head>
+<body>
+<h1>${safe(account.name)} — seguidores día a día</h1>
+<div class="sub">@${safe(account.igUsername ?? "?")} · últimos ${days} días · generado ${safe(generatedAt)}</div>
+${warn ? `<div class="warn">⚠ ${safe(warn)}</div>` : ""}
+<div class="stats">
+  <div class="stat"><div class="v">${head ? head.value.toLocaleString("es-CL") : "—"}</div><div class="l">Inicio (${safe(head?.date ?? "")})</div></div>
+  <div class="stat"><div class="v">${tail ? tail.value.toLocaleString("es-CL") : "—"}</div><div class="l">Hoy (${safe(tail?.date ?? "")})</div></div>
+  <div class="stat"><div class="v" style="${deltaCss}">${delta > 0 ? "+" : ""}${delta.toLocaleString("es-CL")}</div><div class="l">Δ absoluto</div></div>
+  <div class="stat"><div class="v" style="${deltaCss}">${delta > 0 ? "+" : ""}${deltaPct}%</div><div class="l">Δ porcentual</div></div>
+</div>
+${points.length ? `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  <line x1="${PAD}" y1="${H - PAD}" x2="${W - PAD}" y2="${H - PAD}" stroke="#30363d" stroke-width="1"/>
+  <line x1="${PAD}" y1="${PAD}" x2="${PAD}" y2="${H - PAD}" stroke="#30363d" stroke-width="1"/>
+  <text x="${PAD - 6}" y="${PAD + 4}" text-anchor="end" fill="#8b949e" font-size="10">${max.toLocaleString("es-CL")}</text>
+  <text x="${PAD - 6}" y="${H - PAD}" text-anchor="end" fill="#8b949e" font-size="10">${min.toLocaleString("es-CL")}</text>
+  <path d="${path}" fill="none" stroke="#58a6ff" stroke-width="2"/>
+</svg>` : "<p style='color:#8b949e'>Sin datos. Posibles causas: token sin scope <code>instagram_business_manage_insights</code>, cuenta menor a 7 días, o IG aún no expone insights para esta cuenta.</p>"}
+<div class="explain">
+  <p><b>🧒 Básico:</b> Cuántas personas siguen a la cuenta cada día. Un drop chico (menos del 1% mensual) suele ser limpieza normal de Instagram (borra cuentas falsas o inactivas). Drops mayores ameritan investigar qué cambió en la estrategia de contenido.</p>
+  <p><b>👨‍⚕️ Técnico:</b> <code>metric=follower_count, period=day</code> via <code>/{ig-user-id}/insights</code>. Devuelve snapshots diarios hasta 90 días atrás. Si el delta acumulado es lineal y suave, suele ser hygiene normal. Si es escalonado, suele coincidir con un cambio de contenido o un algoritmo update. Para diagnosticar: comparar con engagement por post en el mismo período (en el tab Social IG/FB).</p>
+</div>
+</body></html>`;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  SOCIAL — industry benchmarks (curated markdown reports)
@@ -1307,7 +1428,7 @@ router.get(
 router.get(
   "/social/benchmarks",
   wrap(async (req, res) => {
-    const allFiles = listBenchmarkReports();
+    const allFiles = listBenchmarkReports({ prefix: "medical-" });
     if (!allFiles.length) {
       return res
         .status(404)
@@ -1316,6 +1437,30 @@ router.get(
           "<p>Sin reportes de benchmarks disponibles todavía. " +
             "Genera uno y guárdalo como <code>data/benchmarks/medical-YYYY-MM.md</code>.</p>",
         );
+    }
+    const requested = req.query.file ? String(req.query.file) : allFiles[0];
+    const currentFile = allFiles.includes(requested) ? requested : allFiles[0];
+    const markdown = readBenchmarkReport(currentFile);
+    const html = renderBenchmarksPage({ markdown, currentFile, allFiles });
+    res.type("text/html").send(html);
+  }),
+);
+
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — recomendaciones mensuales (estrategia derivada)
+//  GET /api/review/social/recommendations[?file=...]
+//  Sibling tab to /benchmarks; reuses the same renderer. Files live
+//  alongside benchmarks under data/benchmarks/recomendaciones-YYYY-MM.md.
+// ═══════════════════════════════════════════════════════════════════
+router.get(
+  "/social/recommendations",
+  wrap(async (req, res) => {
+    const allFiles = listBenchmarkReports({ prefix: "recomendaciones-" });
+    if (!allFiles.length) {
+      return res.status(404).type("text/html").send(
+        "<p>Sin recomendaciones disponibles. " +
+          "Guarda una como <code>data/benchmarks/recomendaciones-YYYY-MM.md</code>.</p>",
+      );
     }
     const requested = req.query.file ? String(req.query.file) : allFiles[0];
     const currentFile = allFiles.includes(requested) ? requested : allFiles[0];
