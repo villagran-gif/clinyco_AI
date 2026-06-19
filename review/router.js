@@ -83,6 +83,7 @@ import {
   getMetaBilling,
   metaBillingSummary,
   getPool,
+  dbEnabled,
 } from "./db.js";
 import { findPage, instagram, facebook } from "../meta-content/index.js";
 import { renderContactSheet } from "../meta-content/contact-sheet.js";
@@ -110,6 +111,7 @@ import {
 } from "../queue/select-candidate.js";
 import { publishApproved } from "../queue/publish-to-fonasapad.js";
 import { notifyCandidateViaCalendar, toISODateString } from "../queue/calendar-notify.js";
+import { adaptCaptionForFonasapad } from "../queue/caption-adapter.js";
 import { tick as fonasapadCronTick, nextRunMs as fonasapadCronNextRun } from "../queue/cron.js";
 
 const router = Router();
@@ -1695,6 +1697,44 @@ router.post("/queue/notify-calendar", wrap(async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
+}));
+
+// Re-genera el adapted_caption llamando al adapter de Claude. Útil cuando
+// el editor quiere otra versión sin tener que rechazar el candidato.
+router.post("/queue/regenerate-caption/:id", wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await getQueueById(id);
+  if (!row) return res.status(404).json({ error: "id no encontrado" });
+  const adapted = await adaptCaptionForFonasapad({
+    sourceCaption: row.source_caption,
+    sourceAccount: row.source_account,
+    sourceMediaType: row.source_media_type,
+  });
+  if (!adapted) {
+    return res.status(500).json({ ok: false, error: "Adapter no devolvió texto (ver logs server)" });
+  }
+  if (dbEnabled()) {
+    await getPool().query(
+      `UPDATE fonasapad_queue SET adapted_caption = $2 WHERE id = $1`,
+      [id, adapted],
+    );
+  }
+  res.json({ ok: true, adaptedCaption: adapted });
+}));
+
+// Permite editar el adapted_caption a mano desde el dashboard.
+router.post("/queue/save-caption/:id", wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  const caption = String(req.body?.caption ?? "").trim();
+  if (!caption) return res.status(400).json({ error: "caption requerido" });
+  if (caption.length > 2200) return res.status(400).json({ error: "caption excede 2200 caracteres" });
+  if (dbEnabled()) {
+    await getPool().query(
+      `UPDATE fonasapad_queue SET adapted_caption = $2 WHERE id = $1`,
+      [id, caption],
+    );
+  }
+  res.json({ ok: true });
 }));
 
 // Estado del scheduler interno.
