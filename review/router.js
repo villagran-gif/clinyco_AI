@@ -107,7 +107,7 @@ import {
   countRemainingElegibles,
 } from "../queue/select-candidate.js";
 import { publishApproved } from "../queue/publish-to-fonasapad.js";
-import { notifyCandidateViaCalendar } from "../queue/calendar-notify.js";
+import { notifyCandidateViaCalendar, toISODateString } from "../queue/calendar-notify.js";
 import { tick as fonasapadCronTick, nextRunMs as fonasapadCronNextRun } from "../queue/cron.js";
 
 const router = Router();
@@ -1711,7 +1711,7 @@ function actionConfirmPage(row) {
   return actionShell(`
     <h1>¿Republicar este post en @fonasapad?</h1>
     <div class="meta">Origen: <b>${escapeHtml(row.source_account)}</b> ·
-      ${escapeHtml((row.source_timestamp || "").slice(0,10))} ·
+      ${escapeHtml(toISODateString(row.source_timestamp))} ·
       ${escapeHtml(row.source_media_type ?? "")} ·
       ${row.source_engagement} interacciones</div>
     <img class="preview" src="${escapeHtml(row.source_image_url)}" alt=""/>

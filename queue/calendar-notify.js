@@ -114,9 +114,20 @@ async function getAccessToken() {
 }
 
 // ── Render del evento ──
+
+// PostgreSQL devuelve TIMESTAMPTZ como objeto Date cuando se lee con `pg`,
+// no como string. Date.slice() no existe — por eso el botón "Notificar al
+// Calendar" rompía con "(row.source_timestamp || '').slice is not a
+// function". Helper normaliza ambos casos.
+export function toISODateString(value) {
+  if (!value) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
 function buildEventBody({ row, publicBaseUrl }) {
   const account = row.source_account;
-  const dateStr = (row.source_timestamp || "").slice(0, 10);
+  const dateStr = toISODateString(row.source_timestamp);
   const engagement = row.source_engagement ?? 0;
   const captionSnippet = (row.adapted_caption || row.source_caption || "").slice(0, 280);
   const approveUrl = `${publicBaseUrl}/api/review/queue/action/${row.action_token}?action=approve&actor=calendar`;
