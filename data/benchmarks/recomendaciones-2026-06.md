@@ -78,8 +78,9 @@ Una vez agotado el material histórico, @fonasapad pasa a publicar **en cadencia
 ## 🎨 Mix de contenido recomendado (basado en data interna + decisión estratégica)
 
 ### @clinyco.cl (cara principal de marca)
-- 40% carruseles educativos del **equipo Clínyco** (cirujano + nutricionista + psicólogo en cámara), mostrando que la marca es multidisciplinaria, no un solo rostro
-- 30% Reels cortos educativos (15-30 seg) — formato VIDEO ya es el top con avg 36.4
+- 30% **serie permanente "Equipo Clínyco al frente"** — Reel quincenal por cirujano del equipo: Dr. Alberto Sirabo, Dr. Andrés San Martín, Dr. Ramón Díaz (los tres confirmados en el equipo según `clinyco.cl/medicos` pero hoy invisibles en `@clinyco.cl`). Añadir nutricionista + psicólogo/a (Bencina/Pizarro del equipo). Modelo "equipo con cara" que ningún competidor chileno tiene, incluyendo Cumbres del Norte.
+- 20% **serie "Cómo opero con Bono PAD FONASA"** — ángulo de altísima intención comercial sub-explotado por Berry/Boza/Muñoz, fuerte solo en Cumbres del Norte y Zamarin. Combinar Reels cortos (qué cubre, requisitos, copago aproximado) + piezas largas en YouTube/TikTok.
+- 20% Reels cortos educativos (15-30 seg) — formato VIDEO ya es el top con avg 36.4
 - 20% testimonios con cara tapada o solo voz, narrados por miembros del equipo
 - 10% contenido de seguridad y protocolo (criterios de selección, anestesia, manejo de complicaciones) — refuerza confianza institucional
 
@@ -111,6 +112,18 @@ Aprobación de Meta tarda 1-24h. Mientras tanto, el flujo funciona **sin WhatsAp
 - Postear bienvenidas de equipo nuevo en @clinyco.cl como contenido principal. Los datos muestran que estos son los posts de peor performance (avg 33 vs top 153).
 - Compartir antes/después de cirugía plástica como **ads en feed** — Meta lo prohibió en 2025. Sí se puede en posts orgánicos con consentimiento.
 - Postear diario "porque sí" — si no hay contenido educativo, mejor solo Stories ese día.
+
+## 🆕 Insights del v2 de competidores (junio 2026)
+
+La investigación v2 ratificó la estrategia y agregó datos críticos. Resumen:
+
+- **El "frente norte" es más fuerte de lo estimado**: el Dr. Francisco Rodríguez de Antofagasta tiene **~68K seguidores** (no microinfluencer como sugería el cliente — handle real `@drfranciscorodriguez1`), y **`@clinicacumbresdelnorte` ~11K** es competidor institucional directo de Clínyco en el norte con modelo idéntico de "clínica-equipo". El liderazgo digital del norte hoy NO es Clínyco; hay que ganarlo o diferenciarse explícitamente (red multi-ciudad vs clínica única).
+- **3 caras del equipo Clínyco esperando producción**: Sirabo, San Martín y Ramón Díaz son cirujanos bariátricos del equipo confirmados en clinyco.cl, pero invisibles en `@clinyco.cl`. Convertir cada uno en un Reel quincenal recurrente lleva a Clínyco al modelo "equipo con cara" que ningún competidor chileno tiene.
+- **El vacío de psicología bariátrica chilena es de escala, no de personas**: existen Cecilia Navarro (NPCO/SCCBM) y Kimmey Huenchumán con credenciales, pero ninguna con >2K seguidores. Clínyco puede ser el primero en construir la cuenta líder, con psicóloga/psiquiatra propia (Bencina/Pizarro) o asociándose con una figura NPCO autorizada.
+- **Pacientes-celebridad como canal**: Christell Rodríguez (700K, operada por Funke en MEDS) no es un caso aislado. Política explícita de pacientes-embajadores con audiencia >10K + consentimiento explícito multiplica visibilidad sin pagar alcance.
+- **Sub-cuentas regionales que justifican monitoreo**: Anacona Talca (~9.4K), COBEC Concepción (~8.1K), Andes Salud El Loa Calama (~6.4K) — útiles para entender tácticas territoriales fuera del eje Santiago.
+
+Ver el reporte completo en el tab **Competidores** → selector "Competidores · @chile · v2-2026-06".
 
 ## ✅ Métricas a seguir cada lunes
 
