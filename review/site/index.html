@@ -180,6 +180,7 @@
     <button onclick="showTab('marketing')" style="background:#d97706;color:#fff;border-radius:6px">Marketing $</button>
     <button onclick="showTab('kpis')">KPIs</button>
     <button onclick="showTab('medinet')" style="background:#0d9488;color:#fff;border-radius:6px">Medinet</button>
+    <button onclick="showTab('social')" style="background:#7c3aed;color:#fff;border-radius:6px">Social IG/FB</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -1306,6 +1307,37 @@
 
     </div>
   </div>
+
+  <div id="tab-social" class="tab-content">
+    <div style="margin-bottom:12px">
+      <h2 style="margin:0 0 4px">Patrón visual — Instagram + Facebook</h2>
+      <p style="margin:0;color:#475569;font-size:13px">
+        Cada card incluye todas las imágenes del post (los carousels se ven side-by-side), ordenado por engagement.
+        Datos en vivo desde Meta — primera carga puede tardar 5-15 seg cuando hay carousels grandes.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <button onclick="socialLoad('clinyco', 2)" class="social-btn" data-account="clinyco">@clinyco.cl · 2m</button>
+      <button onclick="socialLoad('doctorvillagran', 6)" class="social-btn" data-account="doctorvillagran">@doctorvillagran · 6m</button>
+      <button onclick="socialLoad('fonasapad', 12)" class="social-btn" data-account="fonasapad">@fonasapad · 12m</button>
+      <span style="margin-left:auto;font-size:12px;color:#64748b">
+        Meses:
+        <select id="social-months" onchange="socialReload()" style="padding:4px 8px;border-radius:4px;border:1px solid #cbd5e1">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="6">6</option>
+          <option value="12">12</option>
+        </select>
+      </span>
+      <a id="social-open-new" target="_blank" rel="noopener"
+         style="font-size:12px;color:#7c3aed;text-decoration:none">↗ abrir pestaña nueva</a>
+    </div>
+    <div id="social-frame-wrap" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#0d1117">
+      <iframe id="social-frame" src="about:blank"
+              style="width:100%;height:calc(100vh - 280px);border:0;display:block"></iframe>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -1550,8 +1582,29 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
+}
+
+// Social IG/FB contact sheet — opens /api/social/contact-sheet via the
+// netlify redirect to /api/review/social/contact-sheet on Render.
+function loadSocial() {
+  socialLoad("clinyco", 2);
+  window._socialLoaded = true;
+}
+function socialLoad(account, months) {
+  const selector = document.getElementById("social-months");
+  if (months != null) selector.value = String(months);
+  document
+    .querySelectorAll(".social-btn")
+    .forEach((b) => b.style.outline = b.dataset.account === account ? "2px solid #7c3aed" : "");
+  const url = `${API_BASE}/social/contact-sheet?account=${encodeURIComponent(account)}&months=${selector.value}`;
+  document.getElementById("social-frame").src = url;
+  document.getElementById("social-open-new").href = url;
+  window._socialCurrentAccount = account;
+}
+function socialReload() {
+  if (window._socialCurrentAccount) socialLoad(window._socialCurrentAccount);
 }
 
 function kpiCard(value, label) {
