@@ -13,7 +13,7 @@
 // generous for these endpoints (no /insights per-media calls used).
 import fs from "node:fs";
 import path from "node:path";
-import { listPages, instagram, facebook } from "../meta-content/index.js";
+import { listPages, normalize, instagram, facebook } from "../meta-content/index.js";
 import {
   fetchIgWindow,
   fetchFbWindow,
@@ -24,7 +24,7 @@ import {
 
 const args = parseArgs(process.argv.slice(2));
 const monthsBack = Number(args.months ?? 12);
-const only = args.only ? String(args.only).toLowerCase() : null;
+const only = args.only ? normalize(args.only) : null;
 
 const outDir = "data/meta-content-analysis";
 const today = new Date().toISOString().slice(0, 10);
@@ -35,7 +35,7 @@ async function main() {
   console.log(`→ Discovering pages…`);
   const pages = await listPages();
   const targets = only
-    ? pages.filter((p) => p.name.toLowerCase().includes(only) || (p.igUsername ?? "").toLowerCase().includes(only))
+    ? pages.filter((p) => normalize(p.name).includes(only) || normalize(p.igUsername).includes(only))
     : pages;
   if (!targets.length) {
     throw new Error(`No pages matched --only=${only}. Available: ${pages.map((p) => p.name).join(", ")}`);
