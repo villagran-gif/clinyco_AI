@@ -181,6 +181,7 @@
     <button onclick="showTab('kpis')">KPIs</button>
     <button onclick="showTab('medinet')" style="background:#0d9488;color:#fff;border-radius:6px">Medinet</button>
     <button onclick="showTab('social')" style="background:#7c3aed;color:#fff;border-radius:6px">Social IG/FB</button>
+    <button onclick="showTab('benchmarks')" style="background:#0891b2;color:#fff;border-radius:6px">Benchmarks</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -1357,6 +1358,26 @@
               style="width:100%;height:calc(100vh - 280px);border:0;display:block"></iframe>
     </div>
   </div>
+
+  <div id="tab-benchmarks" class="tab-content">
+    <div style="margin-bottom:12px">
+      <h2 style="margin:0 0 4px">Benchmarks de redes sociales — salud, bariátrica, cirugía plástica</h2>
+      <p style="margin:0;color:#475569;font-size:13px">
+        Métricas críticas, rangos bajo/medio/alto, cuentas referencia LATAM, formatos ganadores y restricciones regulatorias.
+        Curado de Hootsuite, Sprout Social, RivalIQ, Dash Social, Meta y journals médicos — toda cifra con fuente atribuida.
+        Actualización planificada: mensual.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px">
+      <a id="benchmarks-open-new" href="/api/social/benchmarks" target="_blank" rel="noopener"
+         style="color:#0891b2;text-decoration:none">↗ abrir reporte en pestaña nueva</a>
+      <span style="margin-left:auto;color:#94a3b8">El selector dentro del iframe permite cambiar de mes/versión cuando haya más reportes.</span>
+    </div>
+    <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc">
+      <iframe id="benchmarks-frame" src="about:blank"
+              style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -1601,8 +1622,14 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
+}
+
+function loadBenchmarks() {
+  document.getElementById("benchmarks-frame").src = `${API_BASE}/social/benchmarks`;
+  document.getElementById("benchmarks-open-new").href = `${API_BASE}/social/benchmarks`;
+  window._benchmarksLoaded = true;
 }
 
 // Social IG/FB contact sheet — opens /api/social/contact-sheet via the
