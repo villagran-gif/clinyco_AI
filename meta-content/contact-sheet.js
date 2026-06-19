@@ -1,12 +1,37 @@
-// HTML contact-sheet generator for visual pattern study.
+// HTML contact-sheet generator for visual pattern study (IG + Facebook).
 //
-// Given a window of IG media (already expanded — carousels split into
-// children), emits a self-contained HTML page with a CSS grid of cards,
-// sorted by engagement desc. Each card shows every frame side-by-side so
-// the carousel narrative is visible at a glance.
-//
-// The page is self-contained (inline CSS, no external assets) so the
-// route handler can stream it straight to the browser.
+// Given posts (already normalized — each post has source: "instagram" or
+// "facebook"), emits a self-contained HTML page with a CSS grid of cards.
+// Each card carries: engagement metrics, source badge, every image side-by-
+// side, caption snippet, and the permalink. The page is self-contained
+// (inline CSS) so the route handler can stream it straight to the browser.
+
+const SORT_LABEL = {
+  engagement: "engagement (♥ + 💬 + ↗)",
+  likes: "likes (♥)",
+  comments: "comentarios (💬)",
+  shares: "compartidos (↗, solo FB)",
+  recent: "más recientes primero",
+  oldest: "más antiguos primero",
+};
+
+const METRIC_EXPLANATIONS = {
+  engagement:
+    "Suma de interacciones públicas. En Instagram: likes + comentarios. En Facebook: likes/reactions + comentarios + compartidos. NO incluye alcance, vistas ni saves (requieren /insights de Meta).",
+  likes:
+    "♥ del post. En Facebook agrupa todas las reactions (like, love, wow, etc.).",
+  comments: "Número de comentarios públicos al post.",
+  shares:
+    "Veces que el post fue compartido fuera de la página. Solo disponible para Facebook — Instagram no expone shares en API pública.",
+  recent: "Ordenado por fecha de publicación descendente.",
+  oldest: "Ordenado por fecha de publicación ascendente.",
+};
+
+const SOURCE_LABEL = {
+  all: "Instagram + Facebook",
+  ig: "solo Instagram",
+  fb: "solo Facebook",
+};
 
 function escape(s) {
   return String(s ?? "")
@@ -21,32 +46,85 @@ function truncate(s, n) {
   return flat.length > n ? flat.slice(0, n - 1) + "…" : flat;
 }
 
-// Build the HTML. `posts` is the same shape as
-// scripts/extract-meta-image-urls.mjs returns:
-//   { id, timestamp, date, mediaType, caption, permalink, engagement, images: [{url, kind}] }
-export function renderContactSheet({ account, monthsBack, posts, generatedAt }) {
-  const sorted = [...posts].sort((a, b) => b.engagement - a.engagement);
-  const totalImages = sorted.reduce((s, p) => s + p.images.length, 0);
+function sourceBadge(source) {
+  if (source === "instagram") {
+    return `<span class="src ig" title="Instagram">IG</span>`;
+  }
+  if (source === "facebook") {
+    return `<span class="src fb" title="Facebook">FB</span>`;
+  }
+  return "";
+}
 
-  const cards = sorted
-    .map((p) => {
-      const thumbs = p.images
-        .map((img) => `<img loading="lazy" src="${escape(img.url)}" alt="" />`)
-        .join("");
-      const caption = truncate(p.caption ?? "", 220);
-      return `
-        <article class="card">
-          <header>
-            <span class="eng">♥ ${p.engagement}</span>
-            <span class="kind">${escape(p.mediaType)}</span>
-            <span class="date">${escape(p.date ?? "")}</span>
-          </header>
-          <div class="strip">${thumbs}</div>
-          <p class="caption">${escape(caption)}</p>
-          ${p.permalink ? `<a class="perma" href="${escape(p.permalink)}" target="_blank" rel="noopener">abrir en Instagram ↗</a>` : ""}
-        </article>`;
-    })
-    .join("\n");
+function emptyMessage({ counts, source, monthsBack }) {
+  const where =
+    source === "ig"
+      ? "Instagram"
+      : source === "fb"
+        ? "Facebook"
+        : "Instagram ni Facebook";
+  const hint =
+    counts.ig + counts.fb === 0
+      ? "Esta cuenta no publicó nada en el período seleccionado. Prueba ampliar a 12 meses, o esta cuenta puede estar inactiva."
+      : "Con el filtro actual no hay posts; cambia el filtro de fuente arriba para ver lo que sí existe.";
+  return `
+    <div style="padding: 60px 32px; text-align: center; color: #8b949e;">
+      <p style="font-size:16px;margin:0 0 8px">
+        Sin posts en ${escape(where)} en los últimos ${monthsBack} meses.
+      </p>
+      <p style="font-size:13px;margin:0">${escape(hint)}</p>
+      <p style="font-size:12px;margin:14px 0 0;color:#6e7681">
+        Conteos totales en la ventana: ${counts.ig} en Instagram · ${counts.fb} en Facebook
+      </p>
+    </div>`;
+}
+
+export function renderContactSheet({
+  account,
+  monthsBack,
+  source = "all",
+  sort = "engagement",
+  posts,
+  counts = { ig: 0, fb: 0 },
+  generatedAt,
+}) {
+  const totalImages = posts.reduce((s, p) => s + p.images.length, 0);
+  const sortLabel = SORT_LABEL[sort] ?? sort;
+  const sortExplain = METRIC_EXPLANATIONS[sort] ?? "";
+  const sourceLabel = SOURCE_LABEL[source] ?? source;
+
+  const cards = posts.length
+    ? posts
+        .map((p) => {
+          const thumbs = p.images.length
+            ? p.images
+                .map((img) => `<img loading="lazy" src="${escape(img.url)}" alt="" />`)
+                .join("")
+            : `<div class="no-image">sin imagen</div>`;
+          const caption = truncate(p.caption ?? "", 220);
+          // Foreground the active sort metric, keep the others as a row
+          const metrics = `
+            <div class="metrics">
+              <span class="m ${sort === "likes" ? "active" : ""}">♥ ${p.likes ?? 0}</span>
+              <span class="m ${sort === "comments" ? "active" : ""}">💬 ${p.comments ?? 0}</span>
+              ${p.source === "facebook" ? `<span class="m ${sort === "shares" ? "active" : ""}">↗ ${p.shares ?? 0}</span>` : ""}
+              <span class="m total ${sort === "engagement" ? "active" : ""}">Σ ${p.engagement ?? 0}</span>
+            </div>`;
+          return `
+            <article class="card">
+              <header>
+                ${sourceBadge(p.source)}
+                <span class="kind">${escape(p.mediaType)}</span>
+                <span class="date">${escape(p.date ?? "")}</span>
+              </header>
+              ${metrics}
+              <div class="strip">${thumbs}</div>
+              <p class="caption">${escape(caption)}</p>
+              ${p.permalink ? `<a class="perma" href="${escape(p.permalink)}" target="_blank" rel="noopener">abrir post ↗</a>` : ""}
+            </article>`;
+        })
+        .join("\n")
+    : emptyMessage({ counts, source, monthsBack });
 
   return `<!doctype html>
 <html lang="es">
@@ -64,16 +142,27 @@ export function renderContactSheet({ account, monthsBack, posts, generatedAt }) 
     font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
   }
   header.page {
-    padding: 28px 32px 12px;
+    padding: 24px 32px 14px;
     border-bottom: 1px solid #21262d;
   }
   header.page h1 {
     margin: 0 0 6px;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
   }
   header.page .meta {
     color: #8b949e;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  header.page .meta b { color: #c9d1d9; font-weight: 600; }
+  header.page .explain {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #161b22;
+    border-left: 3px solid #f78166;
+    border-radius: 4px;
+    color: #c9d1d9;
     font-size: 12px;
   }
   main {
@@ -98,13 +187,19 @@ export function renderContactSheet({ account, monthsBack, posts, generatedAt }) 
     border-bottom: 1px solid #21262d;
     font-size: 12px;
   }
-  .card .eng {
-    color: #f78166;
-    font-weight: 600;
+  .src {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
   }
+  .src.ig { background: #6e3edc; color: #fff; }
+  .src.fb { background: #1d4ed8; color: #fff; }
   .card .kind {
     color: #8b949e;
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -113,6 +208,17 @@ export function renderContactSheet({ account, monthsBack, posts, generatedAt }) 
     color: #8b949e;
     font-variant-numeric: tabular-nums;
   }
+  .metrics {
+    display: flex;
+    gap: 12px;
+    padding: 8px 14px;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+    color: #8b949e;
+  }
+  .metrics .m { font-variant-numeric: tabular-nums; }
+  .metrics .m.active { color: #f78166; font-weight: 600; }
+  .metrics .m.total { margin-left: auto; }
   .strip {
     display: flex;
     overflow-x: auto;
@@ -126,6 +232,13 @@ export function renderContactSheet({ account, monthsBack, posts, generatedAt }) 
     object-fit: cover;
   }
   .strip img:last-child { border-right: 0; }
+  .strip .no-image {
+    padding: 60px 24px;
+    color: #6e7681;
+    font-size: 12px;
+    width: 100%;
+    text-align: center;
+  }
   .caption {
     margin: 0;
     padding: 12px 14px;
@@ -150,9 +263,13 @@ export function renderContactSheet({ account, monthsBack, posts, generatedAt }) 
 <header class="page">
   <h1>${escape(account.name)} <span style="color:#8b949e;font-weight:400">— @${escape(account.igUsername ?? "?")}</span></h1>
   <div class="meta">
-    Últimos ${monthsBack} meses · ${sorted.length} posts · ${totalImages} imágenes · ordenado por engagement
-    · generado ${escape(generatedAt)}
+    Últimos <b>${monthsBack}</b> meses · Fuente: <b>${escape(sourceLabel)}</b> ·
+    Ordenado por <b>${escape(sortLabel)}</b>
+    <br />
+    <b>${posts.length}</b> posts (${counts.ig} IG + ${counts.fb} FB) · <b>${totalImages}</b> imágenes ·
+    Generado ${escape(generatedAt)}
   </div>
+  ${sortExplain ? `<div class="explain"><b>¿Qué es "${escape(sortLabel)}"?</b> ${escape(sortExplain)}</div>` : ""}
 </header>
 <main>${cards}</main>
 </body>

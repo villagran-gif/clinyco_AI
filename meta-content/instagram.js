@@ -140,6 +140,8 @@ export async function fetchWindowWithImages(igUserId, {
       engagement: (m.like_count ?? 0) + (m.comments_count ?? 0),
       likes: m.like_count ?? 0,
       comments: m.comments_count ?? 0,
+      shares: 0,
+      source: "instagram",
       images: [],
     };
     if (m.media_type === "IMAGE" && m.media_url) {

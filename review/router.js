@@ -84,7 +84,7 @@ import {
   metaBillingSummary,
   getPool,
 } from "./db.js";
-import { findPage, instagram } from "../meta-content/index.js";
+import { findPage, instagram, facebook } from "../meta-content/index.js";
 import { renderContactSheet } from "../meta-content/contact-sheet.js";
 
 const router = Router();
@@ -1239,16 +1239,25 @@ router.get("/medinet/sync-status", wrap(async (_req, res) => {
 }));
 
 // ═══════════════════════════════════════════════════════════════════
-//  SOCIAL — visual pattern contact sheet
-//  GET /api/review/social/contact-sheet?account=clinyco&months=2
-//  Live fetch from Meta. Returns an HTML page (CSS grid of every image)
-//  for in-browser pattern study. No data is persisted server-side.
+//  SOCIAL — visual pattern contact sheet (Instagram + Facebook)
+//  GET /api/review/social/contact-sheet
+//    ?account=<name>          required — Page name or IG handle
+//    &months=<1..12>          default 2
+//    &source=ig|fb|all        default 'all'
+//    &sort=engagement|likes|comments|shares|recent|oldest
+//                             default 'engagement'
+//  Live fetch from Meta. Returns an HTML page; no data persisted.
 // ═══════════════════════════════════════════════════════════════════
+const SORT_KEYS = new Set(["engagement", "likes", "comments", "shares", "recent", "oldest"]);
+const SOURCE_VALUES = new Set(["ig", "fb", "all"]);
+
 router.get(
   "/social/contact-sheet",
   wrap(async (req, res) => {
     const account = String(req.query.account || "").trim();
     const monthsBack = Math.min(Math.max(Number(req.query.months) || 2, 1), 12);
+    const source = SOURCE_VALUES.has(req.query.source) ? req.query.source : "all";
+    const sort = SORT_KEYS.has(req.query.sort) ? req.query.sort : "engagement";
     if (!account) {
       return res
         .status(400)
@@ -1258,24 +1267,47 @@ router.get(
         );
     }
     const page = await findPage(account);
-    if (!page.igUserId) {
-      return res
-        .status(404)
-        .type("text/plain")
-        .send(`Page "${page.name}" has no linked Instagram account.`);
-    }
-    const posts = await instagram.fetchWindowWithImages(page.igUserId, {
-      monthsBack,
-      token: page.accessToken,
-    });
+
+    // Fetch IG + FB in parallel; gracefully degrade if one source is empty
+    // or unavailable (e.g. an account with no linked IG).
+    const [igPosts, fbPosts] = await Promise.all([
+      source !== "fb" && page.igUserId
+        ? instagram.fetchWindowWithImages(page.igUserId, { monthsBack, token: page.accessToken })
+        : Promise.resolve([]),
+      source !== "ig"
+        ? facebook.fetchWindowWithImages(page.pageId, { monthsBack, token: page.accessToken })
+        : Promise.resolve([]),
+    ]);
+
+    const posts = sortPosts([...igPosts, ...fbPosts], sort);
+
     const html = renderContactSheet({
       account: { name: page.name, igUsername: page.igUsername },
       monthsBack,
+      source,
+      sort,
       posts,
+      counts: { ig: igPosts.length, fb: fbPosts.length },
       generatedAt: new Date().toISOString(),
     });
     res.type("text/html").send(html);
   }),
 );
+
+function sortPosts(posts, sort) {
+  const byKey = (k) => (a, b) => (b[k] ?? 0) - (a[k] ?? 0);
+  switch (sort) {
+    case "likes": return [...posts].sort(byKey("likes"));
+    case "comments": return [...posts].sort(byKey("comments"));
+    case "shares": return [...posts].sort(byKey("shares"));
+    case "recent":
+      return [...posts].sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+    case "oldest":
+      return [...posts].sort((a, b) => (a.timestamp ?? "").localeCompare(b.timestamp ?? ""));
+    case "engagement":
+    default:
+      return [...posts].sort(byKey("engagement"));
+  }
+}
 
 export default router;

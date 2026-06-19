@@ -1320,8 +1320,9 @@
       <button onclick="socialLoad('clinyco', 2)" class="social-btn" data-account="clinyco">@clinyco.cl · 2m</button>
       <button onclick="socialLoad('doctorvillagran', 6)" class="social-btn" data-account="doctorvillagran">@doctorvillagran · 6m</button>
       <button onclick="socialLoad('fonasapad', 12)" class="social-btn" data-account="fonasapad">@fonasapad · 12m</button>
-      <span style="margin-left:auto;font-size:12px;color:#64748b">
-        Meses:
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:#475569">
+      <label>Meses:
         <select id="social-months" onchange="socialReload()" style="padding:4px 8px;border-radius:4px;border:1px solid #cbd5e1">
           <option value="1">1</option>
           <option value="2" selected>2</option>
@@ -1329,7 +1330,25 @@
           <option value="6">6</option>
           <option value="12">12</option>
         </select>
-      </span>
+      </label>
+      <label>Fuente:
+        <select id="social-source" onchange="socialReload()" style="padding:4px 8px;border-radius:4px;border:1px solid #cbd5e1">
+          <option value="all" selected>IG + FB</option>
+          <option value="ig">Solo Instagram</option>
+          <option value="fb">Solo Facebook</option>
+        </select>
+      </label>
+      <label>Ordenar por:
+        <select id="social-sort" onchange="socialReload()" style="padding:4px 8px;border-radius:4px;border:1px solid #cbd5e1">
+          <option value="engagement" selected>Engagement (♥+💬+↗)</option>
+          <option value="likes">Likes (♥)</option>
+          <option value="comments">Comentarios (💬)</option>
+          <option value="shares">Compartidos (↗, FB)</option>
+          <option value="recent">Más recientes</option>
+          <option value="oldest">Más antiguos</option>
+        </select>
+      </label>
+      <span style="margin-left:auto;cursor:help" title="Engagement = likes + comentarios + compartidos. Likes/comentarios disponibles en IG y FB. Compartidos solo en FB. Para alcance, vistas y saves se necesita el endpoint /insights de Meta (próxima fase).">ℹ ¿Qué significa cada métrica?</span>
       <a id="social-open-new" target="_blank" rel="noopener"
          style="font-size:12px;color:#7c3aed;text-decoration:none">↗ abrir pestaña nueva</a>
     </div>
@@ -1593,12 +1612,20 @@ function loadSocial() {
   window._socialLoaded = true;
 }
 function socialLoad(account, months) {
-  const selector = document.getElementById("social-months");
-  if (months != null) selector.value = String(months);
+  const monthsEl = document.getElementById("social-months");
+  const sourceEl = document.getElementById("social-source");
+  const sortEl = document.getElementById("social-sort");
+  if (months != null) monthsEl.value = String(months);
   document
     .querySelectorAll(".social-btn")
     .forEach((b) => b.style.outline = b.dataset.account === account ? "2px solid #7c3aed" : "");
-  const url = `${API_BASE}/social/contact-sheet?account=${encodeURIComponent(account)}&months=${selector.value}`;
+  const params = new URLSearchParams({
+    account,
+    months: monthsEl.value,
+    source: sourceEl.value,
+    sort: sortEl.value,
+  });
+  const url = `${API_BASE}/social/contact-sheet?${params.toString()}`;
   document.getElementById("social-frame").src = url;
   document.getElementById("social-open-new").href = url;
   window._socialCurrentAccount = account;
