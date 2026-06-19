@@ -347,12 +347,12 @@ function renderExplainPanel(g) {
   return `
     <div class="explain">
       <div class="explain-row">
-        <span class="explain-tag basic">🧒 Básico</span>
+        <span class="explain-tag basic">🧒 Rápido</span>
         <span>${escape(g.basic)}</span>
       </div>
       <div class="explain-row">
-        <span class="explain-tag tech">👨‍⚕️ Técnico</span>
-        <span>${escape(g.technical)}</span>
+        <span class="explain-tag tech">📖 En detalle</span>
+        <span>${escape(g.detailed)}</span>
       </div>
       ${sources}
     </div>`;

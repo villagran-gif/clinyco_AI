@@ -1414,8 +1414,8 @@ ${points.length ? `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns
   <path d="${path}" fill="none" stroke="#58a6ff" stroke-width="2"/>
 </svg>` : "<p style='color:#8b949e'>Sin datos. Posibles causas: token sin scope <code>instagram_business_manage_insights</code>, cuenta menor a 7 días, o IG aún no expone insights para esta cuenta.</p>"}
 <div class="explain">
-  <p><b>🧒 Básico:</b> Cuántas personas siguen a la cuenta cada día. Un drop chico (menos del 1% mensual) suele ser limpieza normal de Instagram (borra cuentas falsas o inactivas). Drops mayores ameritan investigar qué cambió en la estrategia de contenido.</p>
-  <p><b>👨‍⚕️ Técnico:</b> <code>metric=follower_count, period=day</code> via <code>/{ig-user-id}/insights</code>. Devuelve snapshots diarios hasta 90 días atrás. Si el delta acumulado es lineal y suave, suele ser hygiene normal. Si es escalonado, suele coincidir con un cambio de contenido o un algoritmo update. Para diagnosticar: comparar con engagement por post en el mismo período (en el tab Social IG/FB).</p>
+  <p><b>🧒 Rápido:</b> Cuántas personas siguen la cuenta cada día. Una baja chica (menos del 1% al mes) suele ser limpieza normal de Instagram, que borra cuentas falsas o inactivas. Bajas más grandes hay que investigarlas.</p>
+  <p><b>📖 En detalle:</b> El gráfico muestra una "foto" diaria del número de seguidores, hasta 90 días hacia atrás. Lo importante es la FORMA de la curva, no el número de un día suelto. Si baja de a poco y pareja, casi siempre es limpieza normal de cuentas inactivas (en inglés a esto se le dice "hygiene"). Si baja en escalón —un día cae de golpe— normalmente coincide con algo puntual: un cambio en el tipo de contenido, una publicación que no gustó, o un ajuste del algoritmo (el programa que decide a quién se le muestra la cuenta). Para saber cuál de los dos casos es: comparamos esta curva con la interacción por post en las mismas fechas (en la pestaña Social IG/FB). Si ambas bajan juntas, el problema es el contenido; si solo bajan los seguidores pero la interacción aguanta, es limpieza de cuentas.</p>
 </div>
 </body></html>`;
 }
