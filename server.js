@@ -51,6 +51,7 @@ import { sendChatwootReply } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
 import zapsRouter from "./ZAPS/webhooks/router.js";
 import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
+import { start as startFonasapadCron } from "./queue/cron.js";
 import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
 import {
   searchSlotsViaApi,
@@ -6502,4 +6503,5 @@ app.listen(PORT, () => {
     console.log(`Medinet: local execution (no MEDINET_WORKER_URL configured)`);
   }
   startZapsPoller();
+  startFonasapadCron();
 });

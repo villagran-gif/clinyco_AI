@@ -1451,13 +1451,16 @@
       <h2 style="margin:0 0 4px">Cola de re-publicación @fonasapad</h2>
       <span id="cola-counts" style="font-size:12px;color:#64748b"></span>
       <button onclick="colaSelectNext()" style="margin-left:auto;padding:6px 12px;background:#16a34a;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer">⏭ Traer siguiente</button>
+      <button onclick="colaNotifyCalendar()" style="padding:6px 12px;background:#0891b2;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer">📅 Notificar al Calendar</button>
+      <button onclick="colaCronTick()" style="padding:6px 12px;background:#7c3aed;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer">⏱ Tick del cron</button>
       <button onclick="loadCola(true)" style="padding:6px 12px;background:#475569;color:#fff;border:0;border-radius:6px;font-size:12px;cursor:pointer">↻ Refrescar</button>
     </div>
     <p style="margin:0 0 14px;color:#475569;font-size:13px">
       Mejor post histórico (últimos 6 meses) de @clinyco.cl + @doctorvillagran que aún no se ha re-publicado en @fonasapad.
-      <b>Rechazar trae el siguiente al instante</b> — el día se publica sí o sí. Cuando WhatsApp esté listo, esto también
-      llega como mensaje a Allison (+56 9 3426 6846) y Rodrigo (+56 9 8729 7033).
+      <b>Rechazar trae el siguiente al instante</b> — el día se publica sí o sí. Hoy te llega también como
+      <b>evento de Google Calendar a villagran@clinyco.cl</b> (Lun-Vie 09:00 Chile). El WhatsApp 1-clic se enchufa cuando llegue el número WAHA.
     </p>
+    <div id="cola-cron-status" style="font-size:11px;color:#94a3b8;margin-bottom:10px"></div>
     <div id="cola-head" style="margin-bottom:24px"></div>
     <h3 style="margin:18px 0 8px;font-size:14px;color:#475569">Resto de la cola</h3>
     <div id="cola-rest" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px"></div>
@@ -1730,11 +1733,25 @@ function colaEsc(s) {
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+function colaImageUrls(row) {
+  if (Array.isArray(row.source_image_urls) && row.source_image_urls.length) {
+    return row.source_image_urls.map((i) => i?.url).filter(Boolean);
+  }
+  return row.source_image_url ? [row.source_image_url] : [];
+}
 async function renderColaList() {
   const r = await fetch(`${API_BASE}/queue/list`);
   const data = await r.json();
   document.getElementById("cola-counts").textContent =
     `${data.pendingCount} pendiente(s) · ${data.remainingElegibles} elegibles sin encolar todavía`;
+  // cron status (lo trae en paralelo, silencioso si falla)
+  fetch(`${API_BASE}/queue/cron-status`).then(r => r.ok ? r.json() : null).then((c) => {
+    const el = document.getElementById("cola-cron-status");
+    if (!el || !c) return;
+    el.innerHTML = c.enabled
+      ? `Cron activo · próxima corrida: <b>${colaEsc(c.nextRunIso)}</b> (en ${c.nextRunInMinutes} min)`
+      : `Cron inactivo (set <code>FONASAPAD_CRON_ENABLED=true</code> en Render para activar).`;
+  }).catch(() => {});
   const head = data.head;
   const headEl = document.getElementById("cola-head");
   if (!head) {
@@ -1745,27 +1762,33 @@ async function renderColaList() {
   } else {
     const dateStr = (head.source_timestamp || "").slice(0, 10);
     const cap = colaEsc((head.adapted_caption || head.source_caption || "").slice(0, 500));
+    const urls = colaImageUrls(head);
+    const isCarousel = urls.length > 1;
+    const strip = urls.map((u) =>
+      `<img src="${colaEsc(u)}" alt="" style="height:240px;width:auto;flex:0 0 auto;border-right:1px solid #21262d;object-fit:cover;background:#000"/>`
+    ).join("");
+    const badge = isCarousel
+      ? `<span style="background:#7c3aed;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:6px">CARRUSEL · ${urls.length}</span>`
+      : "";
     headEl.innerHTML = `
-      <div style="display:flex;gap:18px;background:#0d1117;color:#c9d1d9;padding:18px;border-radius:10px;flex-wrap:wrap">
-        <img src="${colaEsc(head.source_image_url)}" alt="" style="width:240px;height:240px;object-fit:cover;border-radius:8px;background:#000"/>
-        <div style="flex:1;min-width:260px">
-          <div style="font-size:11px;color:#8b949e;margin-bottom:6px">
-            Origen <b style="color:#c9d1d9">${colaEsc(head.source_account)}</b> ·
-            ${colaEsc(dateStr)} · ${colaEsc(head.source_media_type ?? "")} ·
-            <b style="color:#f78166">${head.source_engagement}</b> interacciones
-          </div>
-          <div style="white-space:pre-wrap;font-size:13px;line-height:1.55;margin-bottom:14px;max-height:200px;overflow:auto">${cap}</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button onclick="colaDecide(${head.id}, 'approve')"
-              style="padding:10px 18px;background:#16a34a;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
-              ✅ Aprobar y publicar
-            </button>
-            <button onclick="colaDecide(${head.id}, 'reject')"
-              style="padding:10px 18px;background:#dc2626;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
-              ❌ Rechazar y traer otro
-            </button>
-            ${head.source_permalink ? `<a href="${colaEsc(head.source_permalink)}" target="_blank" style="padding:10px 14px;color:#58a6ff;text-decoration:none;font-size:13px;align-self:center">ver post original ↗</a>` : ""}
-          </div>
+      <div style="background:#0d1117;color:#c9d1d9;padding:18px;border-radius:10px">
+        <div style="font-size:11px;color:#8b949e;margin-bottom:10px">
+          Origen <b style="color:#c9d1d9">${colaEsc(head.source_account)}</b> ·
+          ${colaEsc(dateStr)} · ${colaEsc(head.source_media_type ?? "")} ${badge} ·
+          <b style="color:#f78166">${head.source_engagement}</b> interacciones
+        </div>
+        <div style="display:flex;overflow-x:auto;border-radius:8px;background:#000;margin-bottom:14px">${strip}</div>
+        <div style="white-space:pre-wrap;font-size:13px;line-height:1.55;margin-bottom:14px;max-height:200px;overflow:auto">${cap}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button onclick="colaDecide(${head.id}, 'approve')"
+            style="padding:10px 18px;background:#16a34a;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
+            ✅ Aprobar y publicar
+          </button>
+          <button onclick="colaDecide(${head.id}, 'reject')"
+            style="padding:10px 18px;background:#dc2626;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
+            ❌ Rechazar y traer otro
+          </button>
+          ${head.source_permalink ? `<a href="${colaEsc(head.source_permalink)}" target="_blank" style="padding:10px 14px;color:#58a6ff;text-decoration:none;font-size:13px;align-self:center">ver post original ↗</a>` : ""}
         </div>
       </div>`;
   }
@@ -1775,10 +1798,14 @@ async function renderColaList() {
     ? `<div style="color:#94a3b8;font-size:12px;grid-column:1/-1">— sin más pendientes —</div>`
     : rest.map((row) => {
         const dateStr = (row.source_timestamp || "").slice(0, 10);
+        const urls = colaImageUrls(row);
+        const badge = urls.length > 1
+          ? `<span style="background:#7c3aed;color:#fff;font-size:9px;font-weight:700;padding:1px 4px;border-radius:3px;margin-left:4px">×${urls.length}</span>`
+          : "";
         return `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
-          <img src="${colaEsc(row.source_image_url)}" alt="" style="width:100%;height:180px;object-fit:cover;background:#0d1117"/>
+          <img src="${colaEsc(urls[0] || "")}" alt="" style="width:100%;height:180px;object-fit:cover;background:#0d1117"/>
           <div style="padding:10px;font-size:12px">
-            <div style="color:#64748b;margin-bottom:4px">${colaEsc(row.source_account)} · ${colaEsc(dateStr)} · ♥${row.source_engagement}</div>
+            <div style="color:#64748b;margin-bottom:4px">${colaEsc(row.source_account)} · ${colaEsc(dateStr)} · ♥${row.source_engagement}${badge}</div>
             <div style="white-space:nowrap;text-overflow:ellipsis;overflow:hidden;margin-bottom:8px">${colaEsc((row.source_caption || "").slice(0,90))}</div>
             <div style="display:flex;gap:6px">
               <button onclick="colaDecide(${row.id}, 'approve')" style="flex:1;padding:6px;background:#16a34a;color:#fff;border:0;border-radius:4px;font-size:11px;cursor:pointer">✅</button>
@@ -1829,6 +1856,21 @@ async function colaDecide(id, action) {
   }
   await renderColaList();
   await renderColaHistory();
+}
+async function colaNotifyCalendar() {
+  const r = await fetch(`${API_BASE}/queue/notify-calendar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const data = await r.json();
+  if (data.ok) {
+    alert("📅 Evento enviado al Calendar configurado.");
+  } else {
+    alert("No se pudo enviar al Calendar: " + (data.error || "ver logs"));
+  }
+}
+async function colaCronTick() {
+  const r = await fetch(`${API_BASE}/queue/cron-tick`, { method: "POST" });
+  const data = await r.json();
+  if (data.ok) { await renderColaList(); }
+  else { alert("Tick falló"); }
 }
 
 function loadBenchmarks() {

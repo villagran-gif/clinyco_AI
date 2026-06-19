@@ -107,6 +107,8 @@ import {
   countRemainingElegibles,
 } from "../queue/select-candidate.js";
 import { publishApproved } from "../queue/publish-to-fonasapad.js";
+import { notifyCandidateViaCalendar } from "../queue/calendar-notify.js";
+import { tick as fonasapadCronTick, nextRunMs as fonasapadCronNextRun } from "../queue/cron.js";
 
 const router = Router();
 
@@ -1612,6 +1614,47 @@ router.post("/queue/action/:token", wrap(async (req, res) => {
 router.get("/queue/history", wrap(async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query?.limit) || 50, 1), 200);
   res.json({ items: await queueRecentHistory(limit) });
+}));
+
+// Manda al calendar del usuario configurado (villagran@clinyco.cl por
+// default) el candidato head de la cola, sin esperar al cron. Útil para
+// probar el wiring de Google Calendar.
+router.post("/queue/notify-calendar", wrap(async (req, res) => {
+  const id = req.body?.id ? Number(req.body.id) : null;
+  let row;
+  if (id) {
+    row = await getQueueById(id);
+    if (!row) return res.status(404).json({ error: "id no encontrado" });
+  } else {
+    const pending = await getPending();
+    row = pending[0];
+    if (!row) return res.status(404).json({ error: "Sin candidatos pendientes" });
+  }
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL
+    || `${req.protocol}://${req.get("host")}`.replace(/\/api\/review$/, "");
+  try {
+    const result = await notifyCandidateViaCalendar({ row, publicBaseUrl });
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+}));
+
+// Estado del scheduler interno.
+router.get("/queue/cron-status", wrap(async (_req, res) => {
+  const enabled = process.env.FONASAPAD_CRON_ENABLED === "true";
+  const target = fonasapadCronNextRun();
+  res.json({
+    enabled,
+    nextRunIso: enabled ? new Date(target).toISOString() : null,
+    nextRunInMinutes: enabled ? Math.round((target - Date.now()) / 60_000) : null,
+  });
+}));
+
+// Dispara un tick del cron manualmente (encola + notifica calendar).
+router.post("/queue/cron-tick", wrap(async (_req, res) => {
+  await fonasapadCronTick();
+  res.json({ ok: true });
 }));
 
 // Lógica compartida: aprobar publica + marca; rechazar marca y dispara
