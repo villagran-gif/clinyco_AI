@@ -86,6 +86,11 @@ import {
 } from "./db.js";
 import { findPage, instagram, facebook } from "../meta-content/index.js";
 import { renderContactSheet } from "../meta-content/contact-sheet.js";
+import {
+  listBenchmarkReports,
+  readBenchmarkReport,
+  renderBenchmarksPage,
+} from "../meta-content/benchmarks-page.js";
 
 const router = Router();
 
@@ -1290,6 +1295,32 @@ router.get(
       counts: { ig: igPosts.length, fb: fbPosts.length },
       generatedAt: new Date().toISOString(),
     });
+    res.type("text/html").send(html);
+  }),
+);
+
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — industry benchmarks (curated markdown reports)
+//  GET /api/review/social/benchmarks            → latest report
+//  GET /api/review/social/benchmarks?file=...   → specific report
+// ═══════════════════════════════════════════════════════════════════
+router.get(
+  "/social/benchmarks",
+  wrap(async (req, res) => {
+    const allFiles = listBenchmarkReports();
+    if (!allFiles.length) {
+      return res
+        .status(404)
+        .type("text/html")
+        .send(
+          "<p>Sin reportes de benchmarks disponibles todavía. " +
+            "Genera uno y guárdalo como <code>data/benchmarks/medical-YYYY-MM.md</code>.</p>",
+        );
+    }
+    const requested = req.query.file ? String(req.query.file) : allFiles[0];
+    const currentFile = allFiles.includes(requested) ? requested : allFiles[0];
+    const markdown = readBenchmarkReport(currentFile);
+    const html = renderBenchmarksPage({ markdown, currentFile, allFiles });
     res.type("text/html").send(html);
   }),
 );
