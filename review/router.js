@@ -113,6 +113,10 @@ import { publishApproved } from "../queue/publish-to-fonasapad.js";
 import { notifyCandidateViaCalendar, toISODateString } from "../queue/calendar-notify.js";
 import { adaptCaptionForFonasapad } from "../queue/caption-adapter.js";
 import { tick as fonasapadCronTick, nextRunMs as fonasapadCronNextRun } from "../queue/cron.js";
+import {
+  runMonthlyOnce as monthlyRunOnce,
+  nextRunMs as monthlyNextRunMs,
+} from "../queue/monthly-cron.js";
 
 const router = Router();
 
@@ -1735,6 +1739,26 @@ router.post("/queue/save-caption/:id", wrap(async (req, res) => {
     );
   }
   res.json({ ok: true });
+}));
+
+// Cron mensual (regenera benchmarks + recomendaciones el día 1 del mes).
+router.get("/queue/monthly-cron-status", wrap(async (_req, res) => {
+  const enabled = process.env.FONASAPAD_MONTHLY_CRON_ENABLED === "true";
+  const target = monthlyNextRunMs();
+  res.json({
+    enabled,
+    nextRunIso: enabled ? new Date(target).toISOString() : null,
+    nextRunInDays: enabled ? Math.round((target - Date.now()) / 86_400_000) : null,
+  });
+}));
+
+router.post("/queue/monthly-cron-run", wrap(async (_req, res) => {
+  try {
+    const result = await monthlyRunOnce();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 }));
 
 // Estado del scheduler interno.
