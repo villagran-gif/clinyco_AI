@@ -163,12 +163,16 @@ function escape(s) {
 }
 
 function humanize(filename) {
-  // medical-2026-06.md → "Medical · 2026-06"
-  // recomendaciones-2026-06.md → "Recomendaciones · 2026-06"
-  return filename
-    .replace(/\.md$/, "")
-    .replace(/^(\w+)-(\d{4})-(\d{2})$/, (_, kind, y, m) => {
-      const label = kind.charAt(0).toUpperCase() + kind.slice(1);
-      return `${label} · ${y}-${m}`;
-    });
+  // medical-2026-06.md            → "Medical · 2026-06"
+  // recomendaciones-2026-06.md    → "Recomendaciones · 2026-06"
+  // playbook-drpiskulich-2026-06.md → "Playbook · @drpiskulich · 2026-06"
+  const stem = filename.replace(/\.md$/, "");
+  const playbook = /^playbook-([\w.]+)-(\d{4})-(\d{2})$/.exec(stem);
+  if (playbook) return `Playbook · @${playbook[1]} · ${playbook[2]}-${playbook[3]}`;
+  const simple = /^(\w+)-(\d{4})-(\d{2})$/.exec(stem);
+  if (simple) {
+    const label = simple[1].charAt(0).toUpperCase() + simple[1].slice(1);
+    return `${label} · ${simple[2]}-${simple[3]}`;
+  }
+  return stem;
 }
