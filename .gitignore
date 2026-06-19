@@ -3,3 +3,4 @@ node_modules
 .DS_Store
 reports/
 test-results/
+data/meta-content-analysis/
