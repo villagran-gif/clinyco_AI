@@ -86,6 +86,8 @@ import {
 } from "./db.js";
 import { findPage, instagram, facebook } from "../meta-content/index.js";
 import { renderContactSheet } from "../meta-content/contact-sheet.js";
+import { discoverAccount, discoverMany } from "../meta-content/business-discovery.js";
+import { COMPETITOR_HANDLES, GROUP_LABELS } from "../meta-content/competitor-handles.js";
 import {
   listBenchmarkReports,
   readBenchmarkReport,
@@ -1518,6 +1520,61 @@ router.get(
 //  contexto sensible (causa de la baja de seguidores) vive aparte en una
 //  nota interna fuera del repo y NO se sirve por esta ruta.
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — Business Discovery (datos REALES de competidores)
+//  GET /api/review/social/competitor-discover?handle=...  → JSON una cuenta
+//  GET /api/review/social/competitor-discover/all         → JSON todas (cache 1h)
+// ═══════════════════════════════════════════════════════════════════
+const DISCOVER_CACHE = { all: { at: 0, data: null } };
+const DISCOVER_TTL_MS = 60 * 60 * 1000; // 1h
+
+router.get(
+  "/social/competitor-discover",
+  wrap(async (req, res) => {
+    const handle = String(req.query.handle || "").trim();
+    if (!handle) return res.status(400).json({ error: "?handle=<username> requerido" });
+    const recent = Math.min(Math.max(Number(req.query.recent) || 12, 0), 50);
+    try {
+      const data = await discoverAccount(handle, { recentLimit: recent });
+      res.json({ ok: true, data });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  }),
+);
+
+router.get(
+  "/social/competitor-discover/all",
+  wrap(async (req, res) => {
+    const forceFresh = req.query.fresh === "1";
+    const now = Date.now();
+    if (!forceFresh && DISCOVER_CACHE.all.data && now - DISCOVER_CACHE.all.at < DISCOVER_TTL_MS) {
+      return res.json({
+        ok: true,
+        cachedAt: new Date(DISCOVER_CACHE.all.at).toISOString(),
+        ageMinutes: Math.round((now - DISCOVER_CACHE.all.at) / 60_000),
+        groups: GROUP_LABELS,
+        accounts: DISCOVER_CACHE.all.data,
+      });
+    }
+    const handles = COMPETITOR_HANDLES.map((c) => c.handle);
+    const results = await discoverMany(handles, { recentLimit: 6 });
+    // Mezcla los metadatos curados (group, why) con la respuesta de Meta.
+    const merged = results.map((r, i) => ({
+      ...COMPETITOR_HANDLES[i],
+      ...r,
+    }));
+    DISCOVER_CACHE.all = { at: now, data: merged };
+    res.json({
+      ok: true,
+      cachedAt: new Date(now).toISOString(),
+      ageMinutes: 0,
+      groups: GROUP_LABELS,
+      accounts: merged,
+    });
+  }),
+);
+
 router.get(
   "/social/competitors",
   wrap(async (req, res) => {
