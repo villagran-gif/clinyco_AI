@@ -1871,7 +1871,8 @@ async function renderColaList() {
     </div>`;
   } else {
     const dateStr = (head.source_timestamp || "").slice(0, 10);
-    const cap = colaEsc((head.adapted_caption || head.source_caption || "").slice(0, 500));
+    const orig = colaEsc((head.source_caption || "").slice(0, 1200));
+    const adapted = colaEsc((head.adapted_caption || "").slice(0, 1500));
     const urls = colaImageUrls(head);
     const isCarousel = urls.length > 1;
     const strip = urls.map((u) =>
@@ -1880,6 +1881,7 @@ async function renderColaList() {
     const badge = isCarousel
       ? `<span style="background:#7c3aed;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:6px">CARRUSEL · ${urls.length}</span>`
       : "";
+    const noAdapted = !head.adapted_caption;
     headEl.innerHTML = `
       <div style="background:#0d1117;color:#c9d1d9;padding:18px;border-radius:10px">
         <div style="font-size:11px;color:#8b949e;margin-bottom:10px">
@@ -1888,11 +1890,25 @@ async function renderColaList() {
           <b style="color:#f78166">${head.source_engagement}</b> interacciones
         </div>
         <div style="display:flex;overflow-x:auto;border-radius:8px;background:#000;margin-bottom:14px">${strip}</div>
-        <div style="white-space:pre-wrap;font-size:13px;line-height:1.55;margin-bottom:14px;max-height:200px;overflow:auto">${cap}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px">
+          <div>
+            <div style="font-size:10px;color:#94a3b8;letter-spacing:0.5px;margin-bottom:4px;text-transform:uppercase">📝 Caption original</div>
+            <div style="white-space:pre-wrap;font-size:12px;line-height:1.55;background:#161b22;padding:10px;border-radius:6px;max-height:280px;overflow:auto;color:#8b949e">${orig}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#facc15;letter-spacing:0.5px;margin-bottom:4px;text-transform:uppercase">✨ Caption adaptado a @fonasapad</div>
+            <textarea id="cola-edit-caption-${head.id}" style="width:100%;min-height:280px;background:#161b22;color:#facc15;border:1px solid #facc15;border-radius:6px;padding:10px;font:12px/1.55 -apple-system,system-ui,sans-serif;resize:vertical">${adapted}</textarea>
+            ${noAdapted ? `<div style="color:#f87171;font-size:10px;margin-top:4px">⚠ No se generó automáticamente (revisa ANTHROPIC_API_KEY o regenera)</div>` : ""}
+            <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+              <button onclick="colaRegenerateCaption(${head.id})" style="padding:5px 10px;background:#7c3aed;color:#fff;border:0;border-radius:4px;font-size:11px;cursor:pointer">🪄 Regenerar</button>
+              <button onclick="colaSaveCaption(${head.id})" style="padding:5px 10px;background:#facc15;color:#000;border:0;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">💾 Guardar edición</button>
+            </div>
+          </div>
+        </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button onclick="colaDecide(${head.id}, 'approve')"
             style="padding:10px 18px;background:#16a34a;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
-            ✅ Aprobar y publicar
+            ✅ Aprobar y publicar (usa el caption adaptado)
           </button>
           <button onclick="colaDecide(${head.id}, 'reject')"
             style="padding:10px 18px;background:#dc2626;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer">
@@ -1966,6 +1982,41 @@ async function colaDecide(id, action) {
   }
   await renderColaList();
   await renderColaHistory();
+}
+async function colaRegenerateCaption(id) {
+  const ta = document.getElementById(`cola-edit-caption-${id}`);
+  if (ta) { ta.disabled = true; ta.value = "Regenerando…"; }
+  try {
+    const r = await fetch(`${API_BASE}/queue/regenerate-caption/${id}`, { method: "POST" });
+    const data = await r.json();
+    if (!data.ok) {
+      alert(data.error || "No se pudo regenerar");
+      await renderColaList();
+      return;
+    }
+    if (ta) { ta.value = data.adaptedCaption || ""; ta.disabled = false; }
+  } catch (e) {
+    alert("Error: " + e.message);
+    if (ta) ta.disabled = false;
+  }
+}
+async function colaSaveCaption(id) {
+  const ta = document.getElementById(`cola-edit-caption-${id}`);
+  if (!ta) return;
+  const caption = ta.value.trim();
+  if (!caption) { alert("Caption vacío"); return; }
+  const r = await fetch(`${API_BASE}/queue/save-caption/${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ caption }),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    ta.style.borderColor = "#16a34a";
+    setTimeout(() => { ta.style.borderColor = "#facc15"; }, 1200);
+  } else {
+    alert(data.error || "No se pudo guardar");
+  }
 }
 async function colaNotifyCalendar() {
   const r = await fetch(`${API_BASE}/queue/notify-calendar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });

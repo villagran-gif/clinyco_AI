@@ -14,6 +14,7 @@
 import { findPage, instagram } from "../meta-content/index.js";
 import { fetchWindowWithImages } from "../meta-content/instagram.js";
 import { enqueueCandidate, listSeenSourceMediaIds } from "./queue-db.js";
+import { adaptCaptionForFonasapad } from "./caption-adapter.js";
 
 const SOURCES = ["clinyco.cl", "doctorvillagran"];
 const MONTHS_BACK = 6;
@@ -64,6 +65,14 @@ export async function listElegibles() {
 export async function selectNextCandidate() {
   const elegibles = await listElegibles();
   for (const cand of elegibles) {
+    // Antes de encolar, intentamos generar la versión @fonasapad del
+    // caption. Si Anthropic falla o no está configurado, adaptedCaption
+    // queda null y publishApproved cae al source_caption. No bloquea.
+    const adaptedCaption = await adaptCaptionForFonasapad({
+      sourceCaption: cand.sourceCaption,
+      sourceAccount: cand.sourceAccount,
+      sourceMediaType: cand.sourceMediaType,
+    });
     const row = await enqueueCandidate({
       sourceAccount: cand.sourceAccount,
       sourceMediaId: cand.sourceMediaId,
@@ -74,6 +83,7 @@ export async function selectNextCandidate() {
       sourceImageUrls: cand.sourceImageUrls,
       sourceTimestamp: cand.sourceTimestamp,
       sourceEngagement: cand.sourceEngagement,
+      adaptedCaption,
     });
     if (row) return row;
   }
