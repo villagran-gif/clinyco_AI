@@ -85,3 +85,88 @@ export async function getAccountInsights(igUserId, {
   const json = await graphGet(`/${igUserId}/insights`, { params, token });
   return json.data ?? [];
 }
+
+// Pull a month-bounded window of media with the fields needed to render
+// thumbnails (image_url for IMAGE, thumbnail_url for VIDEO covers,
+// children expanded for CAROUSEL_ALBUM). Returns a normalized post shape:
+//
+//   { id, timestamp, date, mediaType, caption, permalink,
+//     engagement, likes, comments, images: [{ url, kind, childId? }] }
+//
+// Shared by scripts/extract-meta-image-urls.mjs and the contact-sheet
+// route so they always agree on the data model.
+export async function fetchWindowWithImages(igUserId, {
+  monthsBack = 2,
+  includeCarouselChildren = true,
+  token,
+} = {}) {
+  const dayMs = 86_400_000;
+  const cutoff = Date.now() - monthsBack * 30 * dayMs;
+
+  const raw = [];
+  let after;
+  for (let safety = 0; safety < 100; safety++) {
+    const page = await listMedia(igUserId, {
+      limit: 100,
+      after,
+      token,
+      fields:
+        "id,caption,media_type,media_url,thumbnail_url,timestamp,permalink,like_count,comments_count",
+    });
+    if (!page.data.length) break;
+    let crossed = false;
+    for (const m of page.data) {
+      const ts = m.timestamp ? new Date(m.timestamp).getTime() : 0;
+      if (ts && ts < cutoff) {
+        crossed = true;
+        break;
+      }
+      raw.push(m);
+    }
+    if (crossed) break;
+    after = page.paging?.cursors?.after;
+    if (!after) break;
+  }
+
+  const out = [];
+  for (const m of raw) {
+    const entry = {
+      id: m.id,
+      timestamp: m.timestamp,
+      date: m.timestamp?.slice(0, 10) ?? null,
+      mediaType: m.media_type,
+      caption: m.caption ?? "",
+      permalink: m.permalink,
+      engagement: (m.like_count ?? 0) + (m.comments_count ?? 0),
+      likes: m.like_count ?? 0,
+      comments: m.comments_count ?? 0,
+      images: [],
+    };
+    if (m.media_type === "IMAGE" && m.media_url) {
+      entry.images.push({ url: m.media_url, kind: "image" });
+    } else if (m.media_type === "VIDEO" && m.thumbnail_url) {
+      entry.images.push({ url: m.thumbnail_url, kind: "video-cover" });
+    } else if (m.media_type === "CAROUSEL_ALBUM" && includeCarouselChildren) {
+      try {
+        const kids = await graphGet(`/${m.id}/children`, {
+          params: { fields: "id,media_type,media_url,thumbnail_url" },
+          token,
+        });
+        for (const child of kids.data ?? []) {
+          const url = child.media_url || child.thumbnail_url;
+          if (url) {
+            entry.images.push({
+              url,
+              kind: child.media_type?.toLowerCase() ?? "child",
+              childId: child.id,
+            });
+          }
+        }
+      } catch {
+        // Skip an individual broken carousel rather than failing the window.
+      }
+    }
+    out.push(entry);
+  }
+  return out;
+}
