@@ -184,6 +184,7 @@
     <button onclick="showTab('benchmarks')" style="background:#0891b2;color:#fff;border-radius:6px">Benchmarks</button>
     <button onclick="showTab('recomendaciones')" style="background:#f59e0b;color:#fff;border-radius:6px">Recomendaciones</button>
     <button onclick="showTab('playbook')" style="background:#dc2626;color:#fff;border-radius:6px">Playbooks</button>
+    <button onclick="showTab('competidores')" style="background:#be185d;color:#fff;border-radius:6px">Competidores</button>
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -1423,6 +1424,26 @@
               style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
     </div>
   </div>
+
+  <div id="tab-competidores" class="tab-content">
+    <div style="margin-bottom:12px">
+      <h2 style="margin:0 0 4px">Competidores bariátricos — Chile + LATAM</h2>
+      <p style="margin:0;color:#475569;font-size:13px">
+        Panorama de cirujanos, clínicas y equipo de apoyo (nutrición/psicología) que compiten en el nicho.
+        Cada cuenta trae handle verificado, seguidores, cadencia, "qué robar" y "espacios vacíos que Clínyco puede ocupar".
+        Los handles no verificables se marcan como "no confirmado" — sin inventar.
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px">
+      <a id="competidores-open-new" href="/api/social/competitors" target="_blank" rel="noopener"
+         style="color:#be185d;text-decoration:none">↗ abrir análisis en pestaña nueva</a>
+      <span style="margin-left:auto;color:#94a3b8">El contexto sensible sobre la baja de @doctorvillagran se trata en una nota interna aparte, no aquí.</span>
+    </div>
+    <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc">
+      <iframe id="competidores-frame" src="about:blank"
+              style="width:100%;height:calc(100vh - 240px);border:0;display:block"></iframe>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -1667,8 +1688,14 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones, playbook: loadPlaybook };
+  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones, playbook: loadPlaybook, competidores: loadCompetidores };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
+}
+
+function loadCompetidores() {
+  document.getElementById("competidores-frame").src = `${API_BASE}/social/competitors`;
+  document.getElementById("competidores-open-new").href = `${API_BASE}/social/competitors`;
+  window._competidoresLoaded = true;
 }
 
 function loadBenchmarks() {

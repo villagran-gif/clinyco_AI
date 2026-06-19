@@ -1493,6 +1493,31 @@ router.get(
   }),
 );
 
+// ═══════════════════════════════════════════════════════════════════
+//  SOCIAL — análisis de competidores
+//  GET /api/review/social/competitors[?file=...]
+//  Files under data/benchmarks/competidores-*.md. Versión publicable: el
+//  contexto sensible (causa de la baja de seguidores) vive aparte en una
+//  nota interna fuera del repo y NO se sirve por esta ruta.
+// ═══════════════════════════════════════════════════════════════════
+router.get(
+  "/social/competitors",
+  wrap(async (req, res) => {
+    const allFiles = listBenchmarkReports({ prefix: "competidores-" });
+    if (!allFiles.length) {
+      return res.status(404).type("text/html").send(
+        "<p>Sin análisis de competidores disponible. " +
+          "Guarda uno como <code>data/benchmarks/competidores-&lt;pais&gt;-YYYY-MM.md</code>.</p>",
+      );
+    }
+    const requested = req.query.file ? String(req.query.file) : allFiles[0];
+    const currentFile = allFiles.includes(requested) ? requested : allFiles[0];
+    const markdown = readBenchmarkReport(currentFile);
+    const html = renderBenchmarksPage({ markdown, currentFile, allFiles });
+    res.type("text/html").send(html);
+  }),
+);
+
 function sortPosts(posts, sort) {
   const byKey = (k) => (a, b) => (b[k] ?? 0) - (a[k] ?? 0);
   switch (sort) {

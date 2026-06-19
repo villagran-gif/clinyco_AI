@@ -4,3 +4,4 @@ node_modules
 reports/
 test-results/
 data/meta-content-analysis/
+data/private/
