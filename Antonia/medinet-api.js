@@ -101,8 +101,9 @@ async function loginJwt() {
   const data = await res.json();
   _jwtToken = data.token;
   if (!_jwtToken) throw new Error("Medinet /token-login/ did not return a token");
-  // Cache for ~22h (conservative; actual expiry may differ)
-  _jwtExpiresAt = Date.now() + 22 * 60 * 60 * 1000;
+  // Token real expira en ~8h (verificado 2026-06-12: exp-iat = 28800s).
+  // Cacheamos 7h para tener margen de re-login antes del 401.
+  _jwtExpiresAt = Date.now() + 7 * 60 * 60 * 1000;
   return _jwtToken;
 }
 
