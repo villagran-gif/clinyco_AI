@@ -11,7 +11,8 @@ export function buildInitialConversationState() {
       c_aseguradora: null,
       c_modalidad: null,
       c_direccion: null,
-      c_comuna: null
+      c_comuna: null,
+      c_ciudad_atencion: null
     },
     dealDraft: {
       dealPipelineId: null,
@@ -119,6 +120,7 @@ export function buildInitialConversationState() {
       introducedAsAntonia: false,
       handoffReason: null,
       lastQuestionKey: null,
+      awaitingLocationField: null,
       lastInboundMessageId: null,
       lastOutboundFingerprint: null,
       lastOutboundText: null,
