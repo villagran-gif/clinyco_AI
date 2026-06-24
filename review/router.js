@@ -107,6 +107,7 @@ import {
   markPublished,
   markFailed,
   recentHistory as queueRecentHistory,
+  getPartialPublished as queueGetPartialPublished,
 } from "../queue/queue-db.js";
 import {
   selectNextCandidate,
@@ -1682,6 +1683,24 @@ router.get("/queue/history", wrap(async (req, res) => {
   res.json({ items: await queueRecentHistory(limit) });
 }));
 
+// Lista los rows con publicación PARCIAL (FB OK pero IG falló, o viceversa).
+// El dashboard los muestra arriba del historial con botón "Reintentar IG/FB".
+router.get("/queue/partial", wrap(async (_req, res) => {
+  res.json({ items: await queueGetPartialPublished() });
+}));
+
+// Reintenta solo la plataforma que falló para un row partial.
+router.post("/queue/retry-platform/:id", wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "id inválido" });
+  const result = await retryPartialPlatform({
+    id,
+    actor: String(req.body?.actor || "dashboard").toLowerCase(),
+    note: req.body?.note ? String(req.body.note).slice(0, 500) : null,
+  });
+  res.json(result);
+}));
+
 // ── Diagnósticos ────────────────────────────────────────────────────
 // Inspecciona un row específico de la cola (cualquier estado). Útil
 // para debug "ya decidido?" — devuelve el row tal cual está en DB.
@@ -1914,16 +1933,67 @@ async function processDecision({ id, action, actor, note }) {
   // Para status approved/failed simplemente reintentamos publicar.
   try {
     const pub = await publishApproved(approved);
-    const published = await markPublished(approved.id, { igId: pub.igId, fbId: pub.fbId });
+    if (!pub.fbId && !pub.igId) {
+      const combinedError = [pub.fbError, pub.igError].filter(Boolean).join(" | ") || "Ambas plataformas sin id sin error reportado";
+      await markFailed(approved.id, combinedError);
+      return { ok: false, error: `Publicación falló: ${combinedError}` };
+    }
+    const published = await markPublished(approved.id, {
+      igId: pub.igId,
+      fbId: pub.fbId,
+      igError: pub.igError,
+      fbError: pub.fbError,
+    });
     return {
       ok: true,
       published,
+      partial: published.status !== "published",
       partialErrors: { ig: pub.igError, fb: pub.fbError },
       retried: current.status === "failed" || current.status === "approved",
     };
   } catch (err) {
     await markFailed(approved.id, err.message);
     return { ok: false, error: `Publicación falló: ${err.message}`, retried: current.status === "failed" };
+  }
+}
+
+// Reintenta solo la plataforma que falló (target = "ig" o "fb") para un
+// row con status partial. No re-publica la plataforma que ya funcionó.
+async function retryPartialPlatform({ id, actor, note }) {
+  const row = await getQueueById(id);
+  if (!row) return { ok: false, error: `Row id=${id} no existe` };
+  if (row.status === "published") {
+    return { ok: true, idempotent: true, message: "Ya está completo (IG + FB)" };
+  }
+  let skipIg = false, skipFb = false, target = "";
+  if (row.status === "published_fb_only") {
+    skipFb = true; target = "IG";  // ya tiene FB, solo intentamos IG
+  } else if (row.status === "published_ig_only") {
+    skipIg = true; target = "FB";
+  } else {
+    return { ok: false, error: `Row id=${id} está en "${row.status}" — no es parcial. Para reintentar publicación completa usa Aprobar.` };
+  }
+  try {
+    const pub = await publishApproved(row, { skipFb, skipIg });
+    const targetIdGot = target === "IG" ? pub.igId : pub.fbId;
+    const targetErr   = target === "IG" ? pub.igError : pub.fbError;
+    if (!targetIdGot) {
+      // Persistimos el error en el row para diagnóstico, sin cambiar el status.
+      await getPool().query(
+        `UPDATE fonasapad_queue SET publish_error = $2 WHERE id = $1`,
+        [id, targetErr || `${target} sigue sin id sin error reportado`],
+      );
+      return { ok: false, error: `Reintento ${target} falló: ${targetErr || "sin error reportado"}` };
+    }
+    const published = await markPublished(id, {
+      igId: target === "IG" ? targetIdGot : null,  // null se ignora por COALESCE
+      fbId: target === "FB" ? targetIdGot : null,
+      igError: pub.igError,
+      fbError: pub.fbError,
+    });
+    return { ok: true, published, partial: published.status !== "published", target };
+  } catch (err) {
+    return { ok: false, error: `Reintento ${target} excepción: ${err.message}` };
   }
 }
 

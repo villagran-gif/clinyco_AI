@@ -1472,6 +1472,8 @@
     <div id="cola-head" style="margin-bottom:24px"></div>
     <h3 style="margin:18px 0 8px;font-size:14px;color:#475569">Resto de la cola</h3>
     <div id="cola-rest" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px"></div>
+    <h3 style="margin:24px 0 8px;font-size:14px;color:#f59e0b">⚠ Publicaciones parciales (solo FB o solo IG)</h3>
+    <div id="cola-partial" style="font-size:12px;margin-bottom:14px"></div>
     <h3 style="margin:24px 0 8px;font-size:14px;color:#475569">Últimas decisiones</h3>
     <div id="cola-history" style="font-size:12px"></div>
   </div>
@@ -1943,6 +1945,28 @@ async function renderColaList() {
 }
 async function renderColaHistory() {
   try {
+    // ── Partial published (FB ✅ / IG ❌, o viceversa) ──
+    const pr = await fetch(`${API_BASE}/queue/partial`);
+    const pdata = await pr.json();
+    const pEl = document.getElementById("cola-partial");
+    const partials = pdata.items || [];
+    if (partials.length === 0) {
+      pEl.innerHTML = `<div style="color:#94a3b8;padding:6px 0">— ningún parcial pendiente —</div>`;
+    } else {
+      pEl.innerHTML = partials.map((row) => {
+        const target = row.status === "published_fb_only" ? "IG" : "FB";
+        const ok = row.status === "published_fb_only" ? "FB ✓" : "IG ✓";
+        const fail = `${target} ✗`;
+        return `<div style="padding:10px 12px;background:#fef9c3;border:1px solid #ca8a04;border-radius:6px;margin-bottom:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span style="color:#16a34a;font-weight:600">${ok}</span>
+          <span style="color:#dc2626;font-weight:600">${fail}</span>
+          <span style="color:#475569">id=${row.id} · ${colaEsc(row.source_account)} · ${colaEsc((row.source_caption||'').slice(0,60))}</span>
+          <span style="color:#7c2d12;font-size:11px;flex-basis:100%;white-space:pre-wrap">${colaEsc((row.publish_error || '—').slice(0, 300))}</span>
+          <button onclick="colaRetryPlatform(${row.id})" style="margin-left:auto;padding:6px 12px;background:#ca8a04;color:#fff;border:0;border-radius:4px;font-size:12px;cursor:pointer">🔁 Reintentar ${target}</button>
+        </div>`;
+      }).join("");
+    }
+    // ── Últimas decisiones ──
     const r = await fetch(`${API_BASE}/queue/history?limit=20`);
     const data = await r.json();
     const hEl = document.getElementById("cola-history");
@@ -1950,15 +1974,35 @@ async function renderColaHistory() {
       const when = (row.decided_at || "").slice(0, 16).replace("T", " ");
       const color = row.status === "published" ? "#16a34a"
                   : row.status === "rejected" ? "#dc2626"
-                  : "#ca8a04";
+                  : row.status.startsWith("published_") ? "#ca8a04"
+                  : "#dc2626";
       return `<div style="padding:6px 10px;border-bottom:1px solid #e2e8f0;display:flex;gap:10px;align-items:center">
-        <span style="color:${color};font-weight:600;width:90px">${colaEsc(row.status)}</span>
+        <span style="color:${color};font-weight:600;width:160px">${colaEsc(row.status)}</span>
         <span style="color:#64748b;width:120px">${colaEsc(when)}</span>
         <span style="color:#64748b;width:80px">${colaEsc(row.decided_by ?? "")}</span>
         <span style="flex:1">${colaEsc(row.source_account)} · ${colaEsc((row.source_caption || "").slice(0, 80))}</span>
       </div>`;
     }).join("") || `<div style="color:#94a3b8">Sin decisiones todavía</div>`;
   } catch (e) { /* silencioso */ }
+}
+async function colaRetryPlatform(id) {
+  const r = await fetch(`${API_BASE}/queue/retry-platform/${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ actor: "dashboard" }),
+  });
+  const data = await r.json();
+  if (data.ok) {
+    if (data.partial) {
+      alert(`✓ Reintento ${data.target} OK, pero sigue parcial.`);
+    } else {
+      alert(`✅ Publicación completa ahora (IG + FB).`);
+    }
+  } else {
+    alert(`❌ ${data.error || "Reintento falló"}`);
+  }
+  await renderColaList();
+  await renderColaHistory();
 }
 async function colaSelectNext() {
   const r = await fetch(`${API_BASE}/queue/select-next`, { method: "POST" });
@@ -1995,10 +2039,17 @@ async function colaDecide(id, action) {
   } else if (data.idempotent && data.published) {
     alert(data.message || "Ya estaba publicado.");
   } else if (data.published) {
-    if (data.retried) {
-      alert("Publicado tras reintento.");
+    if (data.partial) {
+      const igErr = data.partialErrors?.ig;
+      const fbErr = data.partialErrors?.fb;
+      const which = data.published.status === "published_fb_only" ? "IG"
+                  : data.published.status === "published_ig_only" ? "FB"
+                  : "?";
+      alert(`⚠ Publicado SOLO en ${data.published.status === "published_fb_only" ? "Facebook" : "Instagram"}.\n\n${which} falló:\n${igErr || fbErr || "ver row en sección 'Publicaciones parciales'"}\n\nUsa el botón 🔁 Reintentar ${which} abajo para volver a intentar solo ${which}.`);
+    } else if (data.retried) {
+      alert("✅ Publicado tras reintento (IG + FB).");
     }
-    // si es el primer intento exitoso, silencioso y refresca
+    // si es el primer intento exitoso completo, silencioso y refresca
   } else if (data.rejected && !data.nextCandidate) {
     alert("Rechazado. No quedan más candidatos en la ventana de 6 meses.");
   }

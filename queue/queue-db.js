@@ -172,16 +172,42 @@ export async function markDecided(id, { status, decidedBy, note }) {
   return r.rows[0] ?? null;
 }
 
-export async function markPublished(id, { igId, fbId }) {
+// Marca un row con el resultado de publicación. Permite distinguir:
+//  - status 'published'          → IG ✅ + FB ✅
+//  - status 'published_fb_only'  → solo FB (IG falló) — el error de IG queda en publish_error
+//  - status 'published_ig_only'  → solo IG (FB falló) — el error de FB queda en publish_error
+//  - status 'failed'              → ambas fallaron (lo hace markFailed)
+//
+// Si se llama después de un retry (ej: solo IG), preserva los IDs anteriores
+// si ya estaban — usa COALESCE para no perder fb_id cuando solo se reintenta IG.
+export async function markPublished(id, { igId, fbId, igError, fbError }) {
   await ensureTable();
+  const hasIg = !!igId;
+  const hasFb = !!fbId;
+  let status = "failed";
+  let errorMsg = null;
+  if (hasIg && hasFb) {
+    status = "published";
+  } else if (hasFb && !hasIg) {
+    status = "published_fb_only";
+    errorMsg = igError ? `IG: ${igError}` : "IG: sin error reportado pero sin id";
+  } else if (hasIg && !hasFb) {
+    status = "published_ig_only";
+    errorMsg = fbError ? `FB: ${fbError}` : "FB: sin error reportado pero sin id";
+  } else {
+    // No es lo esperado — el caller debe haber llamado markFailed. Pero por
+    // si pasa, registramos los errores combinados.
+    errorMsg = [igError && `IG: ${igError}`, fbError && `FB: ${fbError}`].filter(Boolean).join(" | ");
+  }
   const r = await getPool().query(
     `UPDATE fonasapad_queue
-        SET status = 'published',
-            fonasapad_ig_id = $2,
-            fonasapad_fb_id = $3
+        SET status          = $2,
+            fonasapad_ig_id = COALESCE($3, fonasapad_ig_id),
+            fonasapad_fb_id = COALESCE($4, fonasapad_fb_id),
+            publish_error   = $5
       WHERE id = $1
       RETURNING *`,
-    [id, igId ?? null, fbId ?? null],
+    [id, status, igId ?? null, fbId ?? null, errorMsg],
   );
   return r.rows[0] ?? null;
 }
@@ -214,10 +240,22 @@ export async function recentHistory(limit = 50) {
   await ensureTable();
   const r = await getPool().query(
     `SELECT * FROM fonasapad_queue
-       WHERE status IN ('published', 'rejected', 'failed')
+       WHERE status IN ('published', 'published_fb_only', 'published_ig_only', 'rejected', 'failed')
        ORDER BY decided_at DESC NULLS LAST, id DESC
        LIMIT $1`,
     [limit],
+  );
+  return r.rows;
+}
+
+// Lista los rows que están "parcialmente publicados" — útil para que
+// el dashboard ofrezca el botón "reintentar IG" o "reintentar FB".
+export async function getPartialPublished() {
+  await ensureTable();
+  const r = await getPool().query(
+    `SELECT * FROM fonasapad_queue
+       WHERE status IN ('published_fb_only', 'published_ig_only')
+       ORDER BY decided_at DESC NULLS LAST, id DESC`,
   );
   return r.rows;
 }

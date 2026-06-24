@@ -34,7 +34,15 @@ function imageUrlsFrom(row) {
   return [];
 }
 
-export async function publishApproved(row) {
+// publishApproved publica en IG + FB (o solo lo que se pida vía opts).
+// Devuelve SIEMPRE el detalle: { fbId, igId, fbError, igError }. NO lanza
+// excepción cuando una sola plataforma falla — eso es decisión del caller
+// (processDecision distingue "publicado completo" vs "solo FB" vs "solo IG"
+// vs "ambas fallaron" y marca el row con el publish_error correcto).
+//
+// opts.skipFb=true  →  no intenta FB (útil para retry-IG cuando FB ya está)
+// opts.skipIg=true  →  no intenta IG (útil para retry-FB cuando IG ya está)
+export async function publishApproved(row, opts = {}) {
   const page = await findPage(FONASAPAD);
   if (!page) throw new Error("Página @fonasapad no descubierta vía /me/accounts");
 
@@ -45,35 +53,35 @@ export async function publishApproved(row) {
   // ── Facebook ──
   let fbId = null;
   let fbError = null;
-  try {
-    if (page.pageId) {
-      fbId = await publishFb({
-        pageId: page.pageId,
-        token: page.accessToken,
-        caption,
-        urls,
-      });
-    }
-  } catch (err) { fbError = err.message; }
+  if (!opts.skipFb) {
+    try {
+      if (page.pageId) {
+        fbId = await publishFb({
+          pageId: page.pageId,
+          token: page.accessToken,
+          caption,
+          urls,
+        });
+      }
+    } catch (err) { fbError = err.message; }
+  }
 
   // ── Instagram ──
   let igId = null;
   let igError = null;
-  try {
-    if (page.igUserId) {
-      igId = await publishIg({
-        igUserId: page.igUserId,
-        token: page.accessToken,
-        caption,
-        urls,
-      });
-    }
-  } catch (err) { igError = err.message; }
-
-  if (!fbId && !igId) {
-    const combined = [fbError, igError].filter(Boolean).join(" | ");
-    throw new Error(combined || "Ambas publicaciones fallaron");
+  if (!opts.skipIg) {
+    try {
+      if (page.igUserId) {
+        igId = await publishIg({
+          igUserId: page.igUserId,
+          token: page.accessToken,
+          caption,
+          urls,
+        });
+      }
+    } catch (err) { igError = err.message; }
   }
+
   return { fbId, igId, fbError, igError };
 }
 
