@@ -19,7 +19,7 @@
 // la columna llega vacía, hace fallback a source_image_url (texto).
 
 import { findPage, instagram, facebook } from "../meta-content/index.js";
-import { graphPost } from "../meta-content/client.js";
+import { graphPost, graphGet } from "../meta-content/client.js";
 
 const FONASAPAD = "fonasapad";
 
@@ -32,6 +32,53 @@ function imageUrlsFrom(row) {
   }
   if (row.source_image_url) return [row.source_image_url];
   return [];
+}
+
+// Refresca las URLs del media original llamando a Meta justo antes de
+// publicar. Las URLs del CDN de Meta (cdninstagram.com / scontent.*)
+// llevan un parámetro `oe=<hex>` que es timestamp UNIX de expiración —
+// suelen durar 1-2 días. Si un row se encola hoy y se aprueba mañana
+// las URLs viejas devuelven 404 y Meta rechaza con error 324 / 9004.
+//
+// La consulta usa el token de la PAGE SOURCE (@clinyco.cl o
+// @doctorvillagran), no el de @fonasapad — sin eso no podemos leer el
+// media original. Si el refresh falla por cualquier razón, hacemos
+// fallback a las URLs guardadas (que pueden estar expiradas).
+async function refreshSourceUrls(row) {
+  const mediaId = row.source_media_id;
+  const sourceAccount = row.source_account;
+  if (!mediaId || !sourceAccount) return null;
+  let sourcePage;
+  try {
+    sourcePage = await findPage(sourceAccount);
+  } catch (err) {
+    console.warn(`[publish-to-fonasapad] refresh: no se encontró page source ${sourceAccount}: ${err.message}`);
+    return null;
+  }
+  if (!sourcePage?.accessToken) return null;
+  try {
+    const json = await graphGet(`/${mediaId}`, {
+      params: {
+        fields: "id,media_type,media_url,thumbnail_url,children{id,media_type,media_url,thumbnail_url}",
+      },
+      token: sourcePage.accessToken,
+    });
+    const fresh = [];
+    if (json.children?.data?.length) {
+      for (const child of json.children.data) {
+        const url = child.media_url || child.thumbnail_url;
+        if (url) fresh.push(url);
+      }
+    } else if (json.media_type === "VIDEO" && json.thumbnail_url) {
+      fresh.push(json.thumbnail_url);
+    } else if (json.media_url) {
+      fresh.push(json.media_url);
+    }
+    return fresh.length ? fresh : null;
+  } catch (err) {
+    console.warn(`[publish-to-fonasapad] refresh URLs falló: ${err.message}`);
+    return null;
+  }
 }
 
 // publishApproved publica en IG + FB (o solo lo que se pida vía opts).
@@ -47,8 +94,24 @@ export async function publishApproved(row, opts = {}) {
   if (!page) throw new Error("Página @fonasapad no descubierta vía /me/accounts");
 
   const caption = row.adapted_caption || row.source_caption || "";
-  const urls = imageUrlsFrom(row);
+  let urls = imageUrlsFrom(row);
   if (!urls.length) throw new Error("Sin imágenes para publicar");
+
+  // Refrescamos las URLs del CDN justo antes de publicar. Si el row se
+  // encoló días atrás, las URLs guardadas ya pueden estar expiradas
+  // (Meta CDN expira en 1-2 días). El refresh va al media original con
+  // el token de la cuenta source y obtiene URLs nuevas.
+  try {
+    const fresh = await refreshSourceUrls(row);
+    if (fresh && fresh.length) {
+      urls = fresh;
+    }
+  } catch (err) {
+    // No bloqueamos por esto: si refresh falla, intentamos con URLs viejas.
+    console.warn(`[publish-to-fonasapad] usando URLs guardadas tras fallo de refresh: ${err.message}`);
+  }
+  // Defensa: refresh raro pero posible — vuelve a chequear que tenemos algo.
+  if (!urls.length) throw new Error("Sin imágenes válidas después del refresh");
 
   // ── Facebook ──
   let fbId = null;
