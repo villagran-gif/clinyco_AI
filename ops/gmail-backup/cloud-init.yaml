@@ -1,0 +1,81 @@
+#cloud-config
+# Cloud-init para VM de backup GYB a StorageBox.
+# provision.sh sustituye placeholders (ver provision.sh para la lista).
+# NOTA: los nombres de placeholders NO aparecen en comentarios para evitar
+# que la sustitucion textual los reemplace y filtre secretos en logs.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - python3-pip
+  - python3-venv
+  - git
+  - curl
+  - jq
+  - rsync
+  - rclone
+  - openssh-client
+  - ca-certificates
+  - tzdata
+
+write_files:
+  - path: /etc/gyb/sa-privkey.pem.b64
+    permissions: "0600"
+    owner: root:root
+    content: __GOOGLE_PRIVATE_KEY_B64__
+
+  - path: /etc/gyb/accounts.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      ACCOUNTS="__ACCOUNTS_CSV__"
+      STORAGEBOX_USER="__STORAGEBOX_USER__"
+      STORAGEBOX_HOST="__STORAGEBOX_HOST__"
+      SA_EMAIL="__GOOGLE_SERVICE_ACCOUNT_EMAIL__"
+      DOMAIN_ADMIN="__DOMAIN_ADMIN_EMAIL__"
+
+  - path: /opt/gyb-backup/gyb-backup.sh.b64
+    permissions: "0600"
+    content: __GYB_BACKUP_SH_B64__
+
+  - path: /opt/gyb-backup/first-boot.sh.b64
+    permissions: "0600"
+    content: __FIRST_BOOT_SH_B64__
+
+  - path: /etc/systemd/system/gyb-backup@.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=GYB backup to StorageBox for %i
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/gyb/accounts.env
+      ExecStart=/opt/gyb-backup/gyb-backup.sh %i
+      Restart=on-failure
+      RestartSec=30
+      StandardOutput=journal
+      StandardError=journal
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ReadWritePaths=/data /var/log/gyb /root/.gyb /root/.config/rclone
+      PrivateTmp=true
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [ bash, -lc, "base64 -d /opt/gyb-backup/gyb-backup.sh.b64 > /opt/gyb-backup/gyb-backup.sh && chmod +x /opt/gyb-backup/gyb-backup.sh" ]
+  - [ bash, -lc, "base64 -d /opt/gyb-backup/first-boot.sh.b64 > /opt/gyb-backup/first-boot.sh && chmod +x /opt/gyb-backup/first-boot.sh" ]
+  - [ bash, -lc, "/opt/gyb-backup/first-boot.sh 2>&1 | tee -a /var/log/gyb/first-boot.log" ]
+  - [ systemctl, daemon-reload ]
+
+final_message: |
+  Cloud-init listo. Pasos manuales pendientes:
+    1) ssh root@IP "grep -A1 STORAGEBOX_PUBKEY_BEGIN /var/log/cloud-init-output.log"
+    2) Pegar la pub en panel StorageBox (robot.hetzner.com)
+    3) ssh root@IP "rclone lsd storagebox:"
+    4) ssh root@IP "systemctl start gyb-backup@LOCALPART.service"
