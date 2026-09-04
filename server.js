@@ -1618,7 +1618,9 @@ function resumeSoftHandoffIfAllowed(state, latestUserText) {
 
   if (state.system.humanTakenOver) {
     const pauseUntilMs = Date.parse(state.system.humanPauseUntil || "");
-    if (!Number.isFinite(pauseUntilMs) || Date.now() < pauseUntilMs) return false;
+    // Los bloqueos creados antes de humanPauseUntil no deben quedar eternos.
+    // Si no hay fecha válida, se consideran vencidos al próximo mensaje del paciente.
+    if (Number.isFinite(pauseUntilMs) && Date.now() < pauseUntilMs) return false;
     clearSoftHandoffState(state);
     return true;
   }
