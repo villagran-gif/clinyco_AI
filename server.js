@@ -115,6 +115,10 @@ const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 30;
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
+const HUMAN_HANDOFF_PAUSE_MS = Math.max(
+  1,
+  Number(process.env.HUMAN_HANDOFF_PAUSE_MINUTES || 120)
+) * 60 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 function firstExistingPath(paths) {
@@ -1600,6 +1604,8 @@ function isRealHumanBusinessTakeover(info) {
 
 function clearSoftHandoffState(state) {
   state.system.aiEnabled = true;
+  state.system.humanTakenOver = false;
+  state.system.humanPauseUntil = null;
   if (state.system.handoffReason === "max_bot_messages_reached") {
     state.system.botMessagesSent = MAX_BOT_MESSAGES - 1;
   }
@@ -1608,7 +1614,14 @@ function clearSoftHandoffState(state) {
 }
 
 function resumeSoftHandoffIfAllowed(state, latestUserText) {
-  if (state.system.aiEnabled || state.system.humanTakenOver) return false;
+  if (state.system.aiEnabled) return false;
+
+  if (state.system.humanTakenOver) {
+    const pauseUntilMs = Date.parse(state.system.humanPauseUntil || "");
+    if (!Number.isFinite(pauseUntilMs) || Date.now() < pauseUntilMs) return false;
+    clearSoftHandoffState(state);
+    return true;
+  }
 
   if (state.system.handoffReason === "max_bot_messages_reached") {
     clearSoftHandoffState(state);
@@ -4927,8 +4940,14 @@ const handleInboundWebhook = async (req, res) => {
     if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
       state.system.aiEnabled = false;
       state.system.humanTakenOver = true;
+      state.system.humanPauseUntil = new Date(Date.now() + HUMAN_HANDOFF_PAUSE_MS).toISOString();
       state.system.handoffReason = "human_business_message_detected";
-      console.log("AI disabled due to human business message:", conversationId);
+      console.log(
+        "AI paused due to human business message:",
+        conversationId,
+        "until",
+        state.system.humanPauseUntil
+      );
       console.log("Business sourceType:", sourceType);
 
       // ── EugenIA observes human agent comments but never mutates Antonia state ──
