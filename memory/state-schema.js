@@ -114,6 +114,7 @@ export function buildInitialConversationState() {
     system: {
       aiEnabled: true,
       humanTakenOver: false,
+      humanPauseUntil: null,
       assigneeId: null,
       botMessagesSent: 0,
       introducedAsAntonia: false,
