@@ -46,6 +46,7 @@ import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melan
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
 import {
   applyFonasaPadPreevaluationAnswer,
+  hydrateFonasaPadPreevaluationFromHistory,
   isFonasaPadPreevaluationRelevant,
   nextFonasaPadPreevaluationStep,
 } from "./fonasapad-preevaluation.js";
@@ -4822,6 +4823,22 @@ const handleInboundWebhook = async (req, res) => {
 
     // --- FONASAPAD conversational preevaluation ---
     if (!state.melania?.active && !state.booking?.awaitingSlotChoice && !state.booking?.chosenSlot && isFonasaPadPreevaluationRelevant(state, userText) && !(hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText))) {
+      // Un deploy/restart no puede hacer que AntonIA olvide hechos ya dichos.
+      // Rehidratamos una vez por versión desde mensajes persistidos, sin mandar
+      // todo ese historial al modelo ni aumentar el costo de OpenAI.
+      if (Number(state.preevaluation?.historyHydratedVersion || 0) < 2) {
+        try {
+          const preevalHistory = dbEnabled()
+            ? await getRecentConversationMessages(conversationId, 60)
+            : getHistory(conversationId);
+          hydrateFonasaPadPreevaluationFromHistory(state, preevalHistory);
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          console.log(`[fonasapad] history hydrated conversation=${conversationId} messages=${preevalHistory.length}`);
+        } catch (historyErr) {
+          console.warn(`[fonasapad] history hydration failed conversation=${conversationId}:`, historyErr.message);
+          hydrateFonasaPadPreevaluationFromHistory(state, getHistory(conversationId));
+        }
+      }
       const preevalAnswer = applyFonasaPadPreevaluationAnswer(state, userText);
       if (!preevalAnswer.deferToAssistant) {
         const preevalStep = nextFonasaPadPreevaluationStep(state, userText);

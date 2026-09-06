@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyFonasaPadPreevaluationAnswer,
   nextFonasaPadPreevaluationStep,
+  hydrateFonasaPadPreevaluationFromHistory,
 } from "./fonasapad-preevaluation.js";
 
 function state(interest = null) {
@@ -65,4 +66,46 @@ test("pregunta intercalada no se consume como respuesta clínica", () => {
   assert.equal(result.matched, false);
   assert.equal(result.deferToAssistant, true);
   assert.equal(s.preevaluation.awaiting, "weight");
+});
+
+
+test("rehidrata manga 2012 y motivo ya respondidos antes de un deploy", () => {
+  const s = state("Conversión de manga a bypass");
+  s.measurements.weightKg = 83;
+  s.measurements.heightM = 1.58;
+  s.contactDraft.c_aseguradora = "FONASA";
+  s.contactDraft.c_modalidad = "Tramo D";
+  s.preevaluation.active = true;
+  s.preevaluation.track = "revisional";
+  s.preevaluation.awaiting = "prior_year";
+
+  const history = [
+    { role: "user", content: "Ya tengo una manga", created_at: "2026-09-06T22:56:21Z" },
+    { role: "assistant", content: "quieres conversion de manga a bypass por reflujo reganancia o ambos?", created_at: "2026-09-06T22:56:27Z" },
+    { role: "user", content: "Ambos", created_at: "2026-09-06T22:57:42Z" },
+    { role: "assistant", content: "hace cuánto fue la manga?", created_at: "2026-09-06T22:57:53Z" },
+    { role: "user", content: "En el 2012", created_at: "2026-09-06T22:59:34Z" },
+  ];
+
+  hydrateFonasaPadPreevaluationFromHistory(s, history);
+  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
+  assert.equal(s.preevaluation.answers.prior_year, 2012);
+  assert.equal(s.preevaluation.answers.revision_reason, "Ambos");
+  assert.equal(s.preevaluation.awaiting, null);
+
+  const next = nextFonasaPadPreevaluationStep(s, "");
+  assert.notEqual(next?.key, "prior_surgery");
+  assert.notEqual(next?.key, "prior_year");
+  assert.notEqual(next?.key, "revision_reason");
+});
+
+test("extrae varios hechos explícitos aunque espere otro campo", () => {
+  const s = state("Conversión de manga a bypass");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "revisional";
+  s.preevaluation.awaiting = "age";
+  applyFonasaPadPreevaluationAnswer(s, "me operé de manga en 2015 y tengo reflujo y reganancia");
+  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
+  assert.equal(s.preevaluation.answers.prior_year, 2015);
+  assert.match(String(s.preevaluation.answers.revision_reason), /reflujo/i);
 });
