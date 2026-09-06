@@ -95,3 +95,44 @@ test("sender_type top-level capitalizado ('User') también cuenta como agente", 
   });
   assert.equal(info.isHumanAgent, true);
 });
+
+
+test("parsea contexto referral de anuncio Meta y expone la imagen", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    content: "¡Hola! Quiero más información.",
+    content_attributes: {
+      referral: {
+        headline: "Agenda tu evaluación",
+        body: "Información de abdominoplastia y guatita delantal",
+        image_url: "https://cdn.example.com/ad.jpg",
+        media_type: "image",
+        source_type: "ad",
+        source_url: "https://fb.me/example",
+      },
+    },
+  });
+  assert.equal(info.referralContext.headline, "Agenda tu evaluación");
+  assert.equal(info.referralContext.sourceType, "ad");
+  assert.deepEqual(info.imageUrls, ["https://cdn.example.com/ad.jpg"]);
+  assert.equal(info.hasVisualInput, true);
+  assert.equal(info.hasUserImageAttachment, false);
+});
+
+test("imagen adjunta sin texto no se descarta y se entrega a visión", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    content: "",
+    attachments: [
+      {
+        id: 88,
+        file_type: "image",
+        data_url: "https://cdn.example.com/paciente.png",
+      },
+    ],
+  });
+  assert.equal(info.userText, "Te envío una imagen.");
+  assert.deepEqual(info.imageUrls, ["https://cdn.example.com/paciente.png"]);
+  assert.equal(info.hasUserImageAttachment, true);
+  assert.equal(info.hasVisualInput, true);
+});

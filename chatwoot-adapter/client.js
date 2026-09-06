@@ -69,3 +69,52 @@ export async function sendChatwootReply({ conversationId, content }) {
   }
   return { messageId: json?.id ?? null };
 }
+
+
+// Envía un archivo como mensaje outgoing usando multipart/form-data.
+// Chatwoot espera el archivo bajo attachments[]. No fijar Content-Type manualmente:
+// fetch/FormData agrega el boundary correcto.
+export async function sendChatwootAttachment({
+  conversationId,
+  bytes,
+  filename = "antonia.ogg",
+  mimeType = "audio/ogg",
+  content = "",
+}) {
+  const realId = stripConversationNamespace(conversationId);
+  if (!realId) throw new Error("sendChatwootAttachment: conversationId requerido");
+  if (!bytes) throw new Error("sendChatwootAttachment: bytes requeridos");
+
+  if (isDryRun()) {
+    console.log("[chatwoot-adapter/dry-run] sendChatwootAttachment", {
+      conversationId: realId,
+      filename,
+      mimeType,
+    });
+    return { messageId: `dry_run_attachment_${Date.now()}`, dryRun: true };
+  }
+
+  const form = new FormData();
+  form.append("content", String(content || ""));
+  form.append("message_type", "outgoing");
+  form.append("private", "false");
+  form.append("attachments[]", new Blob([bytes], { type: mimeType }), filename);
+
+  const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/messages`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { api_access_token: token() },
+    body: form,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Chatwoot attachment send failed ${res.status}: ${text.slice(0, 300)}`);
+  }
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  return { messageId: json?.id ?? null };
+}
