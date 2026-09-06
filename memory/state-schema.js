@@ -97,7 +97,10 @@ export function buildInitialConversationState() {
       completedAt: null,
       answers: {},
       summary: null,
-      lastPrompt: null
+      lastPrompt: null,
+      historyHydratedVersion: 0,
+      historyHydratedAt: null,
+      askedKeys: {}
     },
     customerMemory: {
       customerId: null,
@@ -162,7 +165,8 @@ export function mergeConversationState(baseState, persistedState = {}) {
     preevaluation: {
       ...baseState.preevaluation,
       ...(persistedState.preevaluation || {}),
-      answers: { ...baseState.preevaluation.answers, ...(persistedState.preevaluation?.answers || {}) }
+      answers: { ...baseState.preevaluation.answers, ...(persistedState.preevaluation?.answers || {}) },
+      askedKeys: { ...baseState.preevaluation.askedKeys, ...(persistedState.preevaluation?.askedKeys || {}) }
     },
     customerMemory: { ...baseState.customerMemory, ...(persistedState.customerMemory || {}) },
     openHelp: { ...baseState.openHelp, ...(persistedState.openHelp || {}) },
