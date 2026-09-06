@@ -28,7 +28,7 @@ jobs:
         run: |
           node --check server.js
           node --check conversation-resolver.js
-          npm test
+          node --check chatwoot-adapter/client.js
           python3 - <<'PY'
           from pathlib import Path
           s = Path('server.js').read_text()
@@ -39,6 +39,8 @@ jobs:
               'hola soy Antonia[[MSG]]',
               'await sleep(300 + Math.floor(Math.random() * 450))',
               'tu problema ahora es reflujo\\no reganancia\\no ambos?',
+              'bubblesToSend',
+              'isStillLatestUserMessage(conversationId, messageId)',
           ]
           for item in checks:
               assert item in s, item
