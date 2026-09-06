@@ -1,0 +1,53 @@
+name: Antonia delivered bubbles
+
+on:
+  push:
+    branches:
+      - fix/antonia-two-bubbles-human-chat
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/antonia-two-bubbles-human-chat
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply patch
+        run: python3 scripts/patch-delivered-bubbles.py
+      - name: Validate
+        run: |
+          node --check server.js
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('server.js').read_text()
+          for token in [
+              'let deliveredReply = finalReply',
+              'const sentBubbles = []',
+              'sentBubbles.push(bubblesToSend[i])',
+              'deliveredReply = sentBubbles.join("\\n\\n")',
+              'addToHistory(conversationId, "assistant", deliveredReply)',
+              'rememberOutboundReply(latestState, deliveredReply, kind)',
+              'content: deliveredReply',
+              'botReply: deliveredReply',
+              'reply: deliveredReply',
+              'bubbles: sentAsAudio ? [deliveredReply] : sentBubbles',
+          ]:
+              assert token in s, token
+          print('delivered bubble checks ok')
+          PY
+      - name: Commit patch and remove one-shot files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server.js
+          git rm scripts/patch-delivered-bubbles.py .github/workflows/antonia-delivered-bubbles.yml
+          git commit -m 'fix: guardar solo burbujas realmente enviadas'
+          git push origin HEAD:fix/antonia-two-bubbles-human-chat
