@@ -83,7 +83,7 @@ function extractSupportHintsFromText(text) {
     saysPatient: key.includes("SOY PACIENTE") || key.includes("YA SOY PACIENTE") || key.includes("YA ME ATENDI") || key.includes("YA ME OPERE"),
     email: normalizeEmail(raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || null),
     phone: normalizePhone(raw.match(/(?:\+?56\s*)?9\s*\d(?:[\s.-]*\d){7,8}/i)?.[0] || null),
-    rut: normalizeRut(raw.match(/\d{1,2}[.]?\d{3}[.]?\d{3}-?[\dkK]/)?.[0] || null)
+    rut: normalizeRut(raw.match(/\b\d{1,2}[.]?\d{3}[.]?\d{3}-?[\dkK]\b/)?.[0] || null)
   };
 }
 
@@ -227,14 +227,45 @@ function hasScheduleIntent(text) {
   ].some((phrase) => key.includes(phrase));
 }
 
+function explicitlyLeavesSchedule(text) {
+  const key = normalizeKey(text);
+  if (!key) return false;
+  return [
+    "NO QUIERO AGENDAR",
+    "NO DESEO AGENDAR",
+    "NO NECESITO AGENDAR",
+    "CANCELAR LA HORA",
+    "CANCELAR CITA",
+    "SOLO INFORMACION",
+    "SOLO QUIERO INFORMACION",
+    "SOLO COTIZAR",
+    "QUIERO SABER EL PRECIO",
+    "QUIERO SABER EL VALOR",
+    "CUANTO CUESTA",
+    "QUE ES",
+    "COMO FUNCIONA",
+    "DIFERENCIA ENTRE"
+  ].some((phrase) => key.includes(phrase));
+}
+
+function hasContinuingScheduleIntent(state, latestUserText) {
+  if (hasScheduleIntent(latestUserText)) return true;
+  if (explicitlyLeavesSchedule(latestUserText)) return false;
+
+  const previousGoal = state?.identity?.conversationGoal;
+  const previousStage = state?.identity?.lastResolvedStage;
+  return previousGoal === "schedule" || ["schedule_request", "agenda_without_direct_access"].includes(previousStage);
+}
+
 function detectStage({ state, resolved, latestUserText }) {
   const knownData = resolved.knownData || {};
   const key = normalizeKey(latestUserText);
   const hasMinimum = hasMinimumClinicalData(knownData) && hasCommercialContactData(knownData);
+  const scheduleIntent = hasContinuingScheduleIntent(state, latestUserText);
 
   if (resolved.caseType === "E") return "clinical_record_only";
-  if (hasScheduleIntent(latestUserText) && !hasMinimum) return "schedule_request";
-  if (hasMinimum && hasScheduleIntent(latestUserText)) return "agenda_without_direct_access";
+  if (scheduleIntent && !hasMinimum) return "schedule_request";
+  if (hasMinimum && scheduleIntent) return "agenda_without_direct_access";
   if (hasMinimum && hasPositiveAdvanceIntent(latestUserText)) return "ready_for_handoff";
   if (hasMinimum && key === "NO") return "handoff_without_call";
   if (resolved.caseType === "A") return "existing_deal";
@@ -376,8 +407,8 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.stage === "schedule_request") {
     return {
-      question: "Entiendo que quieres revisar una hora, control o cambio de agenda. Cuéntame con qué profesional, especialidad o sede te gustaría atenderte para orientarte mejor.",
-      reason: "La persona pidió agenda, control o cambio de hora antes de completar todos los datos.",
+      question: "Seguimos con tu solicitud de agenda. Si ya me indicaste profesional, especialidad o sede, no hace falta repetirlo; avanzaré usando ese contexto y te pediré sólo el dato que realmente falte.",
+      reason: "La conversación mantiene un objetivo de agenda activo entre turnos y no debe reiniciar la clasificación.",
       missingFields,
       shouldDerive: false,
       forceQuestion: false,
@@ -465,4 +496,11 @@ export function applyResolverToState(state, resolverDecision) {
   state.identity.lastMissingFields = resolverDecision?.missingFields || [];
   state.identity.lastResolvedStage = resolverDecision?.resolved?.stage || null;
   state.identity.lastResolvedContext = resolverDecision?.resolved || null;
+
+  const stage = resolverDecision?.resolved?.stage || null;
+  if (["schedule_request", "agenda_without_direct_access"].includes(stage)) {
+    state.identity.conversationGoal = "schedule";
+  } else if (stage) {
+    state.identity.conversationGoal = null;
+  }
 }
