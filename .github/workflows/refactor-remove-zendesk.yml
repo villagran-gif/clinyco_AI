@@ -37,9 +37,15 @@ jobs:
       - name: Apply deterministic refactor
         run: node scripts/refactor-remove-zendesk.mjs
 
-      - name: Validate syntax
+      - name: Validate server syntax with focused diagnostics
         run: |
-          node --check server.js
+          if ! node --check server.js; then
+            echo '--- transformed server context 1390-1460 ---'
+            nl -ba server.js | sed -n '1390,1460p'
+            echo '--- residual service URLs/tokens ---'
+            grep -nE 'api\.getbase\.com|\.zendesk\.com|ZENDESK_SUBDOMAIN|ENABLE_SUPPORT_SEARCH|SUNCO_' server.js || true
+            exit 1
+          fi
           node --check eugenia/runtime.js
           node --check eugenia/index.js
 
