@@ -1,0 +1,32 @@
+name: AntonIA natural intake v2
+on:
+  push:
+    branches: [fix/antonia-natural-language-intake-v2]
+    paths:
+      - '.github/workflows/antonia-natural-intake-v2.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/antonia-natural-language-intake-v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/patch_intake_v2.py
+      - run: |
+          node --check server.js
+          node --check fonasapad-preevaluation.js
+          node --check extraction/updateDraftsFromText.js
+          node --test fonasapad-preevaluation.test.js extraction/updateDraftsFromText.test.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js fonasapad-preevaluation.js fonasapad-preevaluation.test.js extraction/updateDraftsFromText.js extraction/updateDraftsFromText.test.js
+          git commit -m "fix: entender respuestas naturales y resumir preevaluación"
+          git rm -f .github/workflows/antonia-natural-intake-v2.yml scripts/patch_intake_v2.py
+          git commit -m "chore: retirar parche temporal intake v2"
+          git push origin fix/antonia-natural-language-intake-v2
