@@ -45,7 +45,7 @@ import {
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
-import { sendChatwootReply } from "./chatwoot-adapter/client.js";
+import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
 import { start as startFonasapadCron } from "./queue/cron.js";
 import { start as startMonthlyCron } from "./queue/monthly-cron.js";
@@ -94,6 +94,9 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BRAINTRUST_API_KEY = process.env.BRAINTRUST_API_KEY || null;
 const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";
+const ANTONIA_AUDIO_ENABLED = process.env.ANTONIA_AUDIO_ENABLED === "true";
+const ANTONIA_AUDIO_MODEL = process.env.ANTONIA_AUDIO_MODEL || "gpt-4o-mini-tts";
+const ANTONIA_AUDIO_VOICE = process.env.ANTONIA_AUDIO_VOICE || "coral";
 
 
 const MAX_HISTORY_MESSAGES = 14;
@@ -2586,8 +2589,30 @@ async function sendManagedReply({
     return resJsonSkip("duplicate_reply_suppressed");
   }
 
+  let sentAsAudio = false;
   try {
-    await sendConversationReply(appId, conversationId, finalReply, info);
+    if (ANTONIA_AUDIO_ENABLED && info?.transport === "chatwoot" && wantsAudioReply(userText)) {
+      try {
+        const audioBytes = await generateAntoniaAudio(finalReply);
+        await sendChatwootReply({
+          conversationId,
+          content: "🎙️ Te lo envío por audio. La voz de Antonia es generada por IA.",
+        });
+        await sendChatwootAttachment({
+          conversationId,
+          bytes: audioBytes,
+          filename: `antonia-${Date.now()}.ogg`,
+          mimeType: "audio/ogg",
+        });
+        sentAsAudio = true;
+      } catch (audioError) {
+        console.error("ANTONIA_AUDIO_SEND_ERROR, fallback text:", audioError.message);
+      }
+    }
+
+    if (!sentAsAudio) {
+      await sendConversationReply(appId, conversationId, finalReply, info);
+    }
   } catch (sendError) {
     console.error("SEND_REPLY_ERROR:", sendError.message);
     await saveConversationEvent({
@@ -2619,7 +2644,7 @@ async function sendManagedReply({
     channel: channelLabel,
     sourceType: "api:conversations",
     content: finalReply,
-    rawJson: { kind, resolverDecision },
+    rawJson: { kind, resolverDecision, sentAsAudio },
     authorDisplayName: "Antonia"
   });
   await saveConversationEvent({
@@ -2642,7 +2667,8 @@ async function sendManagedReply({
     delayMs,
     botMessagesSent: latestState.system.botMessagesSent,
     handoffReason: latestState.system.handoffReason || null,
-    resolverDecision: resolverDecision || null
+    resolverDecision: resolverDecision || null,
+    sentAsAudio
   };
 }
 
@@ -2991,6 +3017,26 @@ function updateDraftsFromText(state, text, info) {
     }
   }
 
+  // El referral de Meta describe EL ANUNCIO, no al paciente. Solo lo usamos
+  // para reconocer el procedimiento de origen cuando el usuario no lo escribió.
+  // Nunca extraer previsión, RUT, peso ni otros atributos del referral.
+  if (!state.dealDraft.dealInteres && info?.referralContext) {
+    const referralText = [
+      info.referralContext.headline,
+      info.referralContext.body,
+    ].filter(Boolean).join("\n");
+    const referralProcedure = detectProcedure(referralText);
+    if (referralProcedure) {
+      state.dealDraft.dealInteres = referralProcedure.label;
+      if (!state.dealDraft.dealPipelineId && referralProcedure.pipelineId) {
+        state.dealDraft.dealPipelineId = referralProcedure.pipelineId;
+      }
+      console.log(
+        `[chatwoot-referral] dealInteres="${referralProcedure.label}" source=${info.referralContext.sourceType || "unknown"}`
+      );
+    }
+  }
+
   // Derive dealInteres from professional name when not already set
   if (!state.dealDraft.dealInteres) {
     const alias = extractKnownProfessionalAlias(cleanText);
@@ -3318,13 +3364,24 @@ Objetivo:
 - extraer datos relevantes para contacto y deal
 - no repetir preguntas ya respondidas
 - avanzar paso a paso
-- máximo 3 frases por respuesta (puedes usar más solo cuando contengas emocionalmente)
+- en WhatsApp responde normalmente en 1 o 2 frases cortas
+- ideal: 15 a 30 palabras; evita superar 45 palabras salvo que el usuario pida detalle o sea imprescindible por seguridad/agenda
 - hacer solo 1 pregunta a la vez
+- no enumeres manga, bypass, balón, etc. si no hace falta; una persona no recita un menú en cada respuesta
 - no sonar como robot
 - responder en español chileno neutral, profesional y cálido
 - escucha la intención real antes de preguntar datos
 - si la persona habla como humano normal, tú también debes responder como humano normal
 - evita preguntas duras tipo flujo si ya entendiste la necesidad
+- escribe como una ejecutiva humana por WhatsApp: directo, natural, sin discursos, sin párrafos ceremoniosos y sin emojis innecesarios
+- si una respuesta puede decirse bien en una sola frase, usa una sola frase
+
+Contexto visual y anuncios:
+- si recibes una imagen, obsérvala y responde sobre lo que realmente muestra; no digas que no puedes verla si fue entregada como imagen válida
+- si la imagen puede ser clínica, describe solo lo visible y orienta con prudencia; no inventes diagnósticos
+- si existe [CONTEXTO_ANUNCIO], úsalo para saber qué anuncio originó la conversación
+- el texto del anuncio NO es una declaración del paciente: no asumas su previsión, síntomas, peso, ciudad u otros datos personales desde el anuncio
+- si el anuncio ya identifica claramente el procedimiento, no preguntes otra vez qué procedimiento le interesa
 
 Identidad:
 - (La presentación como Antonia se maneja automáticamente, no te presentes de nuevo)
@@ -3394,78 +3451,34 @@ ${buildKnowledgePromptContext()}
 }
 
 function formatReplyForWhatsApp(text) {
-  // Regla 1: Cortar en puntuación después de la palabra 10+
-  const punctAllRe = /[.;?!,:—]$/;
-  const punctNoColonRe = /[.;?!,—]$/;
-  const lines = text.split('\n');
-  const formatted = [];
-
-  for (const line of lines) {
-    if (!line.trim()) { formatted.push(line); continue; }
-    const words = line.split(/\s+/);
-    let current = [];
-    let count = 0;
-    let inQuestion = false;
-    for (const word of words) {
-      current.push(word);
-      count++;
-      if (word.includes('¿')) inQuestion = true;
-      const punctRe = inQuestion ? punctNoColonRe : punctAllRe;
-      if (count >= 10 && punctRe.test(word)) {
-        formatted.push(current.join(' '));
-        formatted.push('');
-        current = [];
-        count = 0;
-      }
-      if (word.includes('?') && inQuestion) inQuestion = false;
-    }
-    if (current.length) formatted.push(current.join(' '));
-  }
-
-  let result = formatted.join('\n');
-
-  // Regla 2: 2 líneas vacías antes de ¿
-  result = result.replace(/\n*¿/g, '\n\n\n¿');
-  result = result.replace(/^\n+/, '');
-  result = result.replace(/\n{4,}/g, '\n\n\n');
-
-  // Regla 3: Emojis contextuales
-  let emojiCount = 0;
-  const MAX_EMOJIS = 3;
-  const emojiLines = result.split('\n');
-  const emojiResult = [];
-
-  for (const line of emojiLines) {
-    let l = line;
-    const hasEmoji = /[\u{1F300}-\u{1FAD6}]/u.test(l);
-    const isQuestion = l.trim().startsWith('¿');
-    if (hasEmoji || isQuestion || emojiCount >= MAX_EMOJIS) {
-      emojiResult.push(l);
-      continue;
-    }
-    if (/^(Perfecto|Listo)/i.test(l.trim())) {
-      l = '✅ ' + l.trim();
-      emojiCount++;
-    } else if (/https?:\/\//.test(l) && emojiCount < MAX_EMOJIS) {
-      l = l.replace(/(https?:\/\/)/, '🔗 $1');
-      emojiCount++;
-    } else if (/\+56|\bWhatsApp\b/i.test(l) && emojiCount < MAX_EMOJIS) {
-      l = l.replace(/(\+56)/, '📲 $1');
-      emojiCount++;
-    } else if (/\bIMC\b|kg\/m²/.test(l) && emojiCount < MAX_EMOJIS) {
-      l = '📊 ' + l.trim();
-      emojiCount++;
-    } else if (/\bderiva|una agente\b/i.test(l) && emojiCount < MAX_EMOJIS) {
-      l = l.replace(/(una agente)/, '🙋‍♀️ $1');
-      emojiCount++;
-    }
-    emojiResult.push(l);
-  }
-
-  return emojiResult.join('\n');
+  return String(text || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-async function askOpenAI({ systemPrompt, stateSummary, history }) {
+function buildReferralPromptContext(referralContext) {
+  if (!referralContext) return null;
+  const lines = [
+    "[CONTEXTO_ANUNCIO]",
+    "Este bloque describe el anuncio/origen de la conversación, NO datos declarados por el paciente.",
+  ];
+  if (referralContext.headline) lines.push(`titular=${referralContext.headline}`);
+  if (referralContext.body) lines.push(`texto=${String(referralContext.body).slice(0, 1800)}`);
+  if (referralContext.sourceType) lines.push(`origen=${referralContext.sourceType}`);
+  if (referralContext.sourceUrl) lines.push(`url=${referralContext.sourceUrl}`);
+  return lines.join("\n");
+}
+
+async function askOpenAI({
+  systemPrompt,
+  stateSummary,
+  history,
+  imageUrls = [],
+  referralContext = null,
+}) {
   if (!OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY");
   }
@@ -3473,17 +3486,87 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
     throw new Error("OpenAI client not initialized");
   }
 
-  const response = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "system", content: stateSummary },
-      ...history
-    ]
-  });
+  const referralBlock = buildReferralPromptContext(referralContext);
+  const safeImageUrls = [...new Set(
+    (Array.isArray(imageUrls) ? imageUrls : [])
+      .map((url) => String(url || "").trim())
+      .filter((url) => /^https?:\/\//i.test(url))
+  )].slice(0, 3);
 
-  let reply = response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  const baseMessages = [
+    { role: "system", content: systemPrompt },
+    { role: "system", content: stateSummary },
+    ...(referralBlock ? [{ role: "system", content: referralBlock }] : []),
+    ...history.map((item) => ({ ...item })),
+  ];
+
+  function withImages(messages) {
+    if (!safeImageUrls.length) return messages;
+    const result = messages.map((item) => ({ ...item }));
+    let lastUserIndex = -1;
+    for (let i = result.length - 1; i >= 0; i -= 1) {
+      if (result[i]?.role === "user") {
+        lastUserIndex = i;
+        break;
+      }
+    }
+    if (lastUserIndex < 0) {
+      result.push({ role: "user", content: "El paciente envió una imagen." });
+      lastUserIndex = result.length - 1;
+    }
+    const existingText = typeof result[lastUserIndex].content === "string"
+      ? result[lastUserIndex].content
+      : "El paciente envió una imagen.";
+    result[lastUserIndex] = {
+      role: "user",
+      content: [
+        { type: "text", text: existingText || "El paciente envió una imagen. Obsérvala antes de responder." },
+        ...safeImageUrls.map((url) => ({
+          type: "image_url",
+          image_url: { url, detail: "auto" },
+        })),
+      ],
+    };
+    return result;
+  }
+
+  async function createCompletion(messages) {
+    return openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages,
+      max_completion_tokens: Math.max(200, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 600)),
+    });
+  }
+
+  let response;
+  try {
+    response = await createCompletion(withImages(baseMessages));
+  } catch (error) {
+    if (!safeImageUrls.length) throw error;
+    console.warn("[vision] multimodal request failed; retrying with text/referral only:", error.message);
+    response = await createCompletion(baseMessages);
+  }
+
+  const reply = response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
   return formatReplyForWhatsApp(reply);
+}
+
+function wantsAudioReply(text) {
+  const normalized = normalizeKey(text || "");
+  return /\b(AUDIO|NOTA DE VOZ|MENSAJE DE VOZ|VOZ)\b/.test(normalized) &&
+    /\b(MANDA|MANDAME|ENVIAME|ENVIA|PUEDES|QUIERO|PREFIERO|RESPONDE|RESPONDER)\b/.test(normalized);
+}
+
+async function generateAntoniaAudio(text) {
+  if (!openai) throw new Error("OpenAI client not initialized");
+  const audioResponse = await openai.audio.speech.create({
+    model: ANTONIA_AUDIO_MODEL,
+    voice: ANTONIA_AUDIO_VOICE,
+    input: String(text || "").slice(0, 3000),
+    instructions: "Habla en español chileno neutro, cálido y profesional. Suena natural, cercana y breve, como atención por WhatsApp. Ritmo conversacional, sin tono publicitario.",
+    response_format: "opus",
+  });
+  return Buffer.from(await audioResponse.arrayBuffer());
 }
 
 async function sendConversationReply(_appId, conversationId, reply, info = null) {
@@ -4812,7 +4895,7 @@ const handleInboundWebhook = async (req, res) => {
       }
     }
 
-    if (shouldAskOpenHelpQuestion(state, userText)) {
+    if (!info?.hasVisualInput && shouldAskOpenHelpQuestion(state, userText)) {
       state.openHelp.asked = true;
       state.openHelp.askedAt = new Date().toISOString();
       return res.json(await sendManagedReply({
@@ -5098,7 +5181,7 @@ const handleInboundWebhook = async (req, res) => {
       }));
     }
 
-    if (shouldUseResolverQuestion(state, resolverDecision, userText)) {
+    if (!info?.hasVisualInput && shouldUseResolverQuestion(state, resolverDecision, userText)) {
       return res.json(await sendManagedReply({
         appId,
         conversationId,
@@ -5121,7 +5204,9 @@ const handleInboundWebhook = async (req, res) => {
     let reply = await askOpenAI({
       systemPrompt,
       stateSummary,
-      history
+      history,
+      imageUrls: info?.imageUrls || [],
+      referralContext: info?.referralContext || null
     });
 
     const isTenthMessage = state.system.botMessagesSent + 1 === MAX_BOT_MESSAGES;
