@@ -2590,6 +2590,8 @@ async function sendManagedReply({
   }
 
   let sentAsAudio = false;
+  let deliveredReply = finalReply;
+  const sentBubbles = [];
   try {
     if (ANTONIA_AUDIO_ENABLED && info?.transport === "chatwoot" && wantsAudioReply(userText)) {
       try {
@@ -2619,6 +2621,10 @@ async function sendManagedReply({
           if (!isStillLatestUserMessage(conversationId, messageId)) break;
         }
         await sendConversationReply(appId, conversationId, bubblesToSend[i], info);
+        sentBubbles.push(bubblesToSend[i]);
+      }
+      if (sentBubbles.length) {
+        deliveredReply = sentBubbles.join("\n\n");
       }
     }
   } catch (sendError) {
@@ -2631,10 +2637,10 @@ async function sendManagedReply({
     });
     throw sendError;
   }
-  addToHistory(conversationId, "assistant", finalReply);
+  addToHistory(conversationId, "assistant", deliveredReply);
 
   latestState.system.botMessagesSent += 1;
-  rememberOutboundReply(latestState, finalReply, kind);
+  rememberOutboundReply(latestState, deliveredReply, kind);
   let shouldSaveSummary = false;
 
   if (disableAiAfterSend) {
@@ -2651,8 +2657,8 @@ async function sendManagedReply({
     role: "assistant",
     channel: channelLabel,
     sourceType: "api:conversations",
-    content: finalReply,
-    rawJson: { kind, resolverDecision, sentAsAudio },
+    content: deliveredReply,
+    rawJson: { kind, resolverDecision, sentAsAudio, bubbles: sentAsAudio ? null : sentBubbles },
     authorDisplayName: "Antonia"
   });
   await saveConversationEvent({
@@ -2660,7 +2666,7 @@ async function sendManagedReply({
     info,
     channelLabel,
     userText,
-    botReply: finalReply,
+    botReply: deliveredReply,
     state: latestState,
     resolverDecision
   });
@@ -2671,12 +2677,13 @@ async function sendManagedReply({
 
   return {
     ok: true,
-    reply: finalReply,
+    reply: deliveredReply,
     delayMs,
     botMessagesSent: latestState.system.botMessagesSent,
     handoffReason: latestState.system.handoffReason || null,
     resolverDecision: resolverDecision || null,
-    sentAsAudio
+    sentAsAudio,
+    bubbles: sentAsAudio ? [deliveredReply] : sentBubbles
   };
 }
 
