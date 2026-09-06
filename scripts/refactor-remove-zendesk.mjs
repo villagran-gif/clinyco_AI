@@ -26,11 +26,37 @@ function findMatchingBrace(text, openIndex) {
   throw new Error(`Unmatched brace at ${openIndex}`);
 }
 
+function findMatchingParen(text, openIndex) {
+  let depth = 0;
+  let mode = 'normal';
+  let escaped = false;
+  for (let i = openIndex; i < text.length; i++) {
+    const c = text[i];
+    const n = text[i + 1];
+    if (mode === 'line') { if (c === '\n') mode = 'normal'; continue; }
+    if (mode === 'block') { if (c === '*' && n === '/') { mode = 'normal'; i++; } continue; }
+    if (mode === 'single') { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === "'") mode = 'normal'; continue; }
+    if (mode === 'double') { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === '"') mode = 'normal'; continue; }
+    if (mode === 'template') { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === '`') mode = 'normal'; continue; }
+    if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
+    if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
+    if (c === "'") { mode = 'single'; continue; }
+    if (c === '"') { mode = 'double'; continue; }
+    if (c === '`') { mode = 'template'; continue; }
+    if (c === '(') depth++;
+    if (c === ')') { depth--; if (depth === 0) return i; }
+  }
+  throw new Error(`Unmatched parenthesis at ${openIndex}`);
+}
+
 function locateFunction(text, name) {
   const re = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`);
   const m = re.exec(text);
   if (!m) return null;
-  const open = text.indexOf('{', m.index);
+  const paramOpen = text.indexOf('(', m.index);
+  if (paramOpen < 0) throw new Error(`No opening parenthesis for ${name}`);
+  const paramClose = findMatchingParen(text, paramOpen);
+  const open = text.indexOf('{', paramClose + 1);
   if (open < 0) throw new Error(`No opening brace for ${name}`);
   const close = findMatchingBrace(text, open);
   let end = close + 1;
@@ -80,36 +106,14 @@ function removeCallStatements(marker) {
     const idx = s.indexOf(marker);
     if (idx < 0) break;
     const lineStart = s.lastIndexOf('\n', idx) + 1;
-    let paren = s.indexOf('(', idx);
+    const paren = s.indexOf('(', idx);
     if (paren < 0) throw new Error(`No paren for call ${marker}`);
-    let depth = 0, mode = 'normal', escaped = false, end = -1;
-    for (let i = paren; i < s.length; i++) {
-      const c = s[i], n = s[i + 1];
-      if (mode === 'line') { if (c === '\n') mode = 'normal'; continue; }
-      if (mode === 'block') { if (c === '*' && n === '/') { mode = 'normal'; i++; } continue; }
-      if (mode === 'single') { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === "'") mode = 'normal'; continue; }
-      if (mode === 'double') { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === '"') mode = 'normal'; continue; }
-      if (mode === 'template') { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === '`') mode = 'normal'; continue; }
-      if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
-      if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
-      if (c === "'") { mode = 'single'; continue; }
-      if (c === '"') { mode = 'double'; continue; }
-      if (c === '`') { mode = 'template'; continue; }
-      if (c === '(') depth++;
-      if (c === ')') {
-        depth--;
-        if (depth === 0) {
-          let j = i + 1;
-          while (j < s.length && /[ \t]/.test(s[j])) j++;
-          if (s[j] === ';') j++;
-          if (s[j] === '\r') j++;
-          if (s[j] === '\n') j++;
-          end = j;
-          break;
-        }
-      }
-    }
-    if (end < 0) throw new Error(`Could not find end of call ${marker}`);
+    const paramClose = findMatchingParen(s, paren);
+    let end = paramClose + 1;
+    while (end < s.length && /[ \t]/.test(s[end])) end++;
+    if (s[end] === ';') end++;
+    if (s[end] === '\r') end++;
+    if (s[end] === '\n') end++;
     s = s.slice(0, lineStart) + s.slice(end);
     count++;
   }

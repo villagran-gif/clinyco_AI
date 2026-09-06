@@ -21,93 +21,19 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Harden transformer function parser
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('scripts/refactor-remove-zendesk.mjs')
-          s = p.read_text()
-          old = '''function locateFunction(text, name) {
-  const re = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`);
-  const m = re.exec(text);
-  if (!m) return null;
-  const open = text.indexOf('{', m.index);
-  if (open < 0) throw new Error(`No opening brace for ${name}`);
-  const close = findMatchingBrace(text, open);
-  let end = close + 1;
-  while (end < text.length && (text[end] === ' ' || text[end] === '\\t')) end++;
-  if (text[end] === '\\r') end++;
-  if (text[end] === '\\n') end++;
-  return { start: m.index, end };
-}
-'''
-          new = '''function findMatchingParen(text, openIndex) {
-  let depth = 0;
-  let mode = 'normal';
-  let escaped = false;
-  for (let i = openIndex; i < text.length; i++) {
-    const c = text[i];
-    const n = text[i + 1];
-    if (mode === 'line') { if (c === '\\n') mode = 'normal'; continue; }
-    if (mode === 'block') { if (c === '*' && n === '/') { mode = 'normal'; i++; } continue; }
-    if (mode === 'single') { if (escaped) { escaped = false; continue; } if (c === '\\\\') { escaped = true; continue; } if (c === "'") mode = 'normal'; continue; }
-    if (mode === 'double') { if (escaped) { escaped = false; continue; } if (c === '\\\\') { escaped = true; continue; } if (c === '"') mode = 'normal'; continue; }
-    if (mode === 'template') { if (escaped) { escaped = false; continue; } if (c === '\\\\') { escaped = true; continue; } if (c === '`') mode = 'normal'; continue; }
-    if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
-    if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
-    if (c === "'") { mode = 'single'; continue; }
-    if (c === '"') { mode = 'double'; continue; }
-    if (c === '`') { mode = 'template'; continue; }
-    if (c === '(') depth++;
-    if (c === ')') { depth--; if (depth === 0) return i; }
-  }
-  throw new Error(`Unmatched parenthesis at ${openIndex}`);
-}
-
-function locateFunction(text, name) {
-  const re = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`);
-  const m = re.exec(text);
-  if (!m) return null;
-  const paramOpen = text.indexOf('(', m.index);
-  if (paramOpen < 0) throw new Error(`No opening parenthesis for ${name}`);
-  const paramClose = findMatchingParen(text, paramOpen);
-  const open = text.indexOf('{', paramClose + 1);
-  if (open < 0) throw new Error(`No opening brace for ${name}`);
-  const close = findMatchingBrace(text, open);
-  let end = close + 1;
-  while (end < text.length && (text[end] === ' ' || text[end] === '\\t')) end++;
-  if (text[end] === '\\r') end++;
-  if (text[end] === '\\n') end++;
-  return { start: m.index, end };
-}
-'''
-          if old not in s:
-              raise SystemExit('locateFunction block not found exactly; refusing to mutate')
-          s = s.replace(old, new)
-          s = s.replace(
-              'if (s.includes(forbidden)) throw new Error(`Forbidden runtime token remains: ${forbidden}`);',
-              'if (s.includes(forbidden)) console.warn(`Residual runtime token before CI guard: ${forbidden}`);'
-          )
-          p.write_text(s)
-          PY
-
       - name: Apply deterministic refactor
         run: node scripts/refactor-remove-zendesk.mjs
 
       - name: Validate syntax
         run: |
-          if ! node --check server.js; then
-            echo '--- transformed server context around syntax error candidates ---'
-            nl -ba server.js | sed -n '1370,1500p'
-            exit 1
-          fi
+          node --check server.js
           node --check eugenia/runtime.js
           node --check eugenia/index.js
 
       - name: Validate Chatwoot adapter
         run: node --test tests/chatwoot-adapter.test.js
 
-      - name: Verify removed runtime endpoints
+      - name: Verify legacy runtime removed
         run: |
           if grep -nE 'api\.getbase\.com|\.zendesk\.com|SUNCO_|ZENDESK_SUBDOMAIN|ENABLE_SUPPORT_SEARCH|ENABLE_SELL_SEARCH|app\.post\("/messages"|/ticket-assigned|/ticket-updated|/support-search-test' server.js; then
             echo "Legacy runtime references remain; refusing to commit."
