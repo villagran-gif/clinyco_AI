@@ -4,6 +4,7 @@ import {
   applyFonasaPadPreevaluationAnswer,
   nextFonasaPadPreevaluationStep,
   hydrateFonasaPadPreevaluationFromHistory,
+  buildFonasaPadPreevaluationPatientReply,
 } from "./fonasapad-preevaluation.js";
 
 function state(interest = null) {
@@ -22,18 +23,21 @@ function state(interest = null) {
   };
 }
 
-test("conversión reconoce manga previa y pregunta año primero", () => {
+test("conversión confirma primero si realmente existe una manga previa", () => {
   const s = state("Conversión de manga a bypass");
   const step = nextFonasaPadPreevaluationStep(s, "me interesa conversión de manga a bypass");
   assert.equal(s.preevaluation.track, "revisional");
-  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
-  assert.equal(step.key, "prior_year");
-  assert.match(step.reply, /año.*manga/i);
+  assert.equal(s.preevaluation.answers.prior_surgery, undefined);
+  assert.equal(step.key, "prior_surgery");
+  assert.match(step.reply, /ya tienes una manga/i);
 });
 
-test("flujo revisional avanza año → motivo → estudios", () => {
+test("flujo revisional avanza confirmación → año → motivo → estudios", () => {
   const s = state("Conversión de manga a bypass");
   let step = nextFonasaPadPreevaluationStep(s, "conversión");
+  assert.equal(step.key, "prior_surgery");
+  assert.equal(applyFonasaPadPreevaluationAnswer(s, "sí tengo una manga").matched, true);
+  step = nextFonasaPadPreevaluationStep(s, "sí tengo una manga");
   assert.equal(step.key, "prior_year");
   assert.equal(applyFonasaPadPreevaluationAnswer(s, "2018").matched, true);
   step = nextFonasaPadPreevaluationStep(s, "2018");
@@ -77,6 +81,7 @@ test("rehidrata manga 2012 y motivo ya respondidos antes de un deploy", () => {
   s.contactDraft.c_modalidad = "Tramo D";
   s.preevaluation.active = true;
   s.preevaluation.track = "revisional";
+  s.preevaluation.answers.prior_surgery = "manga";
   s.preevaluation.awaiting = "prior_year";
 
   const history = [
@@ -108,4 +113,79 @@ test("extrae varios hechos explícitos aunque espere otro campo", () => {
   assert.equal(s.preevaluation.answers.prior_surgery, "manga");
   assert.equal(s.preevaluation.answers.prior_year, 2015);
   assert.match(String(s.preevaluation.answers.revision_reason), /reflujo/i);
+});
+
+
+test("acepta peso expresado en una frase natural", () => {
+  const s = state("Balón gástrico");
+  nextFonasaPadPreevaluationStep(s, "balón");
+  const result = applyFonasaPadPreevaluationAnswer(s, "120 kilo la última vez");
+  assert.equal(result.matched, true);
+  assert.equal(s.measurements.weightKg, 120);
+});
+
+test("absorbe peso y manga previa con typo chileno en una sola frase", () => {
+  const s = state("Balón gástrico");
+  nextFonasaPadPreevaluationStep(s, "balón");
+  const result = applyFonasaPadPreevaluationAnswer(s, "89 kilos pero ase 18 meses me ise una manga gástrica");
+  assert.equal(result.matched, true);
+  assert.equal(s.measurements.weightKg, 89);
+  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
+  assert.equal(s.preevaluation.answers.prior_year, "hace 18 meses");
+  assert.equal(s.preevaluation.track, "revisional");
+});
+
+test("negación explícita corrige falsa inferencia de manga", () => {
+  const s = state("Conversión de manga a bypass");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "revisional";
+  s.preevaluation.answers.prior_surgery = "manga";
+  s.preevaluation.awaiting = "prior_year";
+  let step = { key: "prior_year" };
+  assert.equal(step.key, "prior_year");
+  applyFonasaPadPreevaluationAnswer(s, "Noo yo no tengo ninguna operación quiero una bariátrica");
+  assert.equal(s.preevaluation.answers.prior_surgery, "ninguna");
+  assert.equal(s.preevaluation.track, "bariatric");
+  assert.equal(s.preevaluation.answers.prior_year, undefined);
+  step = nextFonasaPadPreevaluationStep(s, "");
+  assert.notEqual(step?.key, "prior_year");
+});
+
+test("entiende Creo b como tramo B", () => {
+  const s = state("Manga gástrica");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "bariatric";
+  s.preevaluation.awaiting = "fonasa_tramo";
+  const result = applyFonasaPadPreevaluationAnswer(s, "Creo b");
+  assert.equal(result.matched, true);
+  assert.equal(s.contactDraft.c_modalidad, "Tramo B");
+});
+
+test("de vez en cuando significa tabaco ocasional", () => {
+  const s = state("Manga gástrica");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "bariatric";
+  s.preevaluation.awaiting = "smoking";
+  const result = applyFonasaPadPreevaluationAnswer(s, "de vez en cuando");
+  assert.equal(result.matched, true);
+  assert.equal(s.preevaluation.answers.smoking, "fuma_ocasional");
+});
+
+test("resumen de preevaluación se muestra al paciente", () => {
+  const s = state("Balón gástrico");
+  s.measurements.weightKg = 120;
+  s.measurements.heightM = 1.6;
+  s.measurements.bmi = 46.9;
+  s.preevaluation.track = "balloon";
+  s.preevaluation.answers = {
+    weight: 120, height: 1.6, age: 40, prior_surgery: "ninguna",
+    comorbidities: "Pre diabetes", smoking: "fuma_ocasional",
+    insurance: "FONASA", city: "Santiago"
+  };
+  const reply = buildFonasaPadPreevaluationPatientReply(s);
+  assert.match(reply, /peso 120 kg/);
+  assert.match(reply, /IMC 46.9/);
+  assert.match(reply, /cirugía previa no/);
+  assert.match(reply, /tabaco ocasional/);
+  assert.match(reply, /ciudad Santiago/);
 });

@@ -3570,6 +3570,17 @@ Datos importantes:
 - si un profesional aparece como inactivo en la base de conocimiento, dilo con honestidad, explica el motivo si está disponible y usa el mensaje sugerido para cliente
 - si la persona ya dijo lo que necesita y tú puedes orientar, responde primero y pregunta después solo si hace falta
 
+INTERPRETACIÓN DE ESPAÑOL CHILENO Y MENSAJES NATURALES:
+- entiende modismos pero no los imites artificialmente
+- “de vez en cuando”, “de repente”, “a veces”, “socialmente” = ocasional
+- “guata” o “guatita” = abdomen
+- “me ise una manga” o “me hice una manga” = antecedente de manga gástrica
+- “creo B”, “soy B”, “Fonasa D” = tramo Fonasa cuando el contexto es previsional
+- “sip”, “sipo”, “ya”, “dale” pueden equivaler a sí según la pregunta anterior
+- “nop”, “na”, “para nada” pueden equivaler a no según el contexto
+- si el paciente corrige un dato, la corrección más reciente manda sobre el anuncio, inferencias y respuestas anteriores
+- nunca obligues al paciente a repetir un dato que acaba de expresar en una frase más larga
+
 ${buildKnowledgePromptContext()}
 `.trim();
 }
@@ -3704,11 +3715,15 @@ async function askOpenAI({
   }
 
   async function createCompletion(messages) {
-    return openai.chat.completions.create({
+    const request = {
       model: OPENAI_MODEL,
       messages,
       max_completion_tokens: Math.max(300, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 800)),
-    });
+    };
+    if (String(OPENAI_MODEL).startsWith("gpt-5.6")) {
+      request.reasoning_effort = process.env.ANTONIA_REASONING_EFFORT || "none";
+    }
+    return openai.chat.completions.create(request);
   }
 
   let response;
