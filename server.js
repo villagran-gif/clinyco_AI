@@ -100,7 +100,13 @@ const ANTONIA_AUDIO_VOICE = process.env.ANTONIA_AUDIO_VOICE || "coral";
 
 
 const MAX_HISTORY_MESSAGES = 14;
-const MAX_BOT_MESSAGES = 30;
+// 0 = sin límite artificial de turnos. Si alguna vez se necesita un tope de seguridad,
+// puede configurarse explícitamente en Render sin cambiar código.
+const MAX_BOT_MESSAGES = Math.max(0, Number(process.env.ANTONIA_MAX_BOT_MESSAGES || 0));
+
+function botMessageLimitReached(count) {
+  return MAX_BOT_MESSAGES > 0 && Number(count || 0) >= MAX_BOT_MESSAGES;
+}
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
 const HUMAN_HANDOFF_PAUSE_MS = Math.max(
@@ -1441,8 +1447,8 @@ function clearSoftHandoffState(state) {
   state.system.aiEnabled = true;
   state.system.humanTakenOver = false;
   state.system.humanPauseUntil = null;
-  if (state.system.handoffReason === "max_bot_messages_reached") {
-    state.system.botMessagesSent = MAX_BOT_MESSAGES - 1;
+  if (state.system.handoffReason === "max_bot_messages_reached" && MAX_BOT_MESSAGES > 0) {
+    state.system.botMessagesSent = Math.max(0, MAX_BOT_MESSAGES - 1);
   }
   state.system.handoffReason = null;
   state.system.lastQuestionKey = null;
@@ -2647,7 +2653,7 @@ async function sendManagedReply({
     latestState.system.aiEnabled = false;
     latestState.system.handoffReason = handoffReasonAfterSend || latestState.system.handoffReason || null;
     shouldSaveSummary = true;
-  } else if (latestState.system.botMessagesSent >= MAX_BOT_MESSAGES) {
+  } else if (botMessageLimitReached(latestState.system.botMessagesSent)) {
     markMaxMessagesReached(latestState);
     shouldSaveSummary = true;
   }
@@ -3922,7 +3928,7 @@ const handleInboundWebhook = async (req, res) => {
       return res.json({ ok: true, skipped: "ai_disabled" });
     }
 
-    if (state.system.botMessagesSent >= MAX_BOT_MESSAGES) {
+    if (botMessageLimitReached(state.system.botMessagesSent)) {
       markMaxMessagesReached(state);
       await saveConversationEvent({
         conversationId,
