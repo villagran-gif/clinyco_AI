@@ -170,7 +170,15 @@ function answerExpected(p, state, text) {
   }
   if (key === "prior_surgery") {
     const value = parsePriorSurgery(text);
-    return value ? { matched: true, value } : { matched: false };
+    if (value) return { matched: true, value };
+
+    // En conversión preguntamos específicamente si YA tiene manga.
+    // Un "sí" a esa pregunta confirma manga; no depende del anuncio.
+    const yn = parseYesNo(text);
+    const promptKey = normalize(p.lastPrompt || "");
+    if (yn === true && /ya tienes una manga/.test(promptKey)) return { matched: true, value: "manga" };
+    if (yn === true && /ya tienes un bypass/.test(promptKey)) return { matched: true, value: "bypass" };
+    return { matched: false };
   }
   if (key === "prior_year") {
     const value = parseYear(text);
@@ -330,7 +338,23 @@ export function hydrateFonasaPadPreevaluationFromHistory(state, history = []) {
       const questionKey = inferQuestionKey(previousAssistant);
       if (questionKey) {
         const parsed = parseAnswerForKey(p, state, questionKey, content);
-        if (parsed.matched) p.answers[questionKey] = parsed.value;
+        if (parsed.matched) {
+          p.answers[questionKey] = parsed.value;
+
+          // Si el paciente entregó un año como respuesta a "tu manga", eso
+          // confirma el antecedente. A diferencia del anuncio, esta inferencia
+          // está anclada en una respuesta explícita del propio paciente.
+          if (questionKey === "prior_year") {
+            const promptKey = normalize(previousAssistant);
+            if (/manga/.test(promptKey)) {
+              p.answers.prior_surgery = "manga";
+              p.track = "revisional";
+            } else if (/bypass/.test(promptKey)) {
+              p.answers.prior_surgery = "bypass";
+              p.track = "revisional";
+            }
+          }
+        }
         p.askedKeys[questionKey] = Math.max(1, Number(p.askedKeys[questionKey] || 0));
       }
     }
@@ -418,7 +442,7 @@ function nextBariatric(state, p) {
   if (!hasAnswer(p, "weight")) return prompt("weight", "cuánto pesas?");
   if (!hasAnswer(p, "height")) return prompt("height", "y cuánto mides?");
   if (!hasAnswer(p, "age")) return prompt("age", "qué edad tienes?");
-  if (!hasAnswer(p, "prior_surgery")) return prompt("prior_surgery", "te has operado antes de manga bypass u otra bariátrica?");
+  if (!hasAnswer(p, "prior_surgery")) return prompt("prior_surgery", "te operaste antes?[[MSG]]manga bypass otra o no?");
   if (p.answers.prior_surgery && p.answers.prior_surgery !== "ninguna") {
     p.track = "revisional";
     return nextRevisional(state, p);
