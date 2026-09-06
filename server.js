@@ -3307,9 +3307,12 @@ function asksClinicLocationOrNearestSite(text) {
   const key = normalizeKey(text || "");
   return [
     "DONDE ESTAN UBICADOS",
-    "DONDE ESTAN",
-    "UBICACION",
-    "DIRECCION",
+    "DONDE ATIENDEN",
+    "DONDE QUEDA",
+    "UBICACION DE LA CLINICA",
+    "UBICACION DE LA SEDE",
+    "DIRECCION DE LA CLINICA",
+    "DIRECCION DE LA SEDE",
     "SEDE CERCANA",
     "SEDE MAS CERCANA",
     "QUE SEDE",
@@ -3329,9 +3332,13 @@ function guardOpenAiSchedulingClaims(reply, state) {
     key.includes("HORARIO DISPONIBLE") ||
     key.includes("HORAS DISPONIBLES") ||
     key.includes("PUEDES VIAJAR A") ||
+    key.includes("PODES VIAJAR A") ||
     key.includes("PREFIERES TELECONSULTA") ||
+    key.includes("PREFERIS TELECONSULTA") ||
     key.includes("PREFIERES SAN FELIPE") ||
+    key.includes("PREFERIS SAN FELIPE") ||
     key.includes("PREFIERES LOS ANDES") ||
+    key.includes("PREFERIS LOS ANDES") ||
     key.includes("EVALUACION EN LOS ANDES") ||
     key.includes("EVALUACION EN SAN FELIPE");
   if (!unsupported) return { reply, handoff: false };
