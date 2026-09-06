@@ -1,0 +1,583 @@
+name: Refactor Antonia vision human audio
+
+on:
+  push:
+    branches:
+      - feature/antonia-vision-human-audio
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/antonia-vision-human-audio
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply deterministic refactor
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          parse_path = Path('chatwoot-adapter/parse.js')
+          parse_path.write_text(r'''// chatwoot-adapter/parse.js
+//
+// Normaliza webhooks message_created de Chatwoot para el core de AntonIA.
+// Además de texto, conserva adjuntos visuales y el referral de anuncios Meta.
+// El referral es CONTEXTO DE ORIGEN: nunca debe tratarse como un dato declarado
+// por el paciente (por ejemplo, no inferir su previsión desde el texto del anuncio).
+
+export function isChatwootPayload(payload) {
+  return (
+    !!payload &&
+    typeof payload.event === "string" &&
+    payload.event === "message_created" &&
+    !Array.isArray(payload.events)
+  );
+}
+
+export function parseChatwootInbound(payload) {
+  const conv = payload?.conversation || {};
+  const sender = payload?.sender || conv.meta?.sender || {};
+  const messageType = payload?.message_type || null;
+
+  const authorType = messageType === "incoming" ? "user" : "business";
+  const senderType = String(sender?.type || payload?.sender_type || "").toLowerCase();
+  const isHumanAgent = messageType === "outgoing" && senderType === "user";
+  const businessText = String(payload?.content ?? "").trim();
+
+  const referralContext = extractReferralContext(payload);
+  const attachments = collectAttachments(payload, conv);
+  const attachmentImageUrls = attachments
+    .filter(isImageAttachment)
+    .map(attachmentUrl)
+    .filter(Boolean);
+  const referralImageUrl =
+    referralContext?.mediaType === "image" ? httpUrlOrNull(referralContext.imageUrl) : null;
+  const imageUrls = uniqueUrls([
+    ...attachmentImageUrls,
+    referralImageUrl,
+  ]).slice(0, 3);
+
+  const hasUserImageAttachment = messageType === "incoming" && attachmentImageUrls.length > 0;
+  const hasVisualInput = messageType === "incoming" && imageUrls.length > 0;
+
+  let userText = messageType === "incoming" ? String(payload?.content ?? "").trim() : "";
+  if (!userText && hasUserImageAttachment) {
+    userText = "Te envío una imagen.";
+  }
+
+  const phone = strOrNull(sender.phone_number);
+  const name = strOrNull(sender.name);
+
+  return {
+    appId: String(payload?.account?.id ?? process.env.CHATWOOT_ACCOUNT_ID ?? "162472"),
+    conversationId: conv.id != null ? `cw:${conv.id}` : null,
+    userText,
+    eventType: "conversation:message",
+    authorType,
+    senderType,
+    isHumanAgent,
+    businessText,
+    messageId: payload?.id != null ? String(payload.id) : null,
+    sourceType: strOrNull(conv.channel || payload?.inbox?.name) || "chatwoot",
+    channelDisplayName: phone || name,
+    channelExternalId: phone,
+    authorDisplayName: name,
+    sourceProfileName: name,
+    entryPoint: strOrNull(payload?.inbox?.name),
+    transport: "chatwoot",
+    attachments,
+    imageUrls,
+    hasUserImageAttachment,
+    hasVisualInput,
+    referralContext,
+    rawMessage: payload,
+    rawConversation: conv,
+    rawSource: sender,
+  };
+}
+
+function extractReferralContext(payload) {
+  const referral = payload?.content_attributes?.referral;
+  if (!referral || typeof referral !== "object" || Array.isArray(referral)) return null;
+
+  const result = {
+    headline: strOrNull(referral.headline),
+    body: strOrNull(referral.body),
+    sourceType: strOrNull(referral.source_type),
+    sourceId: strOrNull(referral.source_id),
+    sourceUrl: strOrNull(referral.source_url),
+    mediaType: strOrNull(referral.media_type)?.toLowerCase() || null,
+    imageUrl: httpUrlOrNull(referral.image_url),
+  };
+
+  return Object.values(result).some(Boolean) ? result : null;
+}
+
+function collectAttachments(payload, conv) {
+  const currentId = payload?.id != null ? String(payload.id) : null;
+  const conversationMessages = Array.isArray(conv?.messages) ? conv.messages : [];
+  const matchingMessage = currentId
+    ? conversationMessages.find((m) => String(m?.id ?? "") === currentId)
+    : null;
+
+  const candidates = [
+    ...(Array.isArray(payload?.attachments) ? payload.attachments : []),
+    ...(Array.isArray(matchingMessage?.attachments) ? matchingMessage.attachments : []),
+  ];
+
+  const seen = new Set();
+  return candidates.filter((attachment) => {
+    if (!attachment || typeof attachment !== "object") return false;
+    const key = attachmentUrl(attachment) || String(attachment.id || JSON.stringify(attachment));
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function attachmentUrl(attachment) {
+  return httpUrlOrNull(
+    attachment?.data_url ||
+    attachment?.file_url ||
+    attachment?.url ||
+    attachment?.thumb_url
+  );
+}
+
+function isImageAttachment(attachment) {
+  const url = attachmentUrl(attachment) || "";
+  const marker = [
+    attachment?.file_type,
+    attachment?.content_type,
+    attachment?.mime_type,
+    attachment?.extension,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return (
+    marker.includes("image") ||
+    /\b(png|jpe?g|webp|gif|bmp)\b/i.test(marker) ||
+    /\.(png|jpe?g|webp|gif|bmp)(?:\?|$)/i.test(url)
+  );
+}
+
+function uniqueUrls(values) {
+  return [...new Set(values.map(httpUrlOrNull).filter(Boolean))];
+}
+
+function httpUrlOrNull(value) {
+  const s = strOrNull(value);
+  if (!s || !/^https?:\/\//i.test(s)) return null;
+  return s;
+}
+
+function strOrNull(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s || null;
+}
+''', encoding='utf-8')
+
+          client_path = Path('chatwoot-adapter/client.js')
+          client = client_path.read_text(encoding='utf-8')
+          if 'export async function sendChatwootAttachment' not in client:
+              client += r'''
+
+// Envía un archivo como mensaje outgoing usando multipart/form-data.
+// Chatwoot espera el archivo bajo attachments[]. No fijar Content-Type manualmente:
+// fetch/FormData agrega el boundary correcto.
+export async function sendChatwootAttachment({
+  conversationId,
+  bytes,
+  filename = "antonia.ogg",
+  mimeType = "audio/ogg",
+  content = "",
+}) {
+  const realId = stripConversationNamespace(conversationId);
+  if (!realId) throw new Error("sendChatwootAttachment: conversationId requerido");
+  if (!bytes) throw new Error("sendChatwootAttachment: bytes requeridos");
+
+  if (isDryRun()) {
+    console.log("[chatwoot-adapter/dry-run] sendChatwootAttachment", {
+      conversationId: realId,
+      filename,
+      mimeType,
+    });
+    return { messageId: `dry_run_attachment_${Date.now()}`, dryRun: true };
+  }
+
+  const form = new FormData();
+  form.append("content", String(content || ""));
+  form.append("message_type", "outgoing");
+  form.append("private", "false");
+  form.append("attachments[]", new Blob([bytes], { type: mimeType }), filename);
+
+  const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/messages`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { api_access_token: token() },
+    body: form,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Chatwoot attachment send failed ${res.status}: ${text.slice(0, 300)}`);
+  }
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  return { messageId: json?.id ?? null };
+}
+'''
+          client_path.write_text(client, encoding='utf-8')
+
+          server_path = Path('server.js')
+          server = server_path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global server
+              count = server.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              server = server.replace(old, new, 1)
+
+          replace_once(
+              'import { sendChatwootReply } from "./chatwoot-adapter/client.js";',
+              'import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";',
+              'client import'
+          )
+
+          replace_once(
+              'const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";\n',
+              '''const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";\nconst ANTONIA_AUDIO_ENABLED = process.env.ANTONIA_AUDIO_ENABLED === "true";\nconst ANTONIA_AUDIO_MODEL = process.env.ANTONIA_AUDIO_MODEL || "gpt-4o-mini-tts";\nconst ANTONIA_AUDIO_VOICE = process.env.ANTONIA_AUDIO_VOICE || "coral";\n''',
+              'audio config'
+          )
+
+          procedure_block = r'''  const procedure = detectProcedure(cleanText);
+  if (procedure) {
+    state.dealDraft.dealInteres = procedure.label;
+    if (!state.dealDraft.dealPipelineId && procedure.pipelineId) {
+      state.dealDraft.dealPipelineId = procedure.pipelineId;
+    }
+    if (procedure.key === "BALON" && !state.dealDraft.dealCirujanoBalon) {
+      state.dealDraft.dealCirujanoBalon = "AUN NO LO DECIDE";
+    }
+    if (procedure.key === "BARIATRICA" && !state.dealDraft.dealCirujanoBariatrico) {
+      state.dealDraft.dealCirujanoBariatrico = "AUN NO LO DECIDE";
+    }
+  }
+'''
+          referral_block = procedure_block + r'''
+  // El referral de Meta describe EL ANUNCIO, no al paciente. Solo lo usamos
+  // para reconocer el procedimiento de origen cuando el usuario no lo escribió.
+  // Nunca extraer previsión, RUT, peso ni otros atributos del referral.
+  if (!state.dealDraft.dealInteres && info?.referralContext) {
+    const referralText = [
+      info.referralContext.headline,
+      info.referralContext.body,
+    ].filter(Boolean).join("\n");
+    const referralProcedure = detectProcedure(referralText);
+    if (referralProcedure) {
+      state.dealDraft.dealInteres = referralProcedure.label;
+      if (!state.dealDraft.dealPipelineId && referralProcedure.pipelineId) {
+        state.dealDraft.dealPipelineId = referralProcedure.pipelineId;
+      }
+      console.log(
+        `[chatwoot-referral] dealInteres="${referralProcedure.label}" source=${info.referralContext.sourceType || "unknown"}`
+      );
+    }
+  }
+'''
+          replace_once(procedure_block, referral_block, 'referral derivation')
+
+          replace_once(
+              '- máximo 3 frases por respuesta (puedes usar más solo cuando contengas emocionalmente)\n- hacer solo 1 pregunta a la vez\n',
+              '''- en WhatsApp responde normalmente en 1 o 2 frases cortas\n- ideal: 15 a 30 palabras; evita superar 45 palabras salvo que el usuario pida detalle o sea imprescindible por seguridad/agenda\n- hacer solo 1 pregunta a la vez\n- no enumeres manga, bypass, balón, etc. si no hace falta; una persona no recita un menú en cada respuesta\n''',
+              'short prompt'
+          )
+
+          replace_once(
+              '- evita preguntas duras tipo flujo si ya entendiste la necesidad\n',
+              '''- evita preguntas duras tipo flujo si ya entendiste la necesidad\n- escribe como una ejecutiva humana por WhatsApp: directo, natural, sin discursos, sin párrafos ceremoniosos y sin emojis innecesarios\n- si una respuesta puede decirse bien en una sola frase, usa una sola frase\n\nContexto visual y anuncios:\n- si recibes una imagen, obsérvala y responde sobre lo que realmente muestra; no digas que no puedes verla si fue entregada como imagen válida\n- si la imagen puede ser clínica, describe solo lo visible y orienta con prudencia; no inventes diagnósticos\n- si existe [CONTEXTO_ANUNCIO], úsalo para saber qué anuncio originó la conversación\n- el texto del anuncio NO es una declaración del paciente: no asumas su previsión, síntomas, peso, ciudad u otros datos personales desde el anuncio\n- si el anuncio ya identifica claramente el procedimiento, no preguntes otra vez qué procedimiento le interesa\n''',
+              'visual prompt'
+          )
+
+          start = server.index('function formatReplyForWhatsApp(text) {')
+          end = server.index('async function sendConversationReply(', start)
+          replacement = r'''function formatReplyForWhatsApp(text) {
+  return String(text || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildReferralPromptContext(referralContext) {
+  if (!referralContext) return null;
+  const lines = [
+    "[CONTEXTO_ANUNCIO]",
+    "Este bloque describe el anuncio/origen de la conversación, NO datos declarados por el paciente.",
+  ];
+  if (referralContext.headline) lines.push(`titular=${referralContext.headline}`);
+  if (referralContext.body) lines.push(`texto=${String(referralContext.body).slice(0, 1800)}`);
+  if (referralContext.sourceType) lines.push(`origen=${referralContext.sourceType}`);
+  if (referralContext.sourceUrl) lines.push(`url=${referralContext.sourceUrl}`);
+  return lines.join("\n");
+}
+
+async function askOpenAI({
+  systemPrompt,
+  stateSummary,
+  history,
+  imageUrls = [],
+  referralContext = null,
+}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+  if (!openai) {
+    throw new Error("OpenAI client not initialized");
+  }
+
+  const referralBlock = buildReferralPromptContext(referralContext);
+  const safeImageUrls = [...new Set(
+    (Array.isArray(imageUrls) ? imageUrls : [])
+      .map((url) => String(url || "").trim())
+      .filter((url) => /^https?:\/\//i.test(url))
+  )].slice(0, 3);
+
+  const baseMessages = [
+    { role: "system", content: systemPrompt },
+    { role: "system", content: stateSummary },
+    ...(referralBlock ? [{ role: "system", content: referralBlock }] : []),
+    ...history.map((item) => ({ ...item })),
+  ];
+
+  function withImages(messages) {
+    if (!safeImageUrls.length) return messages;
+    const result = messages.map((item) => ({ ...item }));
+    let lastUserIndex = -1;
+    for (let i = result.length - 1; i >= 0; i -= 1) {
+      if (result[i]?.role === "user") {
+        lastUserIndex = i;
+        break;
+      }
+    }
+    if (lastUserIndex < 0) {
+      result.push({ role: "user", content: "El paciente envió una imagen." });
+      lastUserIndex = result.length - 1;
+    }
+    const existingText = typeof result[lastUserIndex].content === "string"
+      ? result[lastUserIndex].content
+      : "El paciente envió una imagen.";
+    result[lastUserIndex] = {
+      role: "user",
+      content: [
+        { type: "text", text: existingText || "El paciente envió una imagen. Obsérvala antes de responder." },
+        ...safeImageUrls.map((url) => ({
+          type: "image_url",
+          image_url: { url, detail: "auto" },
+        })),
+      ],
+    };
+    return result;
+  }
+
+  async function createCompletion(messages) {
+    return openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      messages,
+      max_completion_tokens: Math.max(200, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 600)),
+    });
+  }
+
+  let response;
+  try {
+    response = await createCompletion(withImages(baseMessages));
+  } catch (error) {
+    if (!safeImageUrls.length) throw error;
+    console.warn("[vision] multimodal request failed; retrying with text/referral only:", error.message);
+    response = await createCompletion(baseMessages);
+  }
+
+  const reply = response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  return formatReplyForWhatsApp(reply);
+}
+
+function wantsAudioReply(text) {
+  const normalized = normalizeKey(text || "");
+  return /\b(AUDIO|NOTA DE VOZ|MENSAJE DE VOZ|VOZ)\b/.test(normalized) &&
+    /\b(MANDA|MANDAME|ENVIAME|ENVIA|PUEDES|QUIERO|PREFIERO|RESPONDE|RESPONDER)\b/.test(normalized);
+}
+
+async function generateAntoniaAudio(text) {
+  if (!openai) throw new Error("OpenAI client not initialized");
+  const audioResponse = await openai.audio.speech.create({
+    model: ANTONIA_AUDIO_MODEL,
+    voice: ANTONIA_AUDIO_VOICE,
+    input: String(text || "").slice(0, 3000),
+    instructions: "Habla en español chileno neutro, cálido y profesional. Suena natural, cercana y breve, como atención por WhatsApp. Ritmo conversacional, sin tono publicitario.",
+    response_format: "opus",
+  });
+  return Buffer.from(await audioResponse.arrayBuffer());
+}
+
+'''
+          server = server[:start] + replacement + server[end:]
+
+          send_old = r'''  try {
+    await sendConversationReply(appId, conversationId, finalReply, info);
+  } catch (sendError) {
+    console.error("SEND_REPLY_ERROR:", sendError.message);
+    await saveConversationEvent({
+      conversationId, info, channelLabel, userText,
+      botReply: `[SEND_FAILED] ${finalReply}`,
+      state: latestState,
+      resolverDecision: { ...resolverDecision, sendError: sendError.message }
+    });
+    throw sendError;
+  }
+'''
+          send_new = r'''  let sentAsAudio = false;
+  try {
+    if (ANTONIA_AUDIO_ENABLED && info?.transport === "chatwoot" && wantsAudioReply(userText)) {
+      try {
+        const audioBytes = await generateAntoniaAudio(finalReply);
+        await sendChatwootReply({
+          conversationId,
+          content: "🎙️ Te lo envío por audio. La voz de Antonia es generada por IA.",
+        });
+        await sendChatwootAttachment({
+          conversationId,
+          bytes: audioBytes,
+          filename: `antonia-${Date.now()}.ogg`,
+          mimeType: "audio/ogg",
+        });
+        sentAsAudio = true;
+      } catch (audioError) {
+        console.error("ANTONIA_AUDIO_SEND_ERROR, fallback text:", audioError.message);
+      }
+    }
+
+    if (!sentAsAudio) {
+      await sendConversationReply(appId, conversationId, finalReply, info);
+    }
+  } catch (sendError) {
+    console.error("SEND_REPLY_ERROR:", sendError.message);
+    await saveConversationEvent({
+      conversationId, info, channelLabel, userText,
+      botReply: `[SEND_FAILED] ${finalReply}`,
+      state: latestState,
+      resolverDecision: { ...resolverDecision, sendError: sendError.message }
+    });
+    throw sendError;
+  }
+'''
+          replace_once(send_old, send_new, 'managed audio send')
+
+          replace_once(
+              '    rawJson: { kind, resolverDecision },\n',
+              '    rawJson: { kind, resolverDecision, sentAsAudio },\n',
+              'persist audio metadata'
+          )
+          replace_once(
+              '    resolverDecision: resolverDecision || null\n',
+              '    resolverDecision: resolverDecision || null,\n    sentAsAudio\n',
+              'reply audio metadata'
+          )
+
+          replace_once(
+              '    if (shouldAskOpenHelpQuestion(state, userText)) {',
+              '    if (!info?.hasVisualInput && shouldAskOpenHelpQuestion(state, userText)) {',
+              'open help visual bypass'
+          )
+          replace_once(
+              '    if (shouldUseResolverQuestion(state, resolverDecision, userText)) {',
+              '    if (!info?.hasVisualInput && shouldUseResolverQuestion(state, resolverDecision, userText)) {',
+              'resolver visual bypass'
+          )
+
+          replace_once(
+              '''    let reply = await askOpenAI({\n      systemPrompt,\n      stateSummary,\n      history\n    });''',
+              '''    let reply = await askOpenAI({\n      systemPrompt,\n      stateSummary,\n      history,\n      imageUrls: info?.imageUrls || [],\n      referralContext: info?.referralContext || null\n    });''',
+              'multimodal ask call'
+          )
+
+          server_path.write_text(server, encoding='utf-8')
+
+          tests_path = Path('tests/chatwoot-adapter.test.js')
+          tests = tests_path.read_text(encoding='utf-8')
+          marker = 'parsea contexto referral de anuncio Meta'
+          if marker not in tests:
+              tests += r'''
+
+test("parsea contexto referral de anuncio Meta y expone la imagen", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    content: "¡Hola! Quiero más información.",
+    content_attributes: {
+      referral: {
+        headline: "Agenda tu evaluación",
+        body: "Información de abdominoplastia y guatita delantal",
+        image_url: "https://cdn.example.com/ad.jpg",
+        media_type: "image",
+        source_type: "ad",
+        source_url: "https://fb.me/example",
+      },
+    },
+  });
+  assert.equal(info.referralContext.headline, "Agenda tu evaluación");
+  assert.equal(info.referralContext.sourceType, "ad");
+  assert.deepEqual(info.imageUrls, ["https://cdn.example.com/ad.jpg"]);
+  assert.equal(info.hasVisualInput, true);
+  assert.equal(info.hasUserImageAttachment, false);
+});
+
+test("imagen adjunta sin texto no se descarta y se entrega a visión", () => {
+  const info = parseChatwootInbound({
+    ...incoming,
+    content: "",
+    attachments: [
+      {
+        id: 88,
+        file_type: "image",
+        data_url: "https://cdn.example.com/paciente.png",
+      },
+    ],
+  });
+  assert.equal(info.userText, "Te envío una imagen.");
+  assert.deepEqual(info.imageUrls, ["https://cdn.example.com/paciente.png"]);
+  assert.equal(info.hasUserImageAttachment, true);
+  assert.equal(info.hasVisualInput, true);
+});
+'''
+          tests_path.write_text(tests, encoding='utf-8')
+          PY
+
+      - name: Validate syntax and focused tests
+        run: |
+          node --check server.js
+          node --check chatwoot-adapter/parse.js
+          node --check chatwoot-adapter/client.js
+          node --test tests/chatwoot-adapter.test.js
+
+      - name: Commit refactor and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/antonia-vision-human-audio.yml
+          git add server.js chatwoot-adapter/parse.js chatwoot-adapter/client.js tests/chatwoot-adapter.test.js .github/workflows/antonia-vision-human-audio.yml
+          git commit -m "feat: visión, respuestas humanas y audio opt-in para Antonia"
+          git push origin HEAD:feature/antonia-vision-human-audio
