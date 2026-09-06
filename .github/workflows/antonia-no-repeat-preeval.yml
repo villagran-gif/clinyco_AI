@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: sed -i 's/makeState(/state(/g' scripts/patch_no_repeat_preeval.py
       - run: python3 scripts/patch_no_repeat_preeval.py
       - run: |
           node --check server.js
