@@ -1,65 +1,32 @@
 # chatwoot-adapter
 
-Permite que **Antonia responda por Chatwoot Cloud** (cuenta `162472`) en vez de
-Sunshine Conversations, **sin tocar su cerebro**. Es la "Mitad 1" del plan
-Chatwoot: el cerebro (la ruta `/messages`) es agnóstico del canal; acá solo
-adaptamos el I/O.
+Adaptador de entrada/salida entre **Chatwoot Cloud** y el core de AntonIA.
 
-## Cómo encaja
+## Flujo
 
-```
-Chatwoot Cloud ─webhook─→ sell-medinet-backend (chatwoot.raw_events)
-                              └─ chatwoot-dispatcher (handler "antonia")
-                                   └─HTTP─→ clinyco_AI  POST /chatwoot/inbound
-                                              └─ extractConversationInfo() detecta
-                                                 Chatwoot → mismo `info` que Sunco
-                                              └─ cerebro de Antonia (sin cambios)
-                                              └─ sendConversationReply() transport-aware
-                                                   └─ sendChatwootReply() (este módulo)
+```text
+Chatwoot
+  -> integration gateway
+  -> POST /chatwoot/inbound
+  -> parseChatwootInbound()
+  -> core AntonIA
+  -> sendChatwootReply()
+  -> Chatwoot
 ```
 
-## Piezas
+## Normalización
 
-| Archivo | Qué hace |
-|---|---|
-| `parse.js` | `isChatwootPayload()` + `parseChatwootInbound()`: webhook `message_created` → el MISMO objeto `info` que produce `extractConversationInfo` para Sunco (pure, testeado). |
-| `client.js` | `sendChatwootReply({conversationId, content})`: outbound a `/api/v1/accounts/162472/conversations/:id/messages`. Dry-run aware. |
+- `message_created` incoming -> paciente.
+- `message_created` outgoing de `sender.type=user` -> agente humano y activa handoff/pausa.
+- `sender.type=agent_bot` -> eco del bot, no se interpreta como intervención humana.
+- El `conversationId` se namespacifica con `cw:` dentro del core para evitar colisiones; el cliente de salida quita ese prefijo antes de llamar Chatwoot.
 
-## Normalización clave
+## Variables
 
-- `conversationId` se prefija `cw:` para no colisionar con los UUID de Sunco en
-  el store. El cliente outbound lo quita antes de pegarle a la API.
-- `eventType` → `"conversation:message"` (lo que chequea la ruta).
-- `message_type: incoming` → `authorType "user"` (paciente); `outgoing` →
-  `"business"`. Si el outgoing es de un **agente humano** (`sender.type "user"`)
-  → `isHumanAgent=true` → la ruta hace **takeover** (pausa Antonia); si es del
-  **bot** (`agent_bot`) → `isHumanAgent=false` → se ignora como echo.
+- `CHATWOOT_ADAPTER_TOKEN` — Bearer entre gateway y core.
+- `CHATWOOT_API_TOKEN` — token para salida a Chatwoot.
+- `CHATWOOT_ACCOUNT_ID` — cuenta Chatwoot.
+- `CHATWOOT_API_URL` — default `https://app.chatwoot.com`.
+- `CHATWOOT_ADAPTER_DRY_RUN` — evita envío real cuando se habilita explícitamente.
 
-## Env (opt-in)
-
-| Var | Default | Para qué |
-|---|---|---|
-| `CHATWOOT_ADAPTER_ENABLED` | `false` | Monta la ruta `POST /chatwoot/inbound`. |
-| `CHATWOOT_ADAPTER_DRY_RUN` | `false` | Si `true`, el outbound no hace HTTP (loguea). |
-| `CHATWOOT_ADAPTER_TOKEN` | — | Bearer que exige `/chatwoot/inbound` (lo manda el dispatcher). |
-| `CHATWOOT_API_TOKEN` | — | Token de la cuenta 162472 (outbound). |
-| `CHATWOOT_ACCOUNT_ID` | `162472` | Override del account. |
-| `CHATWOOT_API_URL` | `https://app.chatwoot.com` | Override (self-host). |
-
-**Seguridad / no-regresión**: opt-in y **paralelo a Sunco**. Con el flag apagado,
-la ruta no se monta y el camino `/messages` (Sunco) queda byte-idéntico.
-
-## ⚠️ Requisito: Antonia debe responder como AgentBot
-
-Para distinguir el **echo del propio bot** de un **agente humano** en los mensajes
-`outgoing`, Antonia debe responder vía un **AgentBot de Chatwoot** (su `sender.type`
-queda como `agent_bot`). Así: agente humano (`user`) → takeover (pausa Antonia);
-echo del bot (`agent_bot`) → ignorado. Si Antonia respondiera con un token de
-agente normal (`user`), sus propios echoes se verían como "agente humano" y se
-auto-pausaría.
-
-## Pendiente (refinamientos)
-
-- Adjuntos (hoy solo texto).
-- Backstop por contenido (`isRecentOutboundEcho`) en el path `business`, por si el
-  AgentBot no estuviera configurado.
+Chatwoot es el único transporte conversacional soportado por el runtime actual.
