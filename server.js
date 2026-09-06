@@ -3289,6 +3289,59 @@ function getMaxMessagesClosure() {
 
 
 
+function isPadNonEligibilityLead(text) {
+  const key = normalizeKey(text || "");
+  const mentionsPad = key.includes("PAD") && key.includes("FONASA");
+  const saysNoQualify = [
+    "NO CALIFICO",
+    "NO CALIFICA",
+    "NO CUMPLO",
+    "NO ENTRO",
+    "NO PUEDO USAR",
+    "NO ME SIRVE EL PAD"
+  ].some((phrase) => key.includes(phrase));
+  return mentionsPad && saysNoQualify;
+}
+
+function asksClinicLocationOrNearestSite(text) {
+  const key = normalizeKey(text || "");
+  return [
+    "DONDE ESTAN UBICADOS",
+    "DONDE ESTAN",
+    "UBICACION",
+    "DIRECCION",
+    "SEDE CERCANA",
+    "SEDE MAS CERCANA",
+    "QUE SEDE",
+    "CUAL SEDE"
+  ].some((phrase) => key.includes(phrase));
+}
+
+function guardOpenAiSchedulingClaims(reply, state) {
+  if (Array.isArray(state?.booking?.pendingSlots) && state.booking.pendingSlots.length > 0) {
+    return { reply, handoff: false };
+  }
+  const key = normalizeKey(reply || "");
+  const unsupported =
+    key.includes("SEDE MAS CERCANA") ||
+    key.includes("SEDE CERCANA") ||
+    key.includes("MANANA O TARDE") ||
+    key.includes("HORARIO DISPONIBLE") ||
+    key.includes("HORAS DISPONIBLES") ||
+    key.includes("PUEDES VIAJAR A") ||
+    key.includes("PREFIERES TELECONSULTA") ||
+    key.includes("PREFIERES SAN FELIPE") ||
+    key.includes("PREFIERES LOS ANDES") ||
+    key.includes("EVALUACION EN LOS ANDES") ||
+    key.includes("EVALUACION EN SAN FELIPE");
+  if (!unsupported) return { reply, handoff: false };
+  console.warn("[schedule-guard] blocked unsupported scheduling claim:", String(reply || "").slice(0, 240));
+  return {
+    reply: "para no darte una sede u hora incorrecta[[MSG]]te lo confirmo con una agente",
+    handoff: true
+  };
+}
+
 function shouldAskForFonasaTramo(state, latestUserText) {
   const key = normalizeKey(latestUserText || "");
   const parsed = parseAseguradora(latestUserText || "");
@@ -3297,6 +3350,11 @@ function shouldAskForFonasaTramo(state, latestUserText) {
     ["PAD", "BONO", "COPAGO", "COBERTURA", "TRAMO"].some((phrase) => key.includes(phrase));
 
   if (!needsTramoForThisFlow) return false;
+  if (state.system?.padNonEligibilityLead) {
+    const laterCoverageIntent = ["VALOR", "PRECIO", "COTIZ", "COBERTURA", "BONO", "COPAGO", "TRAMO"]
+      .some((phrase) => key.includes(phrase));
+    if (!laterCoverageIntent || isPadNonEligibilityLead(latestUserText)) return false;
+  }
   if (parseFonasaTramo(latestUserText || "")) return false;
   if (parsed?.negatedAseguradora === "FONASA") return false;
   if (parsed?.aseguradora && parsed.aseguradora !== "FONASA") return false;
@@ -3461,6 +3519,8 @@ Reglas operativas:
 - no pidas RUT de forma proactiva salvo que el usuario diga que ya es paciente o entregue el RUT por su cuenta
 - si ya fue identificado un caso de derivación clínica, no sigas preguntando datos
 - si preguntan por la agenda u hora de un profesional que no esté en la lista disponible, no inventes disponibilidad; indica que derivarás con una agente porque no tienes acceso a esa agenda en esta franja horaria y sugiere la agenda web ${MEDINET_AGENDA_WEB_URL}
+- PROHIBIDO inventar sedes, ciudades, cercanía geográfica, teleconsulta, mañana/tarde o disponibilidad. Sólo menciona una sede/ciudad/horario cuando provenga de un resultado real de Medinet o de una fuente de conocimiento verificada
+- si el paciente dice que NO califica para PAD, no lo interrogues inmediatamente por el tramo. Primero explica brevemente que igual podemos revisar otras alternativas y continúa la preevaluación
 
 Datos importantes:
 - si quiere avanzar, cotizar, agendar o resolver su caso y ya tenemos teléfono, no vuelvas a pedirlo
@@ -3489,6 +3549,13 @@ function cleanHumanBubble(text) {
   let value = String(text || "").trim();
   if (!value) return "";
   value = value
+    .replace(/\bpreferís\b/gi, "prefieres")
+    .replace(/\bpodés\b/gi, "puedes")
+    .replace(/\bquerés\b/gi, "quieres")
+    .replace(/\bmedís\b/gi, "mides")
+    .replace(/\bsos\b/gi, "eres")
+    .replace(/\btenés\b/gi, "tienes")
+    .replace(/\bpasás\b/gi, "pasas")
     .replace(/^[¿¡]\s*/, "")
     .replace(/[.!]+$/, "")
     .trim();
@@ -4978,6 +5045,44 @@ const handleInboundWebhook = async (req, res) => {
       }));
     }
 
+    if (isPadNonEligibilityLead(userText) && !state.system.padNonEligibilityLead) {
+      state.system.padNonEligibilityLead = true;
+      state.dealDraft.dealValidacionPad = state.dealDraft.dealValidacionPad || "Paciente refiere no calificar PAD; revisar alternativas";
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: "igual podemos revisar otras alternativas\ncuánto pesas actualmente?",
+        kind: "pad_non_eligibility_persuasion",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: {
+          stage: "pad_non_eligibility",
+          nextAction: "continue_evaluation",
+          reason: "Patient says they do not qualify for PAD; persuade and orient before asking Fonasa tramo"
+        }
+      }));
+    }
+
+    if (asksClinicLocationOrNearestSite(userText) && !(Array.isArray(state.booking?.pendingSlots) && state.booking.pendingSlots.length)) {
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: "para no darte una sede incorrecta[[MSG]]te lo confirmo con una agente",
+        kind: "clinic_location_requires_verified_source",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: buildBlockedDecision(state, "clinic_location_requires_verified_source", "derive"),
+        disableAiAfterSend: true,
+        handoffReasonAfterSend: "clinic_location_requires_verified_source"
+      }));
+    }
+
     const unknownProfessionalSchedule = detectUnknownProfessionalScheduleRequest(userText);
     if (unknownProfessionalSchedule.shouldDerive) {
       return res.json(await sendManagedReply({
@@ -5330,6 +5435,9 @@ const handleInboundWebhook = async (req, res) => {
       referralContext: info?.referralContext || null
     });
 
+    const scheduleGuard = guardOpenAiSchedulingClaims(reply, state);
+    reply = scheduleGuard.reply;
+
     const isTenthMessage = state.system.botMessagesSent + 1 === MAX_BOT_MESSAGES;
     if (isTenthMessage) {
       const closure = getMaxMessagesClosure();
@@ -5346,7 +5454,9 @@ const handleInboundWebhook = async (req, res) => {
       state,
       info,
       channelLabel,
-      resolverDecision: buildResolverQuestionDecision(state, "openai_reply")
+      resolverDecision: buildResolverQuestionDecision(state, scheduleGuard.handoff ? "unsupported_schedule_claim_prevented" : "openai_reply"),
+      disableAiAfterSend: scheduleGuard.handoff,
+      handoffReasonAfterSend: scheduleGuard.handoff ? "unsupported_schedule_claim_prevented" : null
     });
 
     if (openAiResult.ok && !openAiResult.skipped) {
