@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "source": "repo_seed",
   "sheet_tab": "procedures",
   "descripcion": "Procedimientos y reglas de orientacion segura.",
@@ -18,6 +18,39 @@
   "records": [
     {
       "activo": true,
+      "procedimiento": "Manga gastrica",
+      "categoria": "Bariatrica",
+      "requiere_peso_estatura": true,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
+      "sedes_sugeridas": ["Antofagasta", "Santiago"],
+      "observaciones": "La manga reduce el estomago a un tubo estrecho y no hace bypass intestinal. Se usa como cirugia bariatrica primaria y puede mejorar peso y enfermedades metabolicas.",
+      "notas_para_bot": "Explicarla simple: estomago mas pequeño, sin desviar intestino. No prometer resultados ni decir que es mejor para una persona sin evaluacion."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Bypass gastrico en Y de Roux",
+      "categoria": "Bariatrica",
+      "requiere_peso_estatura": true,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
+      "sedes_sugeridas": ["Antofagasta", "Santiago"],
+      "observaciones": "Crea un reservorio gastrico pequeno y conecta el intestino en Y de Roux, desviando el paso de alimento por duodeno y yeyuno proximal. Tiene efecto restrictivo y metabolico y suele considerarse cuando el reflujo es un problema relevante.",
+      "notas_para_bot": "Explicarlo sin tecnicismos excesivos. No indicar bypass personalizado sin evaluacion medica."
+    },
+    {
+      "activo": true,
+      "procedimiento": "Conversion de manga a bypass gastrico",
+      "categoria": "Bariatrica revisional",
+      "requiere_peso_estatura": true,
+      "se_puede_orientar_sin_rut": true,
+      "profesionales_sugeridos": ["Rodrigo Villagran", "Nelson Aros", "Alberto Sirabo"],
+      "sedes_sugeridas": ["Antofagasta", "Santiago"],
+      "observaciones": "Es una cirugia revisional. Las causas frecuentes para evaluarla son reflujo gastroesofagico persistente o severo despues de la manga, hernia hiatal asociada, reganancia o recurrencia de peso y respuesta insuficiente de peso. No es automatica: requiere estudiar la causa y la anatomia antes de decidir.",
+      "notas_para_bot": "Si preguntan por conversion, responder primero el motivo principal y luego preguntar si el problema es reflujo, reganancia de peso o ambos. No afirmar que necesita conversion sin evaluacion."
+    },
+    {
+      "activo": true,
       "procedimiento": "Balon gastrico",
       "categoria": "Bariatrica",
       "requiere_peso_estatura": true,
@@ -26,28 +59,6 @@
       "sedes_sugeridas": ["Antofagasta", "Santiago"],
       "observaciones": "Pedir peso y estatura para orientacion inicial.",
       "notas_para_bot": "Aclarar que el IMC es solo una referencia inicial."
-    },
-    {
-      "activo": true,
-      "procedimiento": "Manga gastrica",
-      "categoria": "Bariatrica",
-      "requiere_peso_estatura": true,
-      "se_puede_orientar_sin_rut": true,
-      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
-      "sedes_sugeridas": ["Antofagasta", "Santiago"],
-      "observaciones": "Pedir cobertura y medidas antes de derivar.",
-      "notas_para_bot": "No diagnosticar."
-    },
-    {
-      "activo": true,
-      "procedimiento": "Bypass gastrico",
-      "categoria": "Bariatrica",
-      "requiere_peso_estatura": true,
-      "se_puede_orientar_sin_rut": true,
-      "profesionales_sugeridos": ["Nelson Aros", "Rodrigo Villagran", "Alberto Sirabo"],
-      "sedes_sugeridas": ["Antofagasta", "Santiago"],
-      "observaciones": "Pedir cobertura y medidas antes de derivar.",
-      "notas_para_bot": "No diagnosticar."
     },
     {
       "activo": true,

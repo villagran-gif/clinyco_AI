@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "source": "repo_seed",
   "sheet_tab": "faq_medical_safe",
   "descripcion": "Respuestas seguras y aprobadas para preguntas frecuentes.",
@@ -13,6 +13,30 @@
     { "header": "Notas para el bot", "key": "notas_para_bot", "type": "string" }
   ],
   "records": [
+    {
+      "activo": true,
+      "pregunta_frecuente": "Cual es la diferencia entre manga y bypass",
+      "respuesta_aprobada": "La manga deja el estomago como un tubo mas pequeno y no desvía el intestino. El bypass crea un reservorio pequeno y conecta el intestino en Y de Roux, por lo que tiene un efecto restrictivo y metabolico distinto.",
+      "cuando_derivar": "Si la persona pregunta cual le corresponde a ella o solicita una recomendacion personalizada.",
+      "no_prometer": "No decir que una tecnica es mejor para una persona sin evaluacion medica.",
+      "notas_para_bot": "Responder en 2 frases cortas. Si hace falta, preguntar despues por reflujo, peso o antecedentes."
+    },
+    {
+      "activo": true,
+      "pregunta_frecuente": "Por que se convierte una manga a bypass",
+      "respuesta_aprobada": "La conversion se evalua sobre todo por reflujo persistente o severo despues de la manga, hernia hiatal asociada, reganancia de peso o respuesta insuficiente de peso. Es cirugia revisional y antes hay que estudiar la causa y la anatomia.",
+      "cuando_derivar": "Cuando la persona tiene una manga previa y quiere saber si necesita conversion.",
+      "no_prometer": "No afirmar que necesita bypass sin evaluacion medica.",
+      "notas_para_bot": "Despues de explicar, preguntar una sola cosa: si el problema principal es reflujo, reganancia o ambos."
+    },
+    {
+      "activo": true,
+      "pregunta_frecuente": "Puede aparecer reflujo despues de una manga",
+      "respuesta_aprobada": "Si. La manga puede favorecer o empeorar el reflujo en algunas personas por los cambios de anatomia y presion del estomago. Cuando es persistente o importante se estudia la causa y una opcion que puede evaluarse es la conversion a bypass.",
+      "cuando_derivar": "Si describe reflujo persistente, esofagitis, hernia hiatal, uso cronico de medicamentos o sintomas importantes.",
+      "no_prometer": "No diagnosticar ERGE ni indicar conversion solo por chat.",
+      "notas_para_bot": "No dar una clase larga; explicar en lenguaje simple."
+    },
     {
       "activo": true,
       "pregunta_frecuente": "Como funciona PAD Fonasa",
@@ -31,19 +55,19 @@
     },
     {
       "activo": true,
-      "pregunta_frecuente": "Atienden en Santiago",
-      "respuesta_aprobada": "En Santiago por ahora se puede orientar por telemedicina y algunas cirugias se realizan alla segun el caso.",
-      "cuando_derivar": "Si necesita coordinacion exacta o caso clinico especifico.",
-      "no_prometer": "No prometer consulta presencial general en Santiago si no esta confirmada.",
-      "notas_para_bot": "Ser claro y simple."
-    },
-    {
-      "activo": true,
       "pregunta_frecuente": "Me pueden dar un valor o cotizacion",
       "respuesta_aprobada": "Primero conviene entender el procedimiento, la cobertura y algunos datos basicos para orientar mejor la cotizacion.",
       "cuando_derivar": "Si el usuario quiere avanzar con su caso.",
       "no_prometer": "No inventar precios.",
       "notas_para_bot": "Pedir solo el siguiente dato util."
+    },
+    {
+      "activo": true,
+      "pregunta_frecuente": "Atienden en Santiago",
+      "respuesta_aprobada": "En Santiago por ahora se puede orientar por telemedicina y algunas cirugias se realizan alla segun el caso.",
+      "cuando_derivar": "Si necesita coordinacion exacta o caso clinico especifico.",
+      "no_prometer": "No prometer consulta presencial general en Santiago si no esta confirmada.",
+      "notas_para_bot": "Ser claro y simple."
     }
   ]
 }
