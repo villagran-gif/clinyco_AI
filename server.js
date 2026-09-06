@@ -40,17 +40,13 @@ import { calculateLeadScore } from "./scoring/lead-score.js";
 import {
   inferBestNextAction,
   onHumanAgentMessage as onEugeniaHumanAgentMessage,
-  onMutedPatientMessage as onEugeniaMutedPatientMessage,
-  onTakeover as onEugeniaTakeover,
-  onTicketAuditsObserved as onEugeniaTicketAuditsObserved
+  onMutedPatientMessage as onEugeniaMutedPatientMessage
 } from "./eugenia/index.js";
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
 import { sendChatwootReply } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
-import zapsRouter from "./ZAPS/webhooks/router.js";
-import { startPoller as startZapsPoller } from "./ZAPS/poller.js";
 import { start as startFonasapadCron } from "./queue/cron.js";
 import { start as startMonthlyCron } from "./queue/monthly-cron.js";
 import { analyzeMessage as analyzeSentiment } from "./analysis/sentiment.js";
@@ -67,7 +63,6 @@ import {
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use("/api/review", reviewRouter);
-app.use("/zaps", zapsRouter);
 app.use("/melania", createMelaniaHandoffRouter());
 
 app.use((req, res, next) => {
@@ -99,17 +94,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BRAINTRUST_API_KEY = process.env.BRAINTRUST_API_KEY || null;
 const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";
-const ZENDESK_SUBDOMAIN = process.env.ZENDESK_SUBDOMAIN;
-const SUNCO_APP_ID = process.env.SUNCO_APP_ID;
-const SUNCO_KEY_ID = process.env.SUNCO_KEY_ID;
-const SUNCO_KEY_SECRET = process.env.SUNCO_KEY_SECRET;
 
-const BOX_AI_BASE_URL = (process.env.BOX_AI_BASE_URL || "https://box-ai-clinyco.onrender.com").replace(/\/$/, "");
-const ENABLE_SELL_SEARCH = String(process.env.ENABLE_SELL_SEARCH || "true").toLowerCase() === "true";
-const ENABLE_SUPPORT_SEARCH = String(process.env.ENABLE_SUPPORT_SEARCH || "false").toLowerCase() === "true";
-const ZENDESK_SUPPORT_EMAIL = process.env.ZENDESK_SUPPORT_EMAIL || process.env.ZENDESK_API_EMAIL || null;
-const ZENDESK_SUPPORT_TOKEN = process.env.ZENDESK_SUPPORT_TOKEN || process.env.ZENDESK_API_TOKEN || null;
-const LEAD_SCORE_INFO_URL = String(process.env.LEAD_SCORE_INFO_URL || "").trim() || null;
 
 const MAX_HISTORY_MESSAGES = 14;
 const MAX_BOT_MESSAGES = 30;
@@ -1432,141 +1417,11 @@ function splitNames(fullName) {
   };
 }
 
-function isBlockedSupportUserName(name) {
-  const key = normalizeKey(name);
-  if (!key) return true;
-  return (
-    key === "SINGLE WHATSAPP NOTIFICATION" ||
-    key.startsWith("SINGLE WHATSAPP") ||
-    key.startsWith("PAGINA ") ||
-    key.startsWith("PAGINA:") ||
-    key.startsWith("PAGE ") ||
-    key.startsWith("PAGE:") ||
-    key.startsWith("DR ") ||
-    key.startsWith("DR.") ||
-    key.startsWith("DOCTOR ")
-  );
-}
 
-function looksLikeMeaningfulSupportText(text) {
-  const key = normalizeKey(text);
-  if (!key) return false;
-  const markers = [
-    "FONASA", "BANMEDICA", "CONSALUD", "CRUZ BLANCA", "COLMENA", "VIDA TRES", "MAS VIDA", "PARTICULAR",
-    "TRAMO A", "TRAMO B", "TRAMO C", "TRAMO D",
-    "BALON", "BARIATR", "MANGA", "BYPASS", "PLASTICA", "LIPO", "ABDOMINOPLASTIA", "MAMOPLASTIA",
-    "HERNIA", "VESICULA", "ENDOSCOP", "CIRUGIA", "CIRUGIA BARIATRICA", "CIRUGIA PLASTICA"
-  ];
-  return markers.some((marker) => key.includes(marker));
-}
 
-function sanitizeSupportTicketForResolver(ticket) {
-  if (!ticket) return ticket;
-  const cloned = { ...ticket };
-  if (ticket.via) {
-    cloned.via = { ...ticket.via };
-    if (ticket.via.source) {
-      cloned.via.source = { ...ticket.via.source };
-      if (ticket.via.source.from) {
-        cloned.via.source.from = { ...ticket.via.source.from };
-      }
-    }
-  }
 
-  const combined = [ticket.subject, ticket.raw_subject, ticket.description].filter(Boolean).join(" ");
-  if (!looksLikeMeaningfulSupportText(combined)) {
-    cloned.subject = null;
-    cloned.raw_subject = null;
-    cloned.description = null;
-  }
 
-  if (cloned.via?.source?.from?.name && !looksLikeMeaningfulSupportText(cloned.via.source.from.name)) {
-    cloned.via.source.from.name = null;
-  }
 
-  return cloned;
-}
-
-function filterSupportUsers(users, candidates = {}) {
-  const expectedEmail = String(candidates.email || "").trim().toLowerCase();
-  const expectedPhone = normalizePhone(candidates.phone || null);
-  const expectedNames = [candidates.name, candidates.channelDisplayName, candidates.sourceProfileName]
-    .map((value) => normalizeKey(value))
-    .filter(Boolean);
-
-  let list = (users || []).filter(Boolean).filter((user) => !isBlockedSupportUserName(user.name));
-
-  if (expectedEmail) {
-    const exactEmail = list.filter((user) => String(user?.email || "").trim().toLowerCase() === expectedEmail);
-    if (exactEmail.length) list = exactEmail;
-  }
-
-  if (expectedPhone) {
-    const exactPhone = list.filter((user) => normalizePhone(user?.phone) === expectedPhone);
-    if (exactPhone.length) list = exactPhone;
-  }
-
-  if (expectedNames.length && list.length > 1) {
-    const exactName = list.filter((user) => expectedNames.includes(normalizeKey(user?.name)));
-    if (exactName.length) {
-      list = exactName;
-    } else {
-      const partialName = list.filter((user) => {
-        const userName = normalizeKey(user?.name);
-        return expectedNames.some((expected) => userName.includes(expected) || expected.includes(userName));
-      });
-      if (partialName.length) list = partialName;
-    }
-  }
-
-  return list.slice(0, 5);
-}
-
-function extractSupportIdentityHints(supportData = {}) {
-  const users = Array.isArray(supportData?.users) ? supportData.users : [];
-  const tickets = Array.isArray(supportData?.tickets) ? supportData.tickets : [];
-
-  const ticketTexts = tickets.flatMap((ticket) => [
-    ticket?.subject,
-    ticket?.raw_subject,
-    ticket?.description,
-    ticket?.via?.source?.from?.name
-  ].filter(Boolean));
-
-  const email =
-    users
-      .map((user) => String(user?.email || "").trim().toLowerCase())
-      .find(Boolean) ||
-    ticketTexts.map((text) => extractEmail(text)).find(Boolean) ||
-    null;
-
-  const phone =
-    users
-      .map((user) => normalizePhone(user?.phone))
-      .find(Boolean) ||
-    ticketTexts.map((text) => extractPhone(text)).find(Boolean) ||
-    null;
-
-  const rutRaw = ticketTexts.map((text) => extractRut(text)).find(Boolean) || null;
-
-  return {
-    email,
-    phone,
-    rut: rutRaw ? formatRutHuman(rutRaw) || rutRaw : null
-  };
-}
-
-function filterSupportTickets(tickets) {
-  return (tickets || [])
-    .filter((ticket) => {
-      const key = normalizeKey([ticket?.subject, ticket?.raw_subject, ticket?.description].filter(Boolean).join(" "));
-      if (!key) return false;
-      if (key.includes("SENDING SINGLE WHATSAPP MESSAGE")) return false;
-      return true;
-    })
-    .map((ticket) => sanitizeSupportTicketForResolver(ticket))
-    .slice(0, 10);
-}
 
 function isStillLatestUserMessage(conversationId, expectedMessageId) {
   if (!expectedMessageId) return true;
@@ -1575,32 +1430,9 @@ function isStillLatestUserMessage(conversationId, expectedMessageId) {
 }
 
 function isRealHumanBusinessTakeover(info) {
-  // Chatwoot: el adapter ya distinguió agente humano (sender.type "user") del
-  // echo del propio bot (agent_bot). Ver chatwoot-adapter/parse.js.
-  if (info?.transport === "chatwoot") return !!info?.isHumanAgent;
-
-  const sourceType = info?.sourceType || "";
-  const name = normalizeKey(info?.authorDisplayName || info?.channelDisplayName || "");
-  const contentType = info?.rawMessage?.content?.type || "";
-  const businessText = normalizeSpaces(info?.rawMessage?.content?.text || "");
-
-  if (sourceType !== "zd:agentWorkspace") return false;
-  if (contentType !== "text" || !businessText) return false;
-
-  if (!name) return false;
-
-  const nonHumanNames = new Set([
-    "ANSWER BOT",
-    "CHAT BOT",
-    "BOT",
-    "ANTONIA",
-    "CHAT APP",
-    "SUPPORT APP",
-    "CLINYCO"
-  ]);
-
-  return !nonHumanNames.has(name);
+  return info?.transport === "chatwoot" && !!info?.isHumanAgent;
 }
+
 
 function clearSoftHandoffState(state) {
   state.system.aiEnabled = true;
@@ -2265,65 +2097,7 @@ async function hydrateConversationCache(conversationId) {
   return getConversationState(conversationId);
 }
 
-const lastSyncedLeadScore = new Map();
 
-async function syncLeadScoreToSupport(state, conversationId) {
-  try {
-    let supportUserId = normalizeZendeskEntityId(state.identity?.zendeskRequesterId);
-    let source = supportUserId ? "requester_id" : null;
-
-    if (!supportUserId) {
-      const supportUsers = state.identity?.supportRaw?.users;
-      const usersCount = state.identity?.supportRaw?.usersCount ?? 0;
-
-      // Solo escribir si hay EXACTAMENTE 1 user matcheado (confianza alta)
-      if (usersCount !== 1 || !supportUsers?.[0]?.id) return;
-
-      // Verificar que el match fue por dato fuerte (email o phone), no solo nombre
-      const matchedUser = supportUsers[0];
-      const stateEmail = String(state.contactDraft?.c_email || "").trim().toLowerCase();
-      const statePhone = normalizePhone(state.contactDraft?.c_tel1 || null);
-      const userEmail = String(matchedUser.email || "").trim().toLowerCase();
-      const userPhone = normalizePhone(matchedUser.phone || null);
-
-      const strongMatch =
-        (stateEmail && userEmail && stateEmail === userEmail) ||
-        (statePhone && userPhone && statePhone === userPhone);
-
-      if (!strongMatch) return;
-
-      supportUserId = normalizeZendeskEntityId(matchedUser.id);
-      source = "support_strong_match";
-    }
-
-    if (!supportUserId) return;
-
-    const leadScoreSummary = formatLeadScoreSummary(state.leadScore);
-    const leadScoreDetail = formatLeadScoreDetail(state.leadScore);
-    const userFields = {
-      user_lead_score: leadScoreSummary,
-      user_lead_score_detail: leadScoreDetail
-    };
-    if (LEAD_SCORE_INFO_URL) {
-      userFields.user_lead_score_info_url = LEAD_SCORE_INFO_URL;
-    }
-    const currentScore = state.leadScore?.score ?? 0;
-    const scoreSyncKey = `${supportUserId}:${leadScoreSummary}:${leadScoreDetail}:${LEAD_SCORE_INFO_URL || ""}`;
-    if (lastSyncedLeadScore.get(conversationId) === scoreSyncKey) return;
-
-    await zendeskSupportPut(`/api/v2/users/${supportUserId}.json`, {
-      user: {
-        user_fields: userFields
-      }
-    });
-    lastSyncedLeadScore.set(conversationId, scoreSyncKey);
-    console.log(
-      `LEAD_SCORE_SYNC_SUPPORT conversationId=${conversationId} zendeskUserId=${supportUserId} source=${source} score=${currentScore}`
-    );
-  } catch (error) {
-    console.error("SYNC_LEAD_SCORE_SUPPORT:", error.message);
-  }
-}
 
 async function persistConversationSnapshot(conversationId, state, channel = null) {
   if (!dbEnabled()) return;
@@ -2332,7 +2106,6 @@ async function persistConversationSnapshot(conversationId, state, channel = null
     state.leadScore = calculateLeadScore(state);
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
-    await syncLeadScoreToSupport(state, conversationId);
     await trackLeadScoreChange(conversationId, state.leadScore, previousScore, channel || "message", state.system?.botMessagesSent || 0);
   } catch (error) {
     console.error("DB SNAPSHOT ERROR:", error.message);
@@ -2402,7 +2175,7 @@ function updateIdentityChannelContext(state, info = null, channelLabel = null) {
       state.identity.verifiedWhatsappAt = state.identity.verifiedWhatsappAt || new Date().toISOString();
       // El teléfono de WhatsApp ES identidad mínima: sembrarlo en c_tel1 si está
       // vacío, así el resolver no vuelve a pedirlo (identity_min ya satisfecho).
-      // Aplica igual a WhatsApp por Sunco y por Chatwoot. No pisa un valor existente.
+      // Aplica al canal WhatsApp recibido por Chatwoot. No pisa un valor existente.
       if (state.contactDraft && !state.contactDraft.c_tel1) {
         state.contactDraft.c_tel1 = whatsappPhone;
       }
@@ -2596,7 +2369,7 @@ async function syncCustomerChannelsFromState(customerId, conversationId, state, 
       channelValue: profile.whatsappPhone,
       isPrimary: true,
       verified,
-      sourceSystem: isWhatsappChannel ? identity.channelSourceType || "sunco" : "sunco",
+      sourceSystem: isWhatsappChannel ? identity.channelSourceType || "chatwoot" : "conversation",
       externalId: isWhatsappChannel ? identity.channelExternalId || null : null,
       metadata: {
         conversationId,
@@ -2878,49 +2651,11 @@ function resJsonSkip(reason) {
 }
 
 function extractConversationInfo(payload) {
-  // Chatwoot Cloud: normalizamos al mismo shape `info` que Sunco (chatwoot-adapter).
-  if (isChatwootPayload(payload)) {
-    return parseChatwootInbound(payload);
-  }
-  const appId = payload?.app?.id || payload?.app?._id || payload?.appId || SUNCO_APP_ID || null;
-  const event = Array.isArray(payload?.events) ? payload.events[0] : null;
-  const eventPayload = event?.payload || {};
-  const message = eventPayload?.message || payload?.message || null;
-  const source = message?.source || {};
-  const conversation = eventPayload?.conversation || payload?.conversation || {};
-  const authorUser = message?.author?.user || {};
-  const sourceClient = source?.client || {};
-
-  const conversationId = conversation?.id || conversation?._id || null;
-  let userText = "";
-  if (message?.author?.type === "user" && message?.content?.type === "text") {
-    userText = message?.content?.text || "";
-  }
-
-  return {
-    appId,
-    conversationId,
-    userText: String(userText || "").trim(),
-    eventType: event?.type || null,
-    authorType: message?.author?.type || null,
-    messageId: message?.id || null,
-    sourceType: source?.type || null,
-    channelDisplayName: sourceClient?.displayName || message?.author?.displayName || null,
-    channelExternalId: sourceClient?.externalId || null,
-    authorDisplayName: message?.author?.displayName || null,
-    sourceProfileName: sourceClient?.raw?.profile?.name || sourceClient?.raw?.name || null,
-    entryPoint: source?.entryPoint || null,
-    rawMessage: message,
-    rawConversation: conversation,
-    rawSource: source,
-    rawAuthorUser: authorUser
-  };
+  if (!isChatwootPayload(payload)) return null;
+  return parseChatwootInbound(payload);
 }
 
-function normalizeZendeskEntityId(value) {
-  const normalized = String(value ?? "").trim();
-  return normalized || null;
-}
+
 
 function leadScoreBadge(category) {
   switch (String(category || "").toLowerCase()) {
@@ -2950,41 +2685,6 @@ function formatLeadScoreDetail(leadScore) {
   return `${summary} = ${reasons.join(", ")}`;
 }
 
-function extractZendeskTicketAssignment(payload = {}) {
-  const conversationId = normalizeZendeskEntityId(
-    payload?.conversation_id ??
-    payload?.conversationId ??
-    payload?.ticket?.conversation_id ??
-    payload?.ticket?.conversationId
-  );
-  const assigneeId = normalizeZendeskEntityId(
-    payload?.assignee_id ??
-    payload?.assigneeId ??
-    payload?.ticket?.assignee_id ??
-    payload?.ticket?.assigneeId
-  );
-  const requesterId = normalizeZendeskEntityId(
-    payload?.requester_id ??
-    payload?.requesterId ??
-    payload?.ticket?.requester_id ??
-    payload?.ticket?.requesterId ??
-    payload?.requester?.id
-  );
-  const ticketId = normalizeZendeskEntityId(
-    payload?.ticket_id ??
-    payload?.ticketId ??
-    payload?.ticket?.id ??
-    payload?.ticket?.ticket_id
-  );
-
-  return {
-    event: payload?.event || null,
-    conversationId,
-    assigneeId,
-    requesterId,
-    ticketId
-  };
-}
 
 function hasScheduleIntent(text) {
   const normalized = normalizeKey(text);
@@ -3501,802 +3201,39 @@ function getMaxMessagesClosure() {
   return "Quedo atenta. Saludos, que tengas un muy buen día. Antonia 😊";
 }
 
-async function searchSellByRut(rut) {
-  if (!ENABLE_SELL_SEARCH || !rut) {
-    return null;
-  }
-
-  const endpoint = `${BOX_AI_BASE_URL}/api/search-rut`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rut })
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Box AI search-rut failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-function getZendeskSupportAuthHeader() {
-  if (!ZENDESK_SUPPORT_EMAIL || !ZENDESK_SUPPORT_TOKEN) {
-    return null;
-  }
-  return `Basic ${Buffer.from(`${ZENDESK_SUPPORT_EMAIL}/token:${ZENDESK_SUPPORT_TOKEN}`).toString("base64")}`;
-}
-
-async function zendeskSupportGet(path, params = {}) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== null && value !== undefined && value !== "") {
-      url.searchParams.set(key, value);
-    }
-  }
-
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    }
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-async function zendeskSupportPost(path, body = {}) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body || {})
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-async function zendeskSupportPut(path, body = {}) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const url = new URL(`https://${ZENDESK_SUBDOMAIN}.zendesk.com${path}`);
-  const response = await fetch(url.toString(), {
-    method: "PUT",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body || {})
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-async function zendeskSupportGetByUrl(url) {
-  if (!ZENDESK_SUBDOMAIN) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN");
-  }
-
-  const authHeader = getZendeskSupportAuthHeader();
-  if (!authHeader) {
-    throw new Error("Missing ZENDESK_SUPPORT_EMAIL or ZENDESK_SUPPORT_TOKEN");
-  }
-
-  const parsedUrl = new URL(String(url || ""));
-  const expectedHost = `${ZENDESK_SUBDOMAIN}.zendesk.com`;
-  if (parsedUrl.host !== expectedHost) {
-    throw new Error(`Unexpected Zendesk host: ${parsedUrl.host}`);
-  }
-
-  const response = await fetch(parsedUrl.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json"
-    }
-  });
-
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Zendesk Support request failed: ${response.status} ${raw}`);
-  }
-
-  return data;
-}
-
-function extractConversationIdFromUnknown(node, seen = new Set()) {
-  if (!node || typeof node !== "object") {
-    return null;
-  }
-
-  if (seen.has(node)) {
-    return null;
-  }
-  seen.add(node);
-
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const nested = extractConversationIdFromUnknown(item, seen);
-      if (nested) return nested;
-    }
-    return null;
-  }
-
-  for (const [key, value] of Object.entries(node)) {
-    if (/^conversation[_-]?id$/i.test(key)) {
-      const normalized = normalizeZendeskEntityId(value);
-      if (normalized) return normalized;
-    }
-  }
-
-  for (const value of Object.values(node)) {
-    const nested = extractConversationIdFromUnknown(value, seen);
-    if (nested) return nested;
-  }
-
-  return null;
-}
-
-async function fetchZendeskTicketAudits(ticketId) {
-  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
-  if (!normalizedTicketId) {
-    return [];
-  }
-
-  let nextUrl = `https://${ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/tickets/${encodeURIComponent(normalizedTicketId)}/audits.json`;
-  const audits = [];
-
-  while (nextUrl) {
-    const payload = await zendeskSupportGetByUrl(nextUrl);
-    const rows = Array.isArray(payload?.audits) ? payload.audits : [];
-    audits.push(...rows);
-    nextUrl = payload?.next_page || null;
-  }
-
-  return audits;
-}
-
-async function resolveConversationIdFromZendeskTicket(ticketId) {
-  const normalizedTicketId = normalizeZendeskEntityId(ticketId);
-  if (!normalizedTicketId) {
-    return null;
-  }
-
-  const audits = await fetchZendeskTicketAudits(normalizedTicketId);
-
-  for (const audit of audits) {
-    const events = Array.isArray(audit?.events) ? audit.events : [];
-    for (const event of events) {
-      if (event?.type !== "ChatStartedEvent") continue;
-      const conversationId = extractConversationIdFromUnknown(event);
-      if (conversationId) {
-        return conversationId;
-      }
-    }
-  }
-
-  for (const audit of audits) {
-    const conversationId = extractConversationIdFromUnknown(audit);
-    if (conversationId) {
-      return conversationId;
-    }
-  }
-
-  return null;
-}
-
-async function searchSupportByEmail(email) {
-  if (!email) return [];
-  const query = `type:user ${email}`;
-  const data = await zendeskSupportGet("/api/v2/users/search.json", { query });
-  return Array.isArray(data?.users) ? data.users : [];
-}
-
-async function searchSupportByPhone(phone) {
-  if (!phone) return [];
-  const digits = String(phone || "").replace(/\D/g, "");
-  if (!digits) return [];
-  const query = `role:end-user phone:*${digits}`;
-  const data = await zendeskSupportGet("/api/v2/search.json", { query });
-  return Array.isArray(data?.results) ? data.results.filter((item) => item?.result_type === "user") : [];
-}
-
-async function searchSupportByName(name) {
-  if (!name) return [];
-  const query = normalizeSpaces(name);
-  if (!query) return [];
-  const data = await zendeskSupportGet("/api/v2/users/search.json", { query });
-  return Array.isArray(data?.users) ? data.users : [];
-}
-
-async function searchTicketsForUserIds(userIds) {
-  const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean))).slice(0, 3);
-  const tickets = [];
-
-  for (const userId of uniqueIds) {
-    try {
-      const data = await zendeskSupportGet("/api/v2/search.json", {
-        query: `type:ticket requester_id:${userId}`,
-        sort_by: "updated_at",
-        sort_order: "desc"
-      });
-      const results = Array.isArray(data?.results) ? data.results.filter((item) => item?.result_type === "ticket") : [];
-      tickets.push(...results.slice(0, 5));
-    } catch (error) {
-      console.error(`SUPPORT TICKET SEARCH ERROR for user ${userId}:`, error.message);
-    }
-  }
-
-  const deduped = new Map();
-  for (const ticket of tickets) {
-    if (ticket?.id && !deduped.has(ticket.id)) {
-      deduped.set(ticket.id, ticket);
-    }
-  }
-  return Array.from(deduped.values()).sort((a, b) => {
-    const ad = new Date(a?.updated_at || a?.created_at || 0).getTime();
-    const bd = new Date(b?.updated_at || b?.created_at || 0).getTime();
-    return bd - ad;
-  });
-}
-
-async function searchSupportReal({ email, phone, name, channelDisplayName, sourceProfileName }) {
-  if (!ENABLE_SUPPORT_SEARCH) {
-    return null;
-  }
-
-  const usersById = new Map();
-
-  const mergeUsers = (users) => {
-    for (const user of users || []) {
-      if (user?.id && !usersById.has(user.id)) {
-        usersById.set(user.id, user);
-      }
-    }
-  };
-
-  if (email) {
-    mergeUsers(await searchSupportByEmail(email));
-  }
-
-  if (phone) {
-    mergeUsers(await searchSupportByPhone(phone));
-  }
-
-  if (!usersById.size && name) {
-    mergeUsers((await searchSupportByName(name)).slice(0, 8));
-  }
-
-  if (!usersById.size && channelDisplayName) {
-    mergeUsers((await searchSupportByName(channelDisplayName)).slice(0, 8));
-  }
-
-  if (!usersById.size && sourceProfileName) {
-    mergeUsers((await searchSupportByName(sourceProfileName)).slice(0, 8));
-  }
-
-  const filteredUsers = filterSupportUsers(Array.from(usersById.values()), { email, phone, name, channelDisplayName, sourceProfileName });
-  const tickets = filterSupportTickets(await searchTicketsForUserIds(filteredUsers.map((u) => u.id)));
-
-  return {
-    found: filteredUsers.length > 0 || tickets.length > 0,
-    usersCount: filteredUsers.length,
-    ticketsCount: tickets.length,
-    latestTicketId: tickets[0]?.id || null,
-    users: filteredUsers,
-    tickets
-  };
-}
-
-function isSocialMessagingSource(sourceType) {
-  const normalized = normalizeKey(sourceType || "");
-  return normalized === "INSTAGRAM" ||
-    normalized === "FACEBOOK" ||
-    normalized === "MESSENGER" ||
-    normalized === "WHATSAPP";
-}
-
-function normalizeZendeskContactEmail(value) {
-  const email = String(value || "").trim().toLowerCase();
-  return email || null;
-}
-
-function buildZendeskContactSyncKey(userId, email, phone) {
-  return JSON.stringify({
-    userId: userId || null,
-    email: email || null,
-    phone: phone || null
-  });
-}
-
-function buildZendeskNotesSyncKey(userId, notes) {
-  return JSON.stringify({
-    userId: userId || null,
-    notes: String(notes || "").trim() || null
-  });
-}
-
-function normalizeZendeskNotes(value) {
-  const text = String(value || "").replace(/\r\n/g, "\n").trim();
-  return text || null;
-}
-
-function formatPhoneForZendeskNotes(raw) {
-  const phone = normalizePhone(raw);
-  if (!phone) return null;
-  if (/^\+569\d{8}$/.test(phone)) {
-    return `${phone.slice(3, 4)} ${phone.slice(4, 8)} ${phone.slice(8)}`;
-  }
-  return phone;
-}
-
-function formatZendeskNotesValue(value) {
-  return normalizeSpaces(String(value || "").replace(/\r\n/g, "\n").replace(/\n+/g, " "));
-}
-
-function calculateAgeFromBirthDate(raw) {
-  const text = String(raw || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-    return null;
-  }
-
-  const birthDate = new Date(`${text}T00:00:00Z`);
-  if (Number.isNaN(birthDate.getTime())) {
-    return null;
-  }
-
-  const today = new Date();
-  let age = today.getUTCFullYear() - birthDate.getUTCFullYear();
-  const monthDiff = today.getUTCMonth() - birthDate.getUTCMonth();
-  const dayDiff = today.getUTCDate() - birthDate.getUTCDate();
-  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
-    age -= 1;
-  }
-  return age >= 0 ? String(age) : null;
-}
-
-function buildZendeskUserNotesFromState(state, info, options = {}) {
-  const confirmed = Boolean(options.confirmed);
-  const structured = parseStructuredLeadText(info?.userText || info?.rawMessage?.content?.text || "");
-  const contact = state?.contactDraft || {};
-  const deal = state?.dealDraft || {};
-  const directEmail = normalizeZendeskContactEmail(state?.identity?.directMessageEmail);
-  const directPhone = normalizePhone(state?.identity?.directMessagePhone || null);
-
-  const fullName = formatZendeskNotesValue(
-    (confirmed ? [contact.c_nombres, contact.c_apellidos].filter(Boolean).join(" ") : "") ||
-    structured.full_name ||
-    info?.authorDisplayName ||
-    info?.sourceProfileName ||
-    ""
-  );
-  const insurance = formatZendeskNotesValue(
-    contact.c_aseguradora
-      ? (contact.c_modalidad ? `${contact.c_aseguradora} - ${contact.c_modalidad}` : contact.c_aseguradora)
-      : (structured.insurance || "")
-  );
-  const age = formatZendeskNotesValue(structured.age || calculateAgeFromBirthDate(contact.c_fecha) || "");
-  const noteLines = [
-    `RUT: ${formatZendeskNotesValue(contact.c_rut) || ""}`,
-    `Correo electrónico: ${formatZendeskNotesValue((confirmed ? contact.c_email : null) || directEmail || structured.email) || ""}`,
-    `Nombre completo: ${fullName || ""}`,
-    `Teléfono: ${formatPhoneForZendeskNotes((confirmed ? (contact.c_tel1 || contact.c_tel2) : null) || directPhone || structured.phone_number) || ""}`,
-    `Ciudad: ${formatZendeskNotesValue(contact.c_comuna || structured.city) || ""}`,
-    `Dirección: ${formatZendeskNotesValue(contact.c_direccion) || ""}`,
-    `Servicio o interés: ${formatZendeskNotesValue(deal.dealInteres) || ""}`,
-    `¿Fonasa, Isapre o particular?: ${insurance || ""}`,
-    `Peso: ${formatZendeskNotesValue(deal.dealPeso || state?.measurements?.weightKg) || ""}`,
-    `Estatura: ${formatZendeskNotesValue(deal.dealEstatura || state?.measurements?.heightCm) || ""}`,
-    `Edad: ${age || ""}`
-  ];
-
-  return noteLines.join("\n");
-}
-
-function hasConfirmedZendeskSyncData(state) {
-  return Boolean(state?.identity?.savedDataConfirmed) &&
-    !state?.identity?.awaitingMissingDataCompletion &&
-    !state?.identity?.awaitingFinalConfirmation;
-}
-
-function buildZendeskSyncPayloadFromState(state, info) {
-  const confirmed = hasConfirmedZendeskSyncData(state);
-  const email = confirmed
-    ? normalizeZendeskContactEmail(state?.contactDraft?.c_email)
-    : normalizeZendeskContactEmail(state?.identity?.directMessageEmail);
-  const phone = confirmed
-    ? normalizePhone(state?.contactDraft?.c_tel1 || null)
-    : normalizePhone(state?.identity?.directMessagePhone || null);
-  const notes = buildZendeskUserNotesFromState(state, info, { confirmed });
-
-  return {
-    confirmed,
-    email,
-    phone,
-    notes
-  };
-}
-
-async function getZendeskUser(userId) {
-  if (!userId) return null;
-  const data = await zendeskSupportGet(`/api/v2/users/${userId}.json`);
-  return data?.user || null;
-}
-
-async function listZendeskUserIdentities(userId) {
-  if (!userId) return [];
-  const data = await zendeskSupportGet(`/api/v2/users/${userId}/identities.json`);
-  return Array.isArray(data?.identities) ? data.identities : [];
-}
-
-async function createZendeskUserIdentity(userId, identity, options = {}) {
-  if (!userId || !identity?.type || !identity?.value) {
-    return null;
-  }
-  const data = await zendeskSupportPost(`/api/v2/users/${userId}/identities.json`, {
-    identity,
-    ...options
-  });
-  return data?.identity || null;
-}
-
-async function updateZendeskUser(userId, user) {
-  if (!userId || !user || typeof user !== "object") {
-    return null;
-  }
-  const data = await zendeskSupportPut(`/api/v2/users/${userId}.json`, { user });
-  return data?.user || null;
-}
-
-async function syncZendeskUserContactsFromState(state, info, context = {}) {
-  const sourceType = info?.sourceType || state?.identity?.channelSourceType || null;
-  if (!isSocialMessagingSource(sourceType)) {
-    return null;
-  }
-
-  if (!ZENDESK_SUBDOMAIN || !getZendeskSupportAuthHeader()) {
-    return null;
-  }
-
-  const { confirmed, email, phone, notes: noteText } = buildZendeskSyncPayloadFromState(state, info);
-
-  if (!email && !phone && !noteText) {
-    return null;
-  }
-
-  const zendeskUserId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
-  if (!zendeskUserId) {
-    const logParts = [
-      context?.conversationId ? `conversationId=${context.conversationId}` : null,
-      "reason=requester_not_resolved",
-      `mode=${confirmed ? "confirmed" : "direct_message"}`,
-      email ? `email=${email}` : null,
-      phone ? `phone=${phone}` : null
-    ].filter(Boolean).join(" ");
-    console.log(`ZENDESK_CONTACT_SYNC_SKIPPED ${logParts}`);
-    return null;
-  }
-
-  const zendeskUser = await getZendeskUser(zendeskUserId);
-  const existingNotes = normalizeZendeskNotes(zendeskUser?.notes);
-
-  const syncKey = buildZendeskContactSyncKey(zendeskUserId, email, phone);
-  const notesSyncKey = buildZendeskNotesSyncKey(zendeskUserId, noteText);
-  const shouldSyncContacts = Boolean(email || phone) && state?.identity?.zendeskContactSyncKey !== syncKey;
-  const shouldSyncNotes = Boolean(noteText) &&
-    existingNotes !== normalizeZendeskNotes(noteText);
-
-  if (!shouldSyncContacts && !shouldSyncNotes) {
-    return null;
-  }
-
-  let createdEmail = false;
-  let createdPhone = false;
-  let createdNotes = false;
-
-  if (shouldSyncContacts) {
-    const identities = await listZendeskUserIdentities(zendeskUserId);
-    const normalizedIdentityEmailValues = identities
-      .filter((identity) => identity?.type === "email")
-      .map((identity) => normalizeZendeskContactEmail(identity?.value))
-      .filter(Boolean);
-    const normalizedIdentityPhoneValues = identities
-      .filter((identity) => identity?.type === "phone_number")
-      .map((identity) => normalizePhone(identity?.value))
-      .filter(Boolean);
-    const existingEmails = new Set([
-      normalizeZendeskContactEmail(zendeskUser?.email),
-      ...normalizedIdentityEmailValues
-    ].filter(Boolean));
-    const existingPhones = new Set([
-      normalizePhone(zendeskUser?.phone),
-      ...normalizedIdentityPhoneValues
-    ].filter(Boolean));
-
-    if (email && !existingEmails.has(email)) {
-      await createZendeskUserIdentity(zendeskUserId, {
-        type: "email",
-        value: email
-      }, {
-        skip_verify_email: true
-      });
-      createdEmail = true;
-    }
-
-    if (phone && !existingPhones.has(phone)) {
-      await createZendeskUserIdentity(zendeskUserId, {
-        type: "phone_number",
-        value: phone
-      });
-      createdPhone = true;
-    }
-
-    state.identity.zendeskContactSyncKey = syncKey;
-    state.identity.zendeskContactSyncAt = new Date().toISOString();
-  }
-
-  if (shouldSyncNotes) {
-    await updateZendeskUser(zendeskUserId, { notes: noteText });
-    createdNotes = true;
-    state.identity.zendeskNotesSyncKey = notesSyncKey;
-    state.identity.zendeskNotesSyncAt = new Date().toISOString();
-  }
-
-  const logParts = [
-    context?.conversationId ? `conversationId=${context.conversationId}` : null,
-    `zendeskUserId=${zendeskUserId}`,
-    `mode=${confirmed ? "confirmed" : "direct_message"}`,
-    context?.trigger ? `trigger=${context.trigger}` : null,
-    email ? `email=${email}` : null,
-    phone ? `phone=${phone}` : null,
-    `emailAdded=${createdEmail ? "si" : "no"}`,
-    `phoneAdded=${createdPhone ? "si" : "no"}`,
-    `notesAdded=${createdNotes ? "si" : "no"}`
-  ].filter(Boolean).join(" ");
-  console.log(`ZENDESK_CONTACT_SYNC ${logParts}`);
-
-  return {
-    zendeskUserId,
-    emailAdded: createdEmail,
-    phoneAdded: createdPhone,
-    notesAdded: createdNotes,
-    syncedAt: createdNotes
-      ? state.identity.zendeskNotesSyncAt
-      : state.identity.zendeskContactSyncAt
-  };
-}
-
-async function safelySyncZendeskUserContactsFromState(state, info, context = {}) {
-  try {
-    return await syncZendeskUserContactsFromState(state, info, context);
-  } catch (error) {
-    console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
-    return null;
-  }
-}
-
-function updateStateFromSellSearch(state, sellData) {
-  if (!sellData) return;
-
-  state.identity.sellSearchCompleted = true;
-  state.identity.sellContactFound = Boolean(sellData.contact || sellData.contacts_found > 0);
-  state.identity.sellDealFound = Boolean(sellData.deal || sellData.deals_found_total > 0 || sellData.deals_found > 0);
-
-  const summaryBits = [];
-  if (state.identity.sellContactFound) summaryBits.push("contacto encontrado");
-  if (state.identity.sellDealFound) summaryBits.push("deal encontrado");
-  if (!summaryBits.length) summaryBits.push("sin coincidencias en Sell");
-  state.identity.sellSummary = summaryBits.join(", ");
-
-  const contact = sellData.contact || null;
-  if (contact?.display_name && (!state.contactDraft.c_nombres || !state.contactDraft.c_apellidos)) {
-    const split = splitNames(contact.display_name);
-    if (!state.contactDraft.c_nombres && split.nombres) state.contactDraft.c_nombres = split.nombres;
-    if (!state.contactDraft.c_apellidos && split.apellidos) state.contactDraft.c_apellidos = split.apellidos;
-  }
-
-  const deals = Array.isArray(sellData.deals) ? sellData.deals : [];
-  if (!state.dealDraft.dealPipelineId && deals.length && deals[0]?.pipeline_id) {
-    state.dealDraft.dealPipelineId = deals[0].pipeline_id;
-  }
-}
-
-async function maybeRunIdentitySearch(state, info) {
-  const rut = state.contactDraft.c_rut || null;
-  const supportEmail = state.contactDraft.c_email || null;
-  const supportPhone = state.contactDraft.c_tel1 || null;
-  const supportName =
-    [state.contactDraft.c_nombres, state.contactDraft.c_apellidos]
-      .filter(Boolean)
-      .join(" ")
-      .trim() || null;
-  const channelDisplayName = info?.authorDisplayName || null;
-  const sourceProfileName = info?.sourceProfileName || null;
-
-  // 1) SELL: solo si hay RUT
-  if (ENABLE_SELL_SEARCH && rut) {
-    const sameRut =
-      state.identity.lastSellSearchRut === rut &&
-      state.identity.sellSearchCompleted;
-
-    if (!sameRut) {
-      state.identity.lastSellSearchRut = rut;
-      try {
-        const sellData = await searchSellByRut(rut);
-        state.identity.sellRaw = sellData || null;
-        updateStateFromSellSearch(state, sellData);
-      } catch (error) {
-        console.error("SELL SEARCH ERROR:", error.message);
-        state.identity.sellSearchCompleted = false;
-        state.identity.sellSummary = `error_busqueda_sell: ${error.message}`;
-      }
-    }
-  }
-
-  // 2) SUPPORT: independiente del RUT
-  if (!ENABLE_SUPPORT_SEARCH) {
-    return;
-  }
-
-  const supportCandidates = {
-    email: supportEmail,
-    phone: supportPhone,
-    name: supportName,
-    channelDisplayName,
-    sourceProfileName
-  };
-
-  const hasSupportInput = Object.values(supportCandidates).some(Boolean);
-  if (!hasSupportInput) {
-    return;
-  }
-
-  const supportSearchKey = JSON.stringify(supportCandidates);
-
-  // Rebuscar solo si cambió la identidad conocida
-  if (state.identity.lastSupportSearchKey === supportSearchKey) {
-    return;
-  }
-
-  state.identity.lastSupportSearchKey = supportSearchKey;
-
-  try {
-    const supportData = await searchSupportReal(supportCandidates);
-
-    state.identity.supportRaw = supportData || null;
-    state.identity.supportSearchCompleted = true;
-    state.identity.foundInSupport = Boolean(supportData?.found);
-    state.identity.supportSummary = supportData?.found
-      ? `usuarios_support=${supportData.usersCount}, tickets_support=${supportData.ticketsCount}, ultimo_ticket=${supportData.latestTicketId || ""}`
-      : "sin coincidencias en Support";
-
-    const firstUser = supportData?.users?.[0] || null;
-    const supportHints = extractSupportIdentityHints(supportData);
-
-    if (firstUser && supportData?.usersCount === 1) {
-      if (!state.contactDraft.c_nombres || !state.contactDraft.c_apellidos) {
-        const split = splitNames(firstUser.name || "");
-        if (!state.contactDraft.c_nombres && split.nombres) {
-          state.contactDraft.c_nombres = split.nombres;
-        }
-        if (!state.contactDraft.c_apellidos && split.apellidos) {
-          state.contactDraft.c_apellidos = split.apellidos;
-        }
-      }
-    }
-
-    if (!state.contactDraft.c_email && supportHints.email) {
-      state.contactDraft.c_email = supportHints.email;
-    }
-
-    if (!state.contactDraft.c_tel1 && supportHints.phone) {
-      state.contactDraft.c_tel1 = supportHints.phone;
-      if (!state.contactDraft.c_tel2) {
-        state.contactDraft.c_tel2 = supportHints.phone;
-      }
-    }
-
-    if (supportHints.rut) {
-      state.identity.supportInferredRut = supportHints.rut;
-    }
-  } catch (error) {
-    console.error("SUPPORT SEARCH ERROR:", error.message);
-    state.identity.supportSearchCompleted = false;
-    state.identity.supportSummary = `error_busqueda_support: ${error.message}`;
-  }
-}
-
-function shouldTriggerCaseE(state) {
-  return Boolean(
-    state.identity.saysExistingPatient &&
-    state.contactDraft.c_rut &&
-    state.identity.sellSearchCompleted &&
-    !state.identity.sellContactFound &&
-    !state.identity.sellDealFound &&
-    (!ENABLE_SUPPORT_SEARCH || state.identity.supportSearchCompleted) &&
-    !state.identity.foundInSupport
-  );
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function shouldAskForFonasaTramo(state, latestUserText) {
   const key = normalizeKey(latestUserText || "");
@@ -4549,45 +3486,13 @@ async function askOpenAI({ systemPrompt, stateSummary, history }) {
   return formatReplyForWhatsApp(reply);
 }
 
-async function sendConversationReply(appId, conversationId, reply, info = null) {
-  // Transport-aware: si la conversación viene de Chatwoot, responder por su API.
-  if (info?.transport === "chatwoot") {
-    return sendChatwootReply({ conversationId, content: reply });
+async function sendConversationReply(_appId, conversationId, reply, info = null) {
+  if (info?.transport !== "chatwoot") {
+    throw new Error("Unsupported transport: Chatwoot is the only active conversation channel");
   }
-  if (!ZENDESK_SUBDOMAIN || !SUNCO_KEY_ID || !SUNCO_KEY_SECRET) {
-    throw new Error("Missing ZENDESK_SUBDOMAIN or SUNCO credentials");
-  }
-
-  const auth = Buffer.from(`${SUNCO_KEY_ID}:${SUNCO_KEY_SECRET}`).toString("base64");
-
-  const response = await fetch(
-    `https://${ZENDESK_SUBDOMAIN}.zendesk.com/sc/v2/apps/${appId}/conversations/${conversationId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        author: { type: "business" },
-        content: { type: "text", text: reply }
-      })
-    }
-  );
-
-  const raw = await response.text();
-  console.log("Conversations send raw:", raw);
-
-  if (!response.ok) {
-    throw new Error(`Conversations send failed: ${raw}`);
-  }
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return { ok: true, rawResponse: raw };
-  }
+  return sendChatwootReply({ conversationId, content: reply });
 }
+
 
 app.get("/", (req, res) => {
   res.send("Clinyco Conversations AI OK");
@@ -4696,218 +3601,14 @@ app.get("/api/lead-score-history/:conversationId", requireDebugKey, async (req, 
   }
 });
 
-app.get("/support-search-test", async (req, res) => {
-  try {
-    if (!ENABLE_SUPPORT_SEARCH) {
-      return res.status(400).json({ ok: false, error: "ENABLE_SUPPORT_SEARCH is false" });
-    }
-
-    const email = req.query.email ? String(req.query.email) : null;
-    const phone = req.query.phone ? String(req.query.phone) : null;
-    const name = req.query.name ? String(req.query.name) : null;
-
-    const result = await searchSupportReal({ email, phone, name, channelDisplayName: null, sourceProfileName: null });
-    return res.json({ ok: true, result });
-  } catch (error) {
-    console.error("ERROR /support-search-test:", error.message);
-    return res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.post("/ticket-assigned", async (req, res) => {
-  try {
-    console.log("===== /ticket-assigned webhook =====");
-    console.log("Body:", safeJson(req.body));
-
-    const {
-      event,
-      conversationId: conversation_id,
-      assigneeId: assignee_id,
-      requesterId,
-      ticketId
-    } = extractZendeskTicketAssignment(req.body || {});
-
-    let conversationId = conversation_id;
-
-    if (!conversationId && ticketId) {
-      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
-      if (conversationId) {
-        console.log(
-          `TICKET_ASSIGNED_CONVERSATION_RESOLVED ticketId=${ticketId} conversationId=${conversationId}`
-        );
-      } else {
-        console.log(
-          `TICKET_ASSIGNED_CONVERSATION_NOT_FOUND ticketId=${ticketId} requesterId=${requesterId || "-"}`
-        );
-      }
-    }
-
-    if (!conversationId) {
-      return res.status(400).json({
-        ok: false,
-        error: "Missing conversation_id",
-        ticket_id: ticketId || null,
-        requester_id: requesterId || null
-      });
-    }
-
-    await hydrateConversationCache(conversationId);
-    const state = getConversationState(conversationId);
-    const previousRequesterId = normalizeZendeskEntityId(state?.identity?.zendeskRequesterId);
-    state.system.aiEnabled = false;
-    state.system.humanTakenOver = true;
-    state.system.assigneeId = assignee_id || null;
-    state.system.handoffReason = "ticket_assigned";
-    if (requesterId) {
-      state.identity.zendeskRequesterId = requesterId;
-      state.identity.zendeskRequesterLinkedAt = state.identity.zendeskRequesterLinkedAt || new Date().toISOString();
-    }
-    if (ticketId) {
-      state.identity.zendeskTicketId = ticketId;
-    }
-    if (requesterId && requesterId !== previousRequesterId) {
-      lastSyncedLeadScore.delete(conversationId);
-    }
-
-    if (requesterId || ticketId) {
-      const linkLog = [
-        `conversationId=${conversationId}`,
-        requesterId ? `zendeskRequesterId=${requesterId}` : null,
-        ticketId ? `ticketId=${ticketId}` : null
-      ].filter(Boolean).join(" ");
-      console.log(`ZENDESK_REQUESTER_LINKED ${linkLog}`);
-    }
-
-    try {
-      await syncZendeskUserContactsFromState(state, {
-        sourceType: state?.identity?.channelSourceType || null,
-        userText: null,
-        rawMessage: null,
-        authorDisplayName: null,
-        sourceProfileName: state?.identity?.sourceProfileName || null
-      }, {
-        conversationId,
-        trigger: "ticket_assigned"
-      });
-    } catch (error) {
-      console.error("ZENDESK CONTACT SYNC ERROR:", error.message);
-    }
-
-    console.log("AI disabled for conversation:", conversationId);
-    console.log("Conversation state:", safeJson(state));
-
-    await saveConversationEvent({
-      conversationId,
-      info: {
-        sourceType: "system",
-        entryPoint: "ticket_assigned",
-        authorDisplayName: null,
-        channelDisplayName: null,
-        sourceProfileName: null
-      },
-      channelLabel: "ticket_assigned",
-      userText: null,
-      botReply: null,
-      state,
-      resolverDecision: {
-        nextAction: "blocked",
-        caseType: state?.identity?.caseType || null,
-        reason: "ticket_assigned",
-        missingFields: state?.identity?.lastMissingFields || []
-      }
-    });
-
-    await persistConversationSnapshot(conversationId, state, null);
-    await maybeSaveConversationSummary(conversationId, state, "ticket_assigned");
-
-    // ── EugenIA Hook 1: PREDICT at takeover + first note ──
-    try {
-      const resolverForEugenia = getNextBestQuestion(state, state.identity.supportRaw, state.identity.sellRaw, "");
-      const resolverForNote = {
-        ...resolverForEugenia,
-        actionLabel: inferBestNextAction(resolverForEugenia)
-      };
-      await onEugeniaTakeover({
-        conversationId,
-        ticketId: ticketId || state.identity?.zendeskTicketId || null,
-        state,
-        resolverDecision: resolverForNote,
-        zendeskSupportPut,
-        logger: console
-      });
-    } catch (eugeniaErr) {
-      console.error("EUGENIA_PREDICT_ERROR:", eugeniaErr.message);
-    }
-
-    return res.json({
-      ok: true,
-      event: event || "human_takeover",
-      conversation_id: conversationId,
-      ticket_id: ticketId || null,
-      requester_id: requesterId || null,
-      aiEnabled: state.system.aiEnabled
-    });
-  } catch (error) {
-    console.error("ERROR /ticket-assigned:", error.message);
-    return res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.post("/ticket-updated", async (req, res) => {
-  try {
-    console.log("===== /ticket-updated webhook =====");
-    console.log("Body:", safeJson(req.body));
-
-    const {
-      conversationId: conversation_id,
-      ticketId
-    } = extractZendeskTicketAssignment(req.body || {});
-
-    if (!ticketId) {
-      return res.status(400).json({ ok: false, error: "Missing ticket_id" });
-    }
-
-    let conversationId = conversation_id;
-    if (!conversationId) {
-      conversationId = await resolveConversationIdFromZendeskTicket(ticketId);
-    }
-
-    if (!conversationId) {
-      return res.status(400).json({ ok: false, error: "Missing conversation_id", ticket_id: ticketId });
-    }
-
-    await hydrateConversationCache(conversationId);
-    const state = getConversationState(conversationId);
-    const audits = await fetchZendeskTicketAudits(ticketId);
-    const inserted = await onEugeniaTicketAuditsObserved({
-      conversationId,
-      ticketId,
-      audits,
-      state,
-      zendeskSupportPut,
-      logger: console
-    });
-
-    return res.json({
-      ok: true,
-      conversation_id: conversationId,
-      ticket_id: ticketId,
-      processed_audits: audits.length,
-      inserted_events: inserted
-    });
-  } catch (error) {
-    console.error("ERROR /ticket-updated:", error.message);
-    return res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
 const handleInboundWebhook = async (req, res) => {
   try {
-    console.log("===== /messages webhook =====");
-    console.log("Headers:", safeJson(req.headers));
-    console.log("Body:", safeJson(req.body));
+    console.log("===== /chatwoot/inbound =====");
 
     const info = extractConversationInfo(req.body);
+    if (!info) {
+      return res.status(400).json({ ok: false, error: "invalid_chatwoot_payload" });
+    }
     const {
       appId,
       conversationId,
@@ -4917,14 +3618,7 @@ const handleInboundWebhook = async (req, res) => {
       messageId,
       sourceType
     } = info;
-
-    console.log("Extracted appId:", appId);
-    console.log("Extracted conversationId:", conversationId);
-    console.log("Extracted userText:", userText);
-    console.log("Extracted eventType:", eventType);
-    console.log("Extracted authorType:", authorType);
-    console.log("Extracted messageId:", messageId);
-    console.log("Extracted sourceType:", sourceType);
+    console.log("[chatwoot] inbound", safeJson({ conversationId, messageId, authorType, sourceType }));
 
     if (eventType !== "conversation:message") {
       return res.json({ ok: true, skipped: "non_message_event" });
@@ -4962,7 +3656,7 @@ const handleInboundWebhook = async (req, res) => {
         };
         await onEugeniaHumanAgentMessage({
           conversationId,
-          ticketId: state.identity?.zendeskTicketId || null,
+          ticketId: null,
           text: businessText,
           sourcePublic: true,
           state,
@@ -5054,10 +3748,9 @@ const handleInboundWebhook = async (req, res) => {
         };
         await onEugeniaMutedPatientMessage({
           conversationId,
-          ticketId: state.identity?.zendeskTicketId || null,
+          ticketId: null,
           state,
           resolverDecision: resolverForMutedPatient,
-          zendeskSupportPut,
           logger: console
         });
       } catch (eugeniaErr) {
@@ -6131,8 +4824,6 @@ const handleInboundWebhook = async (req, res) => {
       }));
     }
     // --- End open-help layer ---
-
-    await maybeRunIdentitySearch(state, info);
     let customerMemory = null;
     try {
       customerMemory = await ensureCustomerContext({
@@ -6153,7 +4844,6 @@ const handleInboundWebhook = async (req, res) => {
       if (confirmResult.needsCompletion && confirmResult.message) {
         // Data confirmed but missing fields remain — ask to complete
         state.identity.awaitingMissingDataCompletion = true;
-        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         await persistConversationSnapshot(conversationId, state, channelLabel);
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -6165,7 +4855,6 @@ const handleInboundWebhook = async (req, res) => {
         }));
       }
       if (confirmResult.message) {
-        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
           reply: confirmResult.message,
@@ -6178,7 +4867,6 @@ const handleInboundWebhook = async (req, res) => {
     }
 
     if (!state.identity.awaitingFinalConfirmation) {
-      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
     }
 
     // --- Awaiting missing data completion ---
@@ -6223,7 +4911,6 @@ const handleInboundWebhook = async (req, res) => {
       state.identity.awaitingFinalConfirmation = false;
       if (isConfirm) {
         state.identity.savedDataConfirmed = true;
-        await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
         // Continue to normal flow
       } else if (isReject) {
         // Re-enter missing data completion to let them correct
@@ -6251,7 +4938,6 @@ const handleInboundWebhook = async (req, res) => {
       }
       // Unclear response — treat as confirmed and continue
       state.identity.savedDataConfirmed = true;
-      await safelySyncZendeskUserContactsFromState(state, info, { conversationId, trigger: "message" });
     }
 
     if (shouldConfirmSavedData(state)) {
@@ -6269,24 +4955,7 @@ const handleInboundWebhook = async (req, res) => {
     }
     // --- End saved data confirmation layer ---
 
-    if (shouldTriggerCaseE(state)) {
-      state.identity.likelyClinicalRecordOnly = true;
-      return res.json(await sendManagedReply({
-        appId,
-        conversationId,
-        messageId,
-        userText,
-        reply: getCaseEMessage(),
-        kind: "case_e",
-        state,
-        info,
-        channelLabel,
-        resolverDecision: buildBlockedDecision(state, "clinical_record_only", "derive"),
-        disableAiAfterSend: true,
-        handoffReasonAfterSend: "clinical_record_only"
-      }));
-    }
-
+    
     if (shouldAskForFonasaTramo(state, userText)) {
       return res.json(await sendManagedReply({
         appId,
@@ -6444,9 +5113,6 @@ const handleInboundWebhook = async (req, res) => {
       }));
     }
 
-    console.log("Conversation history:", safeJson(getHistory(conversationId)));
-    console.log("Conversation state:", safeJson(state));
-
     const history = getHistory(conversationId);
     const customerContextBlock = customerMemory?.customerContextBlock || null;
     const stateSummary = [buildStateSummary(state), customerContextBlock].filter(Boolean).join("\n\n");
@@ -6488,7 +5154,7 @@ const handleInboundWebhook = async (req, res) => {
       convLock.release();
     }
   } catch (error) {
-    console.error("ERROR /messages:", error.message);
+    console.error("ERROR /chatwoot/inbound:", error.message);
     return res.status(500).json({ ok: false, error: error.message });
   }
 };
@@ -6503,16 +5169,9 @@ function requireChatwootBearer(req, res, next) {
   next();
 }
 
-// Sunshine Conversations (camino actual, intacto).
-app.post("/messages", handleInboundWebhook);
-
-// Mitad 1 Chatwoot: misma lógica de Antonia, alimentada por Chatwoot Cloud vía el
-// dispatcher (sell-medinet). Opt-in y paralelo — con el flag apagado no se monta
-// y el camino Sunco queda byte-idéntico.
-if (process.env.CHATWOOT_ADAPTER_ENABLED === "true") {
-  app.post("/chatwoot/inbound", requireChatwootBearer, handleInboundWebhook);
-  console.log("[chatwoot-adapter] montado POST /chatwoot/inbound");
-}
+// Chatwoot Cloud is the single active conversational transport.
+app.post("/chatwoot/inbound", requireChatwootBearer, handleInboundWebhook);
+console.log("[chatwoot-adapter] mounted POST /chatwoot/inbound");
 
 const PORT = process.env.PORT || 10000;
 await initDb();
@@ -6524,7 +5183,6 @@ app.listen(PORT, () => {
   } else {
     console.log(`Medinet: local execution (no MEDINET_WORKER_URL configured)`);
   }
-  startZapsPoller();
   startFonasapadCron();
   startMonthlyCron();
 });
