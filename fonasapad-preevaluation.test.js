@@ -23,18 +23,21 @@ function state(interest = null) {
   };
 }
 
-test("conversión reconoce manga previa y pregunta año primero", () => {
+test("conversión confirma primero si realmente existe una manga previa", () => {
   const s = state("Conversión de manga a bypass");
   const step = nextFonasaPadPreevaluationStep(s, "me interesa conversión de manga a bypass");
   assert.equal(s.preevaluation.track, "revisional");
-  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
-  assert.equal(step.key, "prior_year");
-  assert.match(step.reply, /año.*manga/i);
+  assert.equal(s.preevaluation.answers.prior_surgery, undefined);
+  assert.equal(step.key, "prior_surgery");
+  assert.match(step.reply, /ya tienes una manga/i);
 });
 
-test("flujo revisional avanza año → motivo → estudios", () => {
+test("flujo revisional avanza confirmación → año → motivo → estudios", () => {
   const s = state("Conversión de manga a bypass");
   let step = nextFonasaPadPreevaluationStep(s, "conversión");
+  assert.equal(step.key, "prior_surgery");
+  assert.equal(applyFonasaPadPreevaluationAnswer(s, "sí tengo una manga").matched, true);
+  step = nextFonasaPadPreevaluationStep(s, "sí tengo una manga");
   assert.equal(step.key, "prior_year");
   assert.equal(applyFonasaPadPreevaluationAnswer(s, "2018").matched, true);
   step = nextFonasaPadPreevaluationStep(s, "2018");
@@ -78,6 +81,7 @@ test("rehidrata manga 2012 y motivo ya respondidos antes de un deploy", () => {
   s.contactDraft.c_modalidad = "Tramo D";
   s.preevaluation.active = true;
   s.preevaluation.track = "revisional";
+  s.preevaluation.answers.prior_surgery = "manga";
   s.preevaluation.awaiting = "prior_year";
 
   const history = [
@@ -133,7 +137,11 @@ test("absorbe peso y manga previa con typo chileno en una sola frase", () => {
 
 test("negación explícita corrige falsa inferencia de manga", () => {
   const s = state("Conversión de manga a bypass");
-  let step = nextFonasaPadPreevaluationStep(s, "conversión");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "revisional";
+  s.preevaluation.answers.prior_surgery = "manga";
+  s.preevaluation.awaiting = "prior_year";
+  let step = { key: "prior_year" };
   assert.equal(step.key, "prior_year");
   applyFonasaPadPreevaluationAnswer(s, "Noo yo no tengo ninguna operación quiero una bariátrica");
   assert.equal(s.preevaluation.answers.prior_surgery, "ninguna");

@@ -390,14 +390,14 @@ function maybeSeedFromKnownState(state, p) {
   if (state?.contactDraft?.c_aseguradora) p.answers.insurance = state.contactDraft.c_aseguradora;
   if (state?.contactDraft?.c_modalidad) p.answers.fonasa_tramo = state.contactDraft.c_modalidad;
 
+  // El anuncio o interés de conversión NO demuestra que el paciente ya tenga manga.
+  // Ese antecedente debe confirmarlo el propio paciente.
   const interest = normalize(state?.dealDraft?.dealInteres || "");
-  if (p.track === "revisional" && /conversion.*manga.*bypass|manga.*bypass/.test(interest) && !hasAnswer(p, "prior_surgery")) {
-    p.answers.prior_surgery = "manga";
-  }
+  void interest;
 }
 
 function nextRevisional(state, p) {
-  if (!hasAnswer(p, "prior_surgery")) return prompt("prior_surgery", "te operaste antes de manga bypass u otra bariátrica?");
+  if (!hasAnswer(p, "prior_surgery")) return prompt("prior_surgery", "ya tienes una manga?");
   if (p.answers.prior_surgery !== "ninguna" && !hasAnswer(p, "prior_year")) {
     return prompt("prior_year", p.answers.prior_surgery === "manga" ? "de qué año es tu manga?" : "de qué año fue esa cirugía?");
   }
