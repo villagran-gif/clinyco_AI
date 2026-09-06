@@ -189,3 +189,32 @@ test("resumen de preevaluación se muestra al paciente", () => {
   assert.match(reply, /tabaco ocasional/);
   assert.match(reply, /ciudad Santiago/);
 });
+
+
+test("sí a ya tienes una manga confirma manga", () => {
+  const s = state("Conversión de manga a bypass");
+  let step = nextFonasaPadPreevaluationStep(s, "conversión");
+  assert.equal(step.key, "prior_surgery");
+  assert.match(step.reply, /ya tienes una manga/i);
+  const answer = applyFonasaPadPreevaluationAnswer(s, "Si");
+  assert.equal(answer.matched, true);
+  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
+  step = nextFonasaPadPreevaluationStep(s, "Si");
+  assert.equal(step.key, "prior_year");
+});
+
+test("año respondido a tu manga rehidrata también antecedente manga", () => {
+  const s = state("Conversión de manga a bypass");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "revisional";
+  const history = [
+    { role: "assistant", content: "de qué año es tu manga?", created_at: "2026-09-06T23:47:49Z" },
+    { role: "user", content: "2022", created_at: "2026-09-06T23:52:52Z" },
+  ];
+  hydrateFonasaPadPreevaluationFromHistory(s, history);
+  assert.equal(s.preevaluation.answers.prior_year, 2022);
+  assert.equal(s.preevaluation.answers.prior_surgery, "manga");
+  const next = nextFonasaPadPreevaluationStep(s, "");
+  assert.notEqual(next?.key, "prior_surgery");
+  assert.notEqual(next?.key, "prior_year");
+});
