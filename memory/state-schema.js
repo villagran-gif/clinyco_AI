@@ -88,6 +88,17 @@ export function buildInitialConversationState() {
       proposedHeightCm: null,
       askedMeasurementInstructions: false
     },
+    preevaluation: {
+      active: false,
+      completed: false,
+      track: null,
+      awaiting: null,
+      startedAt: null,
+      completedAt: null,
+      answers: {},
+      summary: null,
+      lastPrompt: null
+    },
     customerMemory: {
       customerId: null,
       previousConversations: [],
@@ -144,6 +155,11 @@ export function mergeConversationState(baseState, persistedState = {}) {
     dealDraft: { ...baseState.dealDraft, ...(persistedState.dealDraft || {}) },
     identity: { ...baseState.identity, ...(persistedState.identity || {}) },
     measurements: { ...baseState.measurements, ...(persistedState.measurements || {}) },
+    preevaluation: {
+      ...baseState.preevaluation,
+      ...(persistedState.preevaluation || {}),
+      answers: { ...baseState.preevaluation.answers, ...(persistedState.preevaluation?.answers || {}) }
+    },
     customerMemory: { ...baseState.customerMemory, ...(persistedState.customerMemory || {}) },
     openHelp: { ...baseState.openHelp, ...(persistedState.openHelp || {}) },
     booking: { ...baseState.booking, ...(persistedState.booking || {}) },
