@@ -1,0 +1,72 @@
+name: Antonia info BMI empty reply
+
+on:
+  push:
+    branches:
+      - fix/antonia-info-bmi-empty-reply
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/antonia-info-bmi-empty-reply
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply patch
+        run: python3 scripts/patch-antonia-info-bmi-empty.py
+      - name: Validate syntax and focused behavior
+        run: |
+          node --check server.js
+          node --check conversation-resolver.js
+          node - <<'NODE'
+          import { getNextBestQuestion, resolveIdentityAndContext } from './conversation-resolver.js';
+          const state = {
+            contactDraft: { c_rut:null, c_email:null, c_tel1:null, c_aseguradora:null, c_modalidad:null },
+            dealDraft: { dealInteres:'Conversión de manga a bypass', dealPeso:null, dealEstatura:null },
+            identity: { saysExistingPatient:false }
+          };
+          const resolved = resolveIdentityAndContext({ state, latestUserText:'Me interesa información de conversión manga a bypass' });
+          if (resolved.nextAction !== 'complete_missing') throw new Error(`unexpected nextAction ${resolved.nextAction}`);
+          if (resolved.knownData.dealInteres !== 'Conversión de manga a bypass') throw new Error(`conversion lost: ${resolved.knownData.dealInteres}`);
+          const decision = getNextBestQuestion(state, null, null, 'Me interesa información de conversión manga a bypass');
+          const missing = decision.missingFields || [];
+          if (missing[0] === 'identity_min') throw new Error('identity is still first');
+          if (missing[missing.length - 1] !== 'identity_min') throw new Error(`identity not deferred: ${missing.join(',')}`);
+          const bmi = Math.round((100/(1.6*1.6))*10)/10;
+          if (bmi !== 39.1) throw new Error(`BMI sanity failed ${bmi}`);
+          console.log('focused resolver/BMI checks ok');
+          NODE
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('server.js').read_text(encoding='utf-8')
+          required = [
+              'const bmiBeforeTurn = state.measurements.bmi;',
+              'state.measurements.bmi = recalculatedBmi;',
+              'tu IMC es ${state.measurements.bmi}[[MSG]]quieres que te cuente las opciones?',
+              '[openai-empty] respuesta vacía; reintentando',
+              'ANTONIA_MAX_COMPLETION_TOKENS || 800',
+              'firstMissing === "identity_min"',
+              '["dealPeso", "dealEstatura"].includes(firstMissing)',
+              'NO pidas correo/RUT antes de esa orientación',
+          ]
+          for item in required:
+              assert item in s, item
+          assert 'Gracias por escribirnos.' not in s[s.index('async function askOpenAI'):s.index('function wantsAudioReply')]
+          print('focused server checks ok')
+          PY
+      - name: Commit patch and remove one-shot files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server.js conversation-resolver.js
+          git rm scripts/patch-antonia-info-bmi-empty.py .github/workflows/antonia-info-bmi-empty.yml
+          git commit -m 'fix: orientar antes de pedir identidad y calcular IMC'
+          git push origin HEAD:fix/antonia-info-bmi-empty-reply
