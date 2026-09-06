@@ -102,10 +102,31 @@ function answerExpected(p, state, text) {
 
   if (key === "weight") {
     if (state?.measurements?.weightKg) return { matched: true, value: state.measurements.weightKg };
+    const m = String(text || "").trim().match(/^(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg|kilos?)?$/i);
+    if (m) {
+      const value = Number(m[1].replace(",", "."));
+      if (value >= 30 && value <= 350) {
+        state.measurements.weightKg = value;
+        state.dealDraft.dealPeso = String(value);
+        return { matched: true, value };
+      }
+    }
     return { matched: false };
   }
   if (key === "height") {
     if (state?.measurements?.heightM) return { matched: true, value: state.measurements.heightM };
+    const m = String(text || "").trim().match(/^(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:cm|m|mt|mts|metros?)?$/i);
+    if (m) {
+      let value = Number(m[1].replace(",", "."));
+      if (value >= 100 && value <= 220) value = value / 100;
+      if (value >= 1.2 && value <= 2.2) {
+        state.measurements.heightM = value;
+        state.measurements.heightCm = Math.round(value * 100);
+        state.dealDraft.dealEstatura = String(state.measurements.heightCm);
+        if (state.measurements.weightKg) state.measurements.bmi = Math.round((state.measurements.weightKg / (value * value)) * 10) / 10;
+        return { matched: true, value };
+      }
+    }
     return { matched: false };
   }
   if (key === "insurance") {

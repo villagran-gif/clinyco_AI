@@ -44,6 +44,11 @@ import {
 } from "./eugenia/index.js";
 import { startMelaniaFlow, handleMelaniaMessage, setMelaniaSlots } from "./melania/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
+import {
+  applyFonasaPadPreevaluationAnswer,
+  isFonasaPadPreevaluationRelevant,
+  nextFonasaPadPreevaluationStep,
+} from "./fonasapad-preevaluation.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
@@ -3320,6 +3325,30 @@ function asksClinicLocationOrNearestSite(text) {
   ].some((phrase) => key.includes(phrase));
 }
 
+function parseRequestedCareMode(text) {
+  const key = normalizeKey(text || "");
+  if (/\b(TELEMEDICINA|TELECONSULTA|ONLINE|ON LINE|VIDEO)\b/.test(key)) return "telemedicina";
+  if (/\b(PRESENCIAL|PRESENCIALMENTE)\b/.test(key)) return "presencial";
+  return null;
+}
+
+function parseClinicCityChoice(text) {
+  const key = normalizeKey(text || "");
+  if (key.includes("SANTIAGO")) return "Santiago";
+  if (key.includes("ANTOFAGASTA")) return "Antofagasta";
+  return null;
+}
+
+function isSimpleScheduleRequest(text) {
+  const key = normalizeKey(text || "");
+  return ["NECESITO UNA HORA", "QUIERO UNA HORA", "QUIERO AGENDAR", "NECESITO AGENDAR", "AGENDAR HORA", "PEDIR HORA", "HORA DISPONIBLE", "HORAS DISPONIBLES"].some((phrase) => key.includes(phrase));
+}
+
+function userExplicitlyRequestsHuman(text) {
+  const key = normalizeKey(text || "");
+  return /\b(HUMANO|PERSONA REAL|EJECUTIVA|AGENTE|ASESOR|ASESORA)\b/.test(key) && /\b(HABLAR|QUIERO|NECESITO|PASAR|DERIVAR|COMUNICAR)\b/.test(key);
+}
+
 function guardOpenAiSchedulingClaims(reply, state) {
   if (Array.isArray(state?.booking?.pendingSlots) && state.booking.pendingSlots.length > 0) {
     return { reply, handoff: false };
@@ -3344,8 +3373,8 @@ function guardOpenAiSchedulingClaims(reply, state) {
   if (!unsupported) return { reply, handoff: false };
   console.warn("[schedule-guard] blocked unsupported scheduling claim:", String(reply || "").slice(0, 240));
   return {
-    reply: "para no darte una sede u hora incorrecta[[MSG]]te lo confirmo con una agente",
-    handoff: true
+    reply: "estamos en Santiago y Antofagasta[[MSG]]presencial o telemedicina?",
+    handoff: false
   };
 }
 
@@ -3525,16 +3554,17 @@ Reglas operativas:
 - si el IMC sugiere sobrepeso u obesidad y el usuario consulta por balón o bariátrica, continúa guiando el proceso con naturalidad
 - no pidas RUT de forma proactiva salvo que el usuario diga que ya es paciente o entregue el RUT por su cuenta
 - si ya fue identificado un caso de derivación clínica, no sigas preguntando datos
-- si preguntan por la agenda u hora de un profesional que no esté en la lista disponible, no inventes disponibilidad; indica que derivarás con una agente porque no tienes acceso a esa agenda en esta franja horaria y sugiere la agenda web ${MEDINET_AGENDA_WEB_URL}
-- PROHIBIDO inventar sedes, ciudades, cercanía geográfica, teleconsulta, mañana/tarde o disponibilidad. Sólo menciona una sede/ciudad/horario cuando provenga de un resultado real de Medinet o de una fuente de conocimiento verificada
+- si piden una hora, tú sigues a cargo: pregunta presencial o telemedicina. Las ubicaciones válidas son Santiago y Antofagasta. Luego consulta MelanIA/Medinet cuando necesites disponibilidad real
+- PROHIBIDO inventar otras sedes, ciudades, cercanía geográfica o disponibilidad. Santiago y Antofagasta sí están autorizadas
+- NO ofrezcas derivar a una agente como salida por defecto. Resuelve tú. Sólo deriva si el paciente pide explícitamente hablar con una persona o existe una falla operativa irrecuperable
 - si el paciente dice que NO califica para PAD, no lo interrogues inmediatamente por el tramo. Primero explica brevemente que igual podemos revisar otras alternativas y continúa la preevaluación
 
 Datos importantes:
 - si quiere avanzar, cotizar, agendar o resolver su caso y ya tenemos teléfono, no vuelvas a pedirlo
-- si ya tenemos teléfono, previsión, interés y los datos clínicos mínimos, prioriza una derivación clara con una agente en vez de seguir explorando
+- si ya tenemos teléfono, previsión, interés y los datos clínicos mínimos, continúa resolviendo tú; si quiere hora consulta MelanIA/Medinet
 - no ofrezcas llamada telefónica por defecto si la persona no la pidió
 - no ofrezcas horarios específicos si no tienes acceso real a agenda
-- si la persona quiere avanzar y ya tenemos los datos principales, indica que dejarás su solicitud lista para coordinación con una agente y, como alternativa, comparte la agenda web
+- si la persona quiere avanzar y ya tenemos los datos principales, continúa tú. Si quiere agendar, consulta MelanIA/Medinet y presenta horas reales; usa la agenda web sólo como respaldo si falla la consulta
 - si ya entregó teléfono y ya tenemos lo esencial, cierra cordialmente o deriva de forma clara
 - si un profesional aparece como inactivo en la base de conocimiento, dilo con honestidad, explica el motivo si está disponible y usa el mensaje sugerido para cliente
 - si la persona ya dijo lo que necesita y tú puedes orientar, responde primero y pregunta después solo si hace falta
@@ -4758,6 +4788,52 @@ const handleInboundWebhook = async (req, res) => {
       }
     }
 
+    // --- Simple booking conversation: AntonIA stays in control ---
+    if (!state.melania?.active && !state.booking?.awaitingSlotChoice && !state.booking?.chosenSlot) {
+      if (state.booking?.awaitingCareMode) {
+        const mode = parseRequestedCareMode(userText);
+        if (!mode) {
+          return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "presencial o telemedicina?[[MSG]]estamos en Santiago y Antofagasta", kind: "schedule_choose_mode", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_mode") }));
+        }
+        state.booking.preferredMode = mode;
+        state.booking.awaitingCareMode = false;
+        if (mode === "presencial") {
+          state.booking.awaitingCityChoice = true;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]Santiago o Antofagasta?", kind: "schedule_choose_city", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_city") }));
+        }
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));
+      }
+      if (state.booking?.awaitingCityChoice) {
+        const city = parseClinicCityChoice(userText);
+        if (!city) return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "Santiago o Antofagasta?", kind: "schedule_choose_city", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_city") }));
+        state.booking.preferredCity = city;
+        state.booking.awaitingCityChoice = false;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));
+      }
+      if (isSimpleScheduleRequest(userText) && !parseRequestedCareMode(userText)) {
+        state.booking.awaitingCareMode = true;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]presencial o telemedicina?\nestamos en Santiago y Antofagasta", kind: "schedule_choose_mode", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_mode") }));
+      }
+    }
+
+    // --- FONASAPAD conversational preevaluation ---
+    if (!state.melania?.active && !state.booking?.awaitingSlotChoice && !state.booking?.chosenSlot && isFonasaPadPreevaluationRelevant(state, userText) && !(hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText))) {
+      const preevalAnswer = applyFonasaPadPreevaluationAnswer(state, userText);
+      if (!preevalAnswer.deferToAssistant) {
+        const preevalStep = nextFonasaPadPreevaluationStep(state, userText);
+        if (preevalStep) {
+          if (preevalStep.completed && preevalStep.summary) state.dealDraft.dealValidacionPad = `Preevaluación FONASAPAD completa | ${preevalStep.summary}`;
+          await persistConversationSnapshot(conversationId, state, channelLabel);
+          return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: preevalStep.reply, kind: preevalStep.completed ? "fonasapad_preevaluation_complete" : "fonasapad_preevaluation_question", state, info, channelLabel, resolverDecision: { stage: "fonasapad_preevaluation", nextAction: preevalStep.completed ? "complete" : preevalStep.key, reason: "Conversational FONASAPAD preevaluation" } }));
+        }
+      }
+    }
+    // --- End FONASAPAD preevaluation ---
+
     // --- MelanIA activation: when Antonia detects booking intent ---
     if (!state.melania?.active) {
       const hasIntent = hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText);
@@ -5075,36 +5151,21 @@ const handleInboundWebhook = async (req, res) => {
 
     if (asksClinicLocationOrNearestSite(userText) && !(Array.isArray(state.booking?.pendingSlots) && state.booking.pendingSlots.length)) {
       return res.json(await sendManagedReply({
-        appId,
-        conversationId,
-        messageId,
-        userText,
-        reply: "para no darte una sede incorrecta[[MSG]]te lo confirmo con una agente",
-        kind: "clinic_location_requires_verified_source",
-        state,
-        info,
-        channelLabel,
-        resolverDecision: buildBlockedDecision(state, "clinic_location_requires_verified_source", "derive"),
-        disableAiAfterSend: true,
-        handoffReasonAfterSend: "clinic_location_requires_verified_source"
+        appId, conversationId, messageId, userText,
+        reply: "estamos en Santiago y Antofagasta[[MSG]]cuál te acomoda?",
+        kind: "clinic_location_answer", state, info, channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "clinic_location_answer")
       }));
     }
 
     const unknownProfessionalSchedule = detectUnknownProfessionalScheduleRequest(userText);
     if (unknownProfessionalSchedule.shouldDerive) {
+      state.booking.awaitingCareMode = true;
       return res.json(await sendManagedReply({
-        appId,
-        conversationId,
-        messageId,
-        userText,
-        reply: getUnknownProfessionalScheduleMessage(unknownProfessionalSchedule.professionalName),
-        kind: "unknown_professional_schedule",
-        state,
-        info,
-        channelLabel,
-        resolverDecision: buildBlockedDecision(state, "unknown_professional_schedule", "derive"),
-        disableAiAfterSend: true,
-        handoffReasonAfterSend: "unknown_professional_schedule"
+        appId, conversationId, messageId, userText,
+        reply: "ok[[MSG]]presencial o telemedicina?\nestamos en Santiago y Antofagasta",
+        kind: "schedule_choose_mode", state, info, channelLabel,
+        resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_mode")
       }));
     }
 
@@ -5442,6 +5503,10 @@ const handleInboundWebhook = async (req, res) => {
       referralContext: info?.referralContext || null
     });
 
+    if (/\bagente\b/i.test(reply) && !userExplicitlyRequestsHuman(userText)) {
+      console.warn("[agent-guard] blocked unsolicited human escalation:", String(reply).slice(0, 240));
+      reply = state?.preevaluation?.active && !state?.preevaluation?.completed ? "sigamos por acá[[MSG]]te voy guiando paso a paso" : "lo vemos por acá[[MSG]]te ayudo yo";
+    }
     const scheduleGuard = guardOpenAiSchedulingClaims(reply, state);
     reply = scheduleGuard.reply;
 
