@@ -45,8 +45,8 @@ export function buildKnowledgePromptContext() {
     }
   }
 
-  // --- Procedimientos (from "examenes" tab) ---
-  const procedures = listActiveRecords(snapshot.procedures).slice(0, 8);
+  // --- Procedimientos ---
+  const procedures = listActiveRecords(snapshot.procedures).slice(0, 10);
   if (procedures.length) {
     lines.push("- Procedimientos:");
     for (const procedure of procedures) {
@@ -55,14 +55,15 @@ export function buildKnowledgePromptContext() {
         procedure.categoria,
         procedure.requiere_peso_estatura ? "Pedir peso y estatura" : null,
         procedure.se_puede_orientar_sin_rut ? "Se puede orientar sin RUT" : null,
-        procedure.observaciones
+        procedure.observaciones,
+        procedure.notas_para_bot ? `Bot: ${procedure.notas_para_bot}` : null
       ].filter(Boolean);
       lines.push(`  - ${bits.join(" | ")}`);
     }
   }
 
-  // --- FAQ seguras (from "preguntas frecuentes" tab) ---
-  const faqs = listActiveRecords(snapshot.faq_medical_safe).slice(0, 6);
+  // --- FAQ seguras ---
+  const faqs = listActiveRecords(snapshot.faq_medical_safe).slice(0, 10);
   if (faqs.length) {
     lines.push("- FAQ seguras:");
     for (const faq of faqs) {
@@ -70,7 +71,8 @@ export function buildKnowledgePromptContext() {
         `Pregunta: ${faq.pregunta_frecuente}`,
         `Respuesta: ${faq.respuesta_aprobada}`,
         faq.cuando_derivar ? `Derivar: ${faq.cuando_derivar}` : null,
-        faq.no_prometer ? `No prometer: ${faq.no_prometer}` : null
+        faq.no_prometer ? `No prometer: ${faq.no_prometer}` : null,
+        faq.notas_para_bot ? `Bot: ${faq.notas_para_bot}` : null
       ].filter(Boolean);
       lines.push(`  - ${bits.join(" | ")}`);
     }
