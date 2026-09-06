@@ -1,0 +1,30 @@
+name: Confirmed prior surgery
+on:
+  push:
+    branches: [fix/rehydrate-confirmed-prior-surgery]
+    paths:
+      - '.github/workflows/confirmed-prior.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/rehydrate-confirmed-prior-surgery
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/patch_confirmed_prior.py
+      - run: |
+          node --check fonasapad-preevaluation.js
+          node --test fonasapad-preevaluation.test.js extraction/updateDraftsFromText.test.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fonasapad-preevaluation.js fonasapad-preevaluation.test.js
+          git commit -m "fix: no repetir manga confirmada por la conversación"
+          git rm -f .github/workflows/confirmed-prior.yml scripts/patch_confirmed_prior.py
+          git commit -m "chore: retirar parche temporal de antecedente"
+          git push origin fix/rehydrate-confirmed-prior-surgery
