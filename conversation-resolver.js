@@ -376,7 +376,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.stage === "schedule_request") {
     return {
-      question: "Claro. ¿Con qué profesional o especialidad buscas hora?",
+      question: "claro[[MSG]]con qué profesional buscas hora?",
       reason: "La persona pidió agenda, control o cambio de hora antes de completar todos los datos.",
       missingFields,
       shouldDerive: false,
@@ -389,7 +389,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.caseType === "A" && missingFields.length === 0) {
     return {
-      question: "Claro. ¿Qué necesitas resolver hoy?",
+      question: "claro[[MSG]]qué necesitas resolver hoy?",
       reason: "Caso A: ya existe deal en Sell, no conviene reiniciar ficha.",
       missingFields: [],
       shouldDerive: false,
@@ -402,7 +402,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.foundInSupport && !resolved.foundInSell && missingFields.length === 0) {
     return {
-      question: "Claro. ¿Qué necesitas resolver ahora?",
+      question: "claro[[MSG]]qué necesitas resolver ahora?",
       reason: "Caso C con contexto en Support y sin faltantes críticos inmediatos.",
       missingFields: [],
       shouldDerive: false,
@@ -416,33 +416,33 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
   const field = missingFields[0] || null;
   const questionMap = {
     identity_min: {
-      question: "¿Me compartes tu correo? Si ya eres paciente, también puede ser tu RUT.",
+      question: "me compartes tu correo?[[MSG]]si ya eres paciente puede ser tu RUT",
       reason: "Falta identidad mínima para buscar y continuar con contexto."
     },
     dealInteres: {
-      question: "¿Qué procedimiento te interesa?",
+      question: "qué procedimiento te interesa?",
       reason: "Falta definir el interés principal para orientar la conversación."
     },
     c_aseguradora: {
-      question: "¿Tu previsión es Fonasa, Isapre o Particular?",
+      question: "tu previsión es Fonasa Isapre o Particular?",
       reason: "La previsión cambia la orientación comercial y clínica."
     },
     c_modalidad: {
-      question: "¿Qué tramo Fonasa tienes: A, B, C o D?",
+      question: "qué tramo Fonasa tienes A B C o D?",
       reason: "Falta modalidad de Fonasa."
     },
     dealPeso: {
-      question: "¿Cuánto pesas actualmente?",
+      question: "cuánto pesas?",
       reason: "El procedimiento requiere peso para evaluación inicial."
     },
     dealEstatura: {
-      question: "¿Y cuánto mides?",
+      question: "y cuánto mides?",
       reason: "El procedimiento requiere estatura para evaluación inicial."
     }
   };
 
   const selected = questionMap[field] || {
-    question: "Cuéntame un poco más.",
+    question: "cuéntame un poco más",
     reason: "No hay un faltante priorizado claro."
   };
 
