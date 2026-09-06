@@ -118,6 +118,7 @@ export function buildInitialConversationState() {
       assigneeId: null,
       botMessagesSent: 0,
       introducedAsAntonia: false,
+      padNonEligibilityLead: false,
       handoffReason: null,
       lastQuestionKey: null,
       lastInboundMessageId: null,
