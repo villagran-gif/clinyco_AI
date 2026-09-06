@@ -3310,7 +3310,7 @@ function shouldAskForSpecificAseguradora(state, latestUserText) {
 
 function isMeasurementQuestionNeeded(state) {
   const interes = normalizeKey(state.dealDraft.dealInteres || "");
-  const isWeightHeightRelevant = ["BALON GASTRICO", "CIRUGIA BARIATRICA"].includes(interes);
+  const isWeightHeightRelevant = ["BALON GASTRICO", "CIRUGIA BARIATRICA", "CONVERSION DE MANGA A BYPASS"].includes(interes);
   return isWeightHeightRelevant && (!state.measurements.weightKg || !state.measurements.heightM);
 }
 
@@ -3336,13 +3336,11 @@ function shouldUseResolverQuestion(state, decision, latestUserText = "") {
   if (!decision?.question) return false;
   if (!decision.shouldDerive) {
     const hasMissingFields = Array.isArray(decision.missingFields) && decision.missingFields.length > 0;
+    const firstMissing = Array.isArray(decision.missingFields) ? decision.missingFields[0] : null;
     const canAskIdentity =
-      Array.isArray(decision.missingFields) &&
-      decision.missingFields.includes("identity_min") &&
+      firstMissing === "identity_min" &&
       Boolean(state?.identity?.saysExistingPatient);
-    const canAskMeasurements =
-      Array.isArray(decision.missingFields) &&
-      decision.missingFields.some((field) => ["dealPeso", "dealEstatura"].includes(field));
+    const canAskMeasurements = ["dealPeso", "dealEstatura"].includes(firstMissing);
     const isStrongResolverTurn =
       decision.caseType === "A" ||
       canAskIdentity ||
@@ -3444,6 +3442,7 @@ Reglas operativas:
 - si recibes un bloque [MEMORIA_CLIENTE] tentativo, úsalo solo para orientar una pregunta breve de verificación
 - mientras la identidad no esté confirmada, no reveles ni cites nombre, RUT, WhatsApp ni detalles históricos como si fueran datos confirmados del usuario actual
 - no pidas RUT, correo o teléfono al inicio si todavía puedes orientar primero
+- si viene por conversión de manga a bypass, primero entiende si el problema es reflujo, reganancia o ambos; NO pidas correo/RUT antes de esa orientación
 - si el usuario ya entregó peso y estatura confirmados, usa el IMC disponible en el historial
 - si el usuario pregunta por cirugía y aún no sabemos previsión, puedes preguntar si es Fonasa, Isapre o Particular
 - si el usuario es Fonasa y aún no sabemos el tramo, debes pedir Tramo A, B, C o D
@@ -3597,7 +3596,7 @@ async function askOpenAI({
     return openai.chat.completions.create({
       model: OPENAI_MODEL,
       messages,
-      max_completion_tokens: Math.max(200, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 400)),
+      max_completion_tokens: Math.max(300, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 800)),
     });
   }
 
@@ -3610,7 +3609,24 @@ async function askOpenAI({
     response = await createCompletion(baseMessages);
   }
 
-  const reply = response.choices?.[0]?.message?.content?.trim() || "Gracias por escribirnos.";
+  let reply = response.choices?.[0]?.message?.content?.trim() || "";
+  if (!reply) {
+    const finishReason = response.choices?.[0]?.finish_reason || null;
+    console.warn("[openai-empty] respuesta vacía; reintentando", safeJson({ finishReason, model: OPENAI_MODEL }));
+    try {
+      const retry = await createCompletion([
+        ...baseMessages,
+        {
+          role: "system",
+          content: "Responde ahora. Máximo 2 burbujas muy cortas separadas con [[MSG]]. Nunca cierres la conversación si el paciente hizo una pregunta."
+        }
+      ]);
+      reply = retry.choices?.[0]?.message?.content?.trim() || "";
+    } catch (retryError) {
+      console.warn("[openai-empty] retry failed:", retryError.message);
+    }
+  }
+  if (!reply) reply = "claro[[MSG]]qué te gustaría saber?";
   return formatReplyForWhatsApp(reply);
 }
 
@@ -4814,6 +4830,8 @@ const handleInboundWebhook = async (req, res) => {
     // --- End Antonia fast-path ---
 
     // Measurement confirmation flow first.
+    // Guardamos el IMC previo para saber si este turno acaba de completarlo/cambiarlo.
+    const bmiBeforeTurn = state.measurements.bmi;
     if (state.measurements.pendingConfirmation) {
       if (isTruthyText(userText)) {
         const bmiContext = {
@@ -4886,6 +4904,16 @@ const handleInboundWebhook = async (req, res) => {
           }
         }
       }
+
+      // Los números sueltos (ej: "100" y luego "1.60") no pasan por buildBMIContext
+      // en el mismo mensaje. Recalcular explícitamente cuando ya tenemos ambos datos.
+      if (state.measurements.weightKg && state.measurements.heightM) {
+        const recalculatedBmi = calculateBMI(state.measurements.weightKg, state.measurements.heightM);
+        if (recalculatedBmi) {
+          state.measurements.bmi = recalculatedBmi;
+          state.measurements.bmiCategory = getBMICategory(recalculatedBmi);
+        }
+      }
       // --- End bare-number fix ---
 
       const bmiSourceText = [userText, structuredLeadToMeasurementText(parseStructuredLeadText(userText))].filter(Boolean).join("\n");
@@ -4918,6 +4946,30 @@ const handleInboundWebhook = async (req, res) => {
       } else {
         addToHistory(conversationId, "user", userText);
       }
+    }
+
+    // Si este turno acaba de completar/cambiar el IMC, informarlo de inmediato.
+    // No depender de OpenAI para un cálculo determinístico.
+    if (state.measurements.bmi && state.measurements.bmi !== bmiBeforeTurn) {
+      const bmiReply = `tu IMC es ${state.measurements.bmi}[[MSG]]quieres que te cuente las opciones?`;
+      return res.json(await sendManagedReply({
+        appId,
+        conversationId,
+        messageId,
+        userText,
+        reply: bmiReply,
+        kind: "bmi_calculated",
+        state,
+        info,
+        channelLabel,
+        resolverDecision: {
+          stage: "bmi_calculated",
+          nextAction: "continue",
+          reason: "BMI calculated from confirmed weight and height",
+          bmi: state.measurements.bmi,
+          bmiCategory: state.measurements.bmiCategory
+        }
+      }));
     }
 
     const unknownProfessionalSchedule = detectUnknownProfessionalScheduleRequest(userText);

@@ -2,7 +2,8 @@ import { normalizeRut as normalizeValidatedRut } from "./extraction/identity-nor
 
 const BMI_REQUIRED_PROCEDURES = [
   "BALON GASTRICO",
-  "CIRUGIA BARIATRICA"
+  "CIRUGIA BARIATRICA",
+  "CONVERSION DE MANGA A BYPASS"
 ];
 
 function clean(value) {
@@ -63,6 +64,9 @@ function normalizeProcedure(value, { preserveUnknown = true } = {}) {
   const key = normalizeKey(value);
   if (!key) return null;
   if (key.includes("BALON")) return "Balón gástrico";
+  if ((key.includes("CONVERSION") || key.includes("REVISIONAL")) && key.includes("MANGA") && key.includes("BYPASS")) {
+    return "Conversión de manga a bypass";
+  }
   if (key.includes("BARIATR") || key.includes("MANGA") || key.includes("BYPASS")) return "Cirugía bariátrica";
   if (key.includes("PLASTICA") || key.includes("ABDOMINOPLASTIA") || key.includes("LIPO") || key.includes("MAMOPLASTIA")) return "Cirugía plástica";
   if (key.includes("HERNIA") || key.includes("VESICULA") || key.includes("ENDOSCOP")) return "Cirugía general";
@@ -177,8 +181,9 @@ function inferCaseType({ state, supportSummary, sellSummary, knownData, latestUs
 
 function inferNextAction({ caseType, knownData }) {
   if (caseType === "E") return "derive";
-  if (!knownData.c_rut && !knownData.c_email && !knownData.c_tel1) return "ask_identity";
   if (caseType === "A") return "continue";
+  // Para orientación general no convertir la falta de email/RUT en la prioridad.
+  // La identidad se pide más adelante si realmente hace falta para agenda/seguimiento.
   return "complete_missing";
 }
 
@@ -279,7 +284,6 @@ function getMissingFields(resolved) {
   const data = resolved.knownData || {};
   const missing = [];
 
-  if (!data.c_rut && !data.c_email && !data.c_tel1) missing.push("identity_min");
   if (!data.dealInteres) missing.push("dealInteres");
   if (!data.c_aseguradora) missing.push("c_aseguradora");
   if (data.c_aseguradora === "FONASA" && !data.c_modalidad) missing.push("c_modalidad");
@@ -288,6 +292,9 @@ function getMissingFields(resolved) {
     if (!data.dealPeso) missing.push("dealPeso");
     if (!data.dealEstatura) missing.push("dealEstatura");
   }
+
+  // Identidad al final. Nunca debe desplazar una orientación clínica/comercial útil.
+  if (!data.c_rut && !data.c_email && !data.c_tel1) missing.push("identity_min");
 
   if (resolved.caseType === "A") {
     return missing.filter((field) => ["c_aseguradora", "c_modalidad", "dealPeso", "dealEstatura"].includes(field));
