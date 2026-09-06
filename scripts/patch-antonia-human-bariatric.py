@@ -74,7 +74,7 @@ replacement = '''═══ TONO HUMANO (crítico) ═══
 '''
 s = s[:start] + replacement + s[end:]
 
-# 4) Reducir techo de salida del modelo. Mantiene margen para razonamiento y respuestas médicas breves.
+# 4) Reducir techo de salida del modelo.
 old_tokens = 'max_completion_tokens: Math.max(200, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 600))'
 new_tokens = 'max_completion_tokens: Math.max(200, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 400))'
 if s.count(old_tokens) != 1:
@@ -88,8 +88,14 @@ old_delay = '''function calculateHumanDelay(text) {
 
   const chars = cleanText.length;
   let delay = 700 + chars * 18 + Math.floor(Math.random() * 700);
+
   if (chars < 25) delay += 150;
-  return Math.min(Math.max(delay, 900), 4500);
+  if (chars > 120) delay += 400;
+
+  delay = Math.max(900, delay);
+  delay = Math.min(delay, 4500);
+
+  return delay;
 }
 '''
 new_delay = '''function calculateHumanDelay(text) {
