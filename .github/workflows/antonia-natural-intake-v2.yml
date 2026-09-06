@@ -17,6 +17,17 @@ jobs:
         with:
           node-version: '22'
       - run: python3 scripts/patch_intake_v2.py
+      - name: Mark absorbed awaited fields as matched
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('fonasapad-preevaluation.js')
+          s = p.read_text()
+          old = '''export function applyFonasaPadPreevaluationAnswer(state, text = "") {\n  const p = ensureState(state);\n  ingestExplicitFacts(state, p, text);\n  if (!p.active || p.completed || !p.awaiting) {\n    return { matched: false, deferToAssistant: false };\n  }'''
+          new = '''export function applyFonasaPadPreevaluationAnswer(state, text = "") {\n  const p = ensureState(state);\n  const awaitedBefore = p.awaiting;\n  ingestExplicitFacts(state, p, text);\n  if (awaitedBefore && !p.awaiting && hasAnswer(p, awaitedBefore)) {\n    return { matched: true, deferToAssistant: false, value: p.answers[awaitedBefore] };\n  }\n  if (!p.active || p.completed || !p.awaiting) {\n    return { matched: false, deferToAssistant: false };\n  }'''
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+          PY
       - run: |
           node --check server.js
           node --check fonasapad-preevaluation.js
