@@ -376,7 +376,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.stage === "schedule_request") {
     return {
-      question: "Entiendo que quieres revisar una hora, control o cambio de agenda. Cuéntame con qué profesional, especialidad o sede te gustaría atenderte para orientarte mejor.",
+      question: "Claro. ¿Con qué profesional o especialidad buscas hora?",
       reason: "La persona pidió agenda, control o cambio de hora antes de completar todos los datos.",
       missingFields,
       shouldDerive: false,
@@ -389,7 +389,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.caseType === "A" && missingFields.length === 0) {
     return {
-      question: "Perfecto, ya tengo tu contexto y no quiero hacerte repetir datos. Cuéntame qué necesitas resolver hoy para seguir ayudándote.",
+      question: "Claro. ¿Qué necesitas resolver hoy?",
       reason: "Caso A: ya existe deal en Sell, no conviene reiniciar ficha.",
       missingFields: [],
       shouldDerive: false,
@@ -402,7 +402,7 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
 
   if (resolved.foundInSupport && !resolved.foundInSell && missingFields.length === 0) {
     return {
-      question: "Veo que ya habías conversado antes con nosotros. Cuéntame en qué etapa estás hoy o qué te gustaría resolver ahora.",
+      question: "Claro. ¿Qué necesitas resolver ahora?",
       reason: "Caso C con contexto en Support y sin faltantes críticos inmediatos.",
       missingFields: [],
       shouldDerive: false,
@@ -416,33 +416,33 @@ export function getNextBestQuestion(state = {}, supportResult = null, sellResult
   const field = missingFields[0] || null;
   const questionMap = {
     identity_min: {
-      question: "Si quieres que deje tu solicitud lista para seguimiento, ¿me compartes tu teléfono o correo? Si ya eres paciente, también puede ser tu RUT.",
+      question: "¿Me compartes tu correo? Si ya eres paciente, también puede ser tu RUT.",
       reason: "Falta identidad mínima para buscar y continuar con contexto."
     },
     dealInteres: {
-      question: "¿Qué procedimiento o evaluación te interesa?",
+      question: "¿Qué procedimiento te interesa?",
       reason: "Falta definir el interés principal para orientar la conversación."
     },
     c_aseguradora: {
-      question: "¿Cuál es tu previsión o aseguradora? Por ejemplo Fonasa, Banmédica, Consalud, Cruz Blanca o Particular.",
+      question: "¿Tu previsión es Fonasa, Isapre o Particular?",
       reason: "La previsión cambia la orientación comercial y clínica."
     },
     c_modalidad: {
-      question: "Si eres Fonasa, ¿me indicas tu tramo? Responde A, B, C o D.",
+      question: "¿Qué tramo Fonasa tienes: A, B, C o D?",
       reason: "Falta modalidad de Fonasa."
     },
     dealPeso: {
-      question: "Para orientarte mejor, indícame por favor tu peso en kilos, sin decimales.",
+      question: "¿Cuánto pesas actualmente?",
       reason: "El procedimiento requiere peso para evaluación inicial."
     },
     dealEstatura: {
-      question: "¿Y tu estatura en metros? Puedes escribirla por ejemplo como 1.70.",
+      question: "¿Y cuánto mides?",
       reason: "El procedimiento requiere estatura para evaluación inicial."
     }
   };
 
   const selected = questionMap[field] || {
-    question: "Cuéntame un poco más para poder orientarte mejor.",
+    question: "Cuéntame un poco más.",
     reason: "No hay un faltante priorizado claro."
   };
 

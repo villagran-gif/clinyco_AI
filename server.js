@@ -3211,24 +3211,11 @@ function buildStateSummary(state) {
 }
 
 function getMeasurementInstructionMessage() {
-  return [
-    "Para orientarte mejor, envíame por favor:",
-    "• Peso en kilos, sin decimales",
-    "• Estatura en metros, con punto o coma",
-    "Ejemplo: 120 kg y 1.78 m"
-  ].join("\n");
+  return "Envíame tu peso y estatura. Ej: 88 kg y 1,69 m.";
 }
 
 function getMeasurementConfirmationMessage(weightKg, heightM) {
-  return [
-    "Quiero confirmar los datos antes de continuar:",
-    "",
-    `Tu peso es ${weightKg} kilos y tu estatura ${heightM} metros. ¿Está correcto?`,
-    "",
-    "Responde:",
-    "1 si",
-    "2 no"
-  ].join("\n");
+  return `Confirmo: ${weightKg} kg y ${heightM} m, ¿correcto?`;
 }
 
 function getCaseEMessage() {
@@ -5052,7 +5039,7 @@ const handleInboundWebhook = async (req, res) => {
         conversationId,
         messageId,
         userText,
-        reply: "Perfecto. ¿Me indicas tu tramo de Fonasa? Puede ser A, B, C o D.",
+        reply: "¿Qué tramo Fonasa tienes: A, B, C o D?",
         kind: "ask_fonasa_tramo",
         state,
         info,
@@ -5067,7 +5054,7 @@ const handleInboundWebhook = async (req, res) => {
         conversationId,
         messageId,
         userText,
-        reply: "Perfecto. ¿Qué aseguradora tienes? Por ejemplo Banmédica, Colmena, Consalud o Cruz Blanca.",
+        reply: "¿Cuál Isapre tienes?",
         kind: "ask_specific_aseguradora",
         state,
         info,
