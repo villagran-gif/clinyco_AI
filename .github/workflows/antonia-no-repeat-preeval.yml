@@ -18,6 +18,25 @@ jobs:
           node-version: '22'
       - run: sed -i 's/makeState(/state(/g' scripts/patch_no_repeat_preeval.py
       - run: python3 scripts/patch_no_repeat_preeval.py
+      - name: Fix test variable names
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('fonasapad-preevaluation.test.js')
+          s=p.read_text()
+          marker='test("rehidrata manga 2012 y motivo ya respondidos antes de un deploy"'
+          i=s.index(marker)
+          head=s[:i]
+          tail=s[i:]
+          tail=tail.replace('const state = state(', 'const s = state(')
+          tail=tail.replace('state.measurements', 's.measurements')
+          tail=tail.replace('state.contactDraft', 's.contactDraft')
+          tail=tail.replace('state.preevaluation', 's.preevaluation')
+          tail=tail.replace('hydrateFonasaPadPreevaluationFromHistory(state,', 'hydrateFonasaPadPreevaluationFromHistory(s,')
+          tail=tail.replace('nextFonasaPadPreevaluationStep(state,', 'nextFonasaPadPreevaluationStep(s,')
+          tail=tail.replace('applyFonasaPadPreevaluationAnswer(state,', 'applyFonasaPadPreevaluationAnswer(s,')
+          p.write_text(head+tail)
+          PY
       - run: |
           node --check server.js
           node --check fonasapad-preevaluation.js
