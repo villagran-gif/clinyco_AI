@@ -75,8 +75,17 @@ function parseYesNo(text) {
 
 function parsePriorSurgery(text) {
   const key = normalize(text);
-  if (/manga/.test(key)) return "manga";
-  if (/bypass/.test(key)) return "bypass";
+
+  // Una negación explícita del paciente siempre gana sobre inferencias previas
+  // hechas desde un anuncio o desde el procedimiento consultado.
+  if (/no tengo ninguna (operacion|cirugia)|no me he operado|nunca me he operado|sin cirugia bariatrica|ninguna cirugia bariatrica/.test(key)) return "ninguna";
+  if (/no tengo manga|no tengo una manga/.test(key) && !/(tengo|tuve|me hice|me ise|me opere).*bypass/.test(key)) return "ninguna";
+  if (/no tengo bypass/.test(key) && !/(tengo|tuve|me hice|me ise|me opere).*manga/.test(key)) return "ninguna";
+
+  if (/(ya tengo|tengo una|tuve una|me hice|me ise|me iz[eé]|me opere|me operaron|fui operad).*manga/.test(key)) return "manga";
+  if (/(ya tengo|tengo un|tuve un|me hice|me ise|me iz[eé]|me opere|me operaron|fui operad).*bypass/.test(key)) return "bypass";
+  if (/manga/.test(key) && !/^no\b/.test(key)) return "manga";
+  if (/bypass/.test(key) && !/^no\b/.test(key)) return "bypass";
   if (/otra|switch|sadi|banda/.test(key)) return "otra";
   const yn = parseYesNo(text);
   if (yn === false) return "ninguna";
@@ -85,9 +94,13 @@ function parsePriorSurgery(text) {
 
 function parseSmoking(text) {
   const key = normalize(text);
-  if (/no fumo|no fumador|nunca he fumado|nunca fumo/.test(key)) return "no_fuma";
+  if (/no fumo|no fumador|nunca he fumado|nunca fumo|para nada|nada de tabaco/.test(key)) return "no_fuma";
   if (/deje|dejé|ex fum|exfum/.test(key)) return `exfumador: ${String(text).trim()}`;
-  if (/fumo|fumador|cigarro|tabaco/.test(key)) return "fuma_actualmente";
+
+  // Modismos/fórmulas frecuentes en Chile para consumo ocasional.
+  if (/de vez en cuando|de repente|a veces|ocasional|socialmente|muy poco|cada cierto tiempo|solo.*(carrete|salgo|fiesta)|fin de semana/.test(key)) return "fuma_ocasional";
+
+  if (/fumo|fumador|cigarro|tabaco|pucho/.test(key)) return "fuma_actualmente";
   const yn = parseYesNo(text);
   if (yn === false) return "no_fuma";
   if (yn === true) return "fuma_actualmente";
@@ -105,7 +118,9 @@ function answerExpected(p, state, text) {
 
   if (key === "weight") {
     if (state?.measurements?.weightKg) return { matched: true, value: state.measurements.weightKg };
-    const m = String(text || "").trim().match(/^(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg|kilos?)?$/i);
+    const raw = String(text || "").trim();
+    const m = raw.match(/\b(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg|kilo|kilos)\b/i)
+      || raw.match(/^\s*(?:peso\s*)?(?:como\s+|aprox(?:imadamente)?\s+|unos?\s+)?(\d{2,3}(?:[.,]\d{1,2})?)\b/i);
     if (m) {
       const value = Number(m[1].replace(",", "."));
       if (value >= 30 && value <= 350) {
@@ -138,6 +153,14 @@ function answerExpected(p, state, text) {
   }
   if (key === "fonasa_tramo") {
     if (state?.contactDraft?.c_modalidad) return { matched: true, value: state.contactDraft.c_modalidad };
+    const normalized = normalize(text);
+    const m = normalized.match(/\b(?:tramo\s+)?([abcd])\b/);
+    if (m) {
+      const tramo = m[1].toUpperCase();
+      state.contactDraft.c_aseguradora = "FONASA";
+      state.contactDraft.c_modalidad = `Tramo ${tramo}`;
+      return { matched: true, value: `Tramo ${tramo}` };
+    }
     return { matched: false };
   }
 
@@ -204,21 +227,54 @@ function ingestExplicitFacts(state, p, text = "") {
   const key = normalize(raw);
   if (!key) return;
 
-  // Sólo tratamos como cirugía PREVIA frases que realmente expresan antecedente,
-  // no un simple interés comercial como "me interesa manga".
-  if (/(ya tengo|me hice|me opere|me operaron|fui operad|tengo una|tuve una|cirugia previa).*manga/.test(key) || /manga.*\b(19\d{2}|20\d{2})\b/.test(key)) {
-    p.answers.prior_surgery = "manga";
-  } else if (/(ya tengo|me hice|me opere|me operaron|fui operad|tengo un|tuve un|cirugia previa).*bypass/.test(key) || /bypass.*\b(19\d{2}|20\d{2})\b/.test(key)) {
-    p.answers.prior_surgery = "bypass";
+  // Correcciones explícitas: el dato dicho por el paciente manda sobre el anuncio.
+  const explicitlyNoPrior = /no tengo ninguna (operacion|cirugia)|no me he operado|nunca me he operado|sin cirugia bariatrica|ninguna cirugia bariatrica/.test(key)
+    || (/no tengo manga|no tengo una manga/.test(key) && !/(tengo|tuve|me hice|me ise|me opere).*bypass/.test(key));
+
+  if (explicitlyNoPrior) {
+    p.answers.prior_surgery = "ninguna";
+    delete p.answers.prior_year;
+    delete p.answers.revision_reason;
+    if (["prior_surgery", "prior_year", "revision_reason"].includes(p.awaiting)) p.awaiting = null;
+
+    const interest = normalize(state?.dealDraft?.dealInteres || "");
+    if (/balon|allurion|orbera|medsil/.test(interest)) p.track = "balloon";
+    else if (/abdominoplast|guatita delantal|abdomen/.test(interest)) p.track = "abdomen";
+    else p.track = "bariatric";
+  } else {
+    const prior = parsePriorSurgery(raw);
+    if (prior && prior !== "ninguna" && /ya tengo|tengo una|tengo un|tuve|me hice|me ise|me iz|me opere|me operaron|fui operad|hace|ase/.test(key)) {
+      p.answers.prior_surgery = prior;
+      p.track = "revisional";
+      p.completed = false;
+      if (p.awaiting === "prior_surgery") p.awaiting = null;
+    }
   }
 
   const year = parseYear(raw);
   if (year && (/(manga|bypass|cirugia|operad)/.test(key) || (p.track === "revisional" && /\b(fue|ano|en el)\b/.test(key)))) {
     p.answers.prior_year = year;
+  } else {
+    const relative = key.match(/\b(?:hace|ase)\s+(\d{1,2})\s+(mes|meses|ano|anos)\b/);
+    if (relative && p.answers.prior_surgery && p.answers.prior_surgery !== "ninguna") {
+      p.answers.prior_year = `hace ${relative[1]} ${relative[2]}`;
+    }
   }
 
-  if (/reflujo|reganancia|recupere.*peso|recuper.*peso|subi.*peso|aumente.*peso/.test(key)) {
+  if (/reflujo|reganancia|recupere.*peso|recuper.*peso|subi.*peso|aumente.*peso/.test(key) && p.answers.prior_surgery !== "ninguna") {
     p.answers.revision_reason = raw;
+  }
+
+  // Peso explícito puede venir junto con otros datos: "89 kilos pero me hice una manga".
+  const weight = raw.match(/\b(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:kg|kilo|kilos)\b/i);
+  if (weight) {
+    const value = Number(weight[1].replace(",", "."));
+    if (value >= 30 && value <= 350) {
+      state.measurements.weightKg = value;
+      state.dealDraft.dealPeso = String(value);
+      p.answers.weight = value;
+      if (p.awaiting === "weight") p.awaiting = null;
+    }
   }
 
   if (/tengo\s+\d{2}\s+anos|tengo\s+\d{2}\s+años|edad\s*[:=]?\s*\d{2}/i.test(raw)) {
@@ -226,9 +282,17 @@ function ingestExplicitFacts(state, p, text = "") {
     if (age) p.answers.age = age;
   }
 
-  if (/no fumo|fumo|fumador|tabaco|cigarro/.test(key)) {
-    const smoking = parseSmoking(raw);
-    if (smoking) p.answers.smoking = smoking;
+  const smoking = parseSmoking(raw);
+  if (smoking && /fumo|fumador|tabaco|cigarro|pucho|de vez en cuando|de repente|a veces|ocasional|socialmente|carrete/.test(key)) {
+    p.answers.smoking = smoking;
+  }
+
+  // Si el paciente agrega otro antecedente después de que AntonIA ya avanzó,
+  // lo anexamos en vez de perderlo.
+  if (/diabetes|prediabetes|pre diabetes|hipertension|presion alta|colesterol|apnea|tiroides|resistencia a la insulina/.test(key)) {
+    const previous = String(p.answers.comorbidities || "").trim();
+    if (!previous) p.answers.comorbidities = raw;
+    else if (!normalize(previous).includes(key)) p.answers.comorbidities = `${previous}; ${raw}`;
   }
 
   if (/endoscopia|phmetria|manometria|scanner|tac|estudio/.test(key) && /(tengo|no tengo|ninguno|ninguna|reciente|hecho|realizado)/.test(key)) {
@@ -283,7 +347,11 @@ export function hydrateFonasaPadPreevaluationFromHistory(state, history = []) {
 
 export function applyFonasaPadPreevaluationAnswer(state, text = "") {
   const p = ensureState(state);
+  const awaitedBefore = p.awaiting;
   ingestExplicitFacts(state, p, text);
+  if (awaitedBefore && !p.awaiting && hasAnswer(p, awaitedBefore)) {
+    return { matched: true, deferToAssistant: false, value: p.answers[awaitedBefore] };
+  }
   if (!p.active || p.completed || !p.awaiting) {
     return { matched: false, deferToAssistant: false };
   }
@@ -323,8 +391,8 @@ function maybeSeedFromKnownState(state, p) {
   if (state?.contactDraft?.c_modalidad) p.answers.fonasa_tramo = state.contactDraft.c_modalidad;
 
   const interest = normalize(state?.dealDraft?.dealInteres || "");
-  if (p.track === "revisional" && /conversion.*manga.*bypass|manga.*bypass/.test(interest)) {
-    p.answers.prior_surgery = p.answers.prior_surgery || "manga";
+  if (p.track === "revisional" && /conversion.*manga.*bypass|manga.*bypass/.test(interest) && !hasAnswer(p, "prior_surgery")) {
+    p.answers.prior_surgery = "manga";
   }
 }
 
@@ -424,6 +492,48 @@ export function buildFonasaPadPreevaluationSummary(state) {
   return rows.join(" | ");
 }
 
+
+function humanSmoking(value) {
+  if (value === "no_fuma") return "no";
+  if (value === "fuma_ocasional") return "ocasional";
+  if (value === "fuma_actualmente") return "sí";
+  return String(value || "");
+}
+
+function humanPrior(value) {
+  if (value === "ninguna") return "no";
+  return String(value || "");
+}
+
+export function buildFonasaPadPreevaluationPatientReply(state) {
+  const p = ensureState(state);
+  const a = p.answers || {};
+  const lines = ["tu preevaluación"];
+
+  if (state?.dealDraft?.dealInteres) lines.push(`procedimiento ${state.dealDraft.dealInteres}`);
+  if (a.weight) lines.push(`peso ${a.weight} kg`);
+  if (a.height) lines.push(`estatura ${Number(a.height).toFixed(2)} m`);
+  if (state?.measurements?.bmi) lines.push(`IMC ${state.measurements.bmi}`);
+  if (a.age) lines.push(`edad ${a.age}`);
+  if (a.prior_surgery) lines.push(`cirugía previa ${humanPrior(a.prior_surgery)}`);
+  if (a.prior_year) lines.push(typeof a.prior_year === "number" ? `cirugía ${a.prior_year}` : `cirugía ${a.prior_year}`);
+  if (a.revision_reason) lines.push(`motivo ${a.revision_reason}`);
+  if (a.studies) lines.push(`estudios ${a.studies}`);
+  if (a.comorbidities) lines.push(`antecedentes ${a.comorbidities}`);
+  if (a.smoking) lines.push(`tabaco ${humanSmoking(a.smoking)}`);
+  if (a.safety) lines.push(`seguridad ${a.safety}`);
+  if (a.insurance) lines.push(`previsión ${a.insurance}`);
+  if (a.fonasa_tramo) lines.push(`tramo ${String(a.fonasa_tramo).replace(/^Tramo\s+/i, "")}`);
+  if (a.city) lines.push(`ciudad ${a.city}`);
+  if (a.abdomen_fold) lines.push(`pliegue abdominal ${a.abdomen_fold}`);
+  if (a.postpartum) lines.push(`postparto ${a.postpartum}`);
+  if (a.breastfeeding) lines.push(`lactancia ${a.breastfeeding}`);
+  if (a.oncology) lines.push(`oncología ${a.oncology}`);
+  if (a.skin_disease) lines.push(`piel ${a.skin_disease}`);
+
+  return `listo[[MSG]]${lines.join("\n")}`;
+}
+
 export function nextFonasaPadPreevaluationStep(state, text = "") {
   const p = ensureState(state);
   if (p.completed) return null;
@@ -450,7 +560,7 @@ export function nextFonasaPadPreevaluationStep(state, text = "") {
     p.summary = buildFonasaPadPreevaluationSummary(state);
     return {
       completed: true,
-      reply: "listo[[MSG]]con esto ya tengo tu preevaluación",
+      reply: buildFonasaPadPreevaluationPatientReply(state),
       summary: p.summary,
     };
   }

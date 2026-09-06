@@ -2,6 +2,7 @@ import { extractEmail, extractPhone, extractRut, extractName, splitNames, detect
 import { parseAseguradora, parseFonasaTramo } from "./parseInsurance.js";
 import { detectProcedure } from "./detectProcedure.js";
 import { parseStructuredBlock } from "./parseStructuredBlock.js";
+import { calculateBMI, getBMICategory } from "./parseMeasurements.js";
 
 export function updateDraftsFromText(state, text, info = {}) {
   const cleanText = String(text || "");
@@ -37,8 +38,10 @@ export function updateDraftsFromText(state, text, info = {}) {
 
   const insuranceInfo = parseAseguradora(cleanText);
   if (insuranceInfo?.aseguradora) {
-    state.contactDraft.c_aseguradora = insuranceInfo.aseguradora;
-    if (insuranceInfo.aseguradora !== "FONASA" && insuranceInfo.modalidad) {
+    // PAD es una modalidad/prestación de Fonasa, no una aseguradora distinta.
+    const canonicalInsurance = insuranceInfo.aseguradora === "PAD Fonasa PAD" ? "FONASA" : insuranceInfo.aseguradora;
+    state.contactDraft.c_aseguradora = canonicalInsurance;
+    if (canonicalInsurance !== "FONASA" && insuranceInfo.modalidad) {
       state.contactDraft.c_modalidad = insuranceInfo.modalidad;
     }
   }
@@ -64,14 +67,20 @@ export function updateDraftsFromText(state, text, info = {}) {
     state.identity.saysExistingPatient = true;
   }
 
-  if (structured.weightKg) state.dealDraft.dealPeso = String(structured.weightKg);
-  if (structured.heightCm) state.dealDraft.dealEstatura = String(structured.heightCm);
-  if (structured.bmi) {
+  if (structured.weightKg) {
+    state.dealDraft.dealPeso = String(structured.weightKg);
     state.measurements.weightKg = structured.weightKg;
+  }
+  if (structured.heightM) {
     state.measurements.heightM = structured.heightM;
-    state.measurements.heightCm = structured.heightCm;
-    state.measurements.bmi = structured.bmi;
-    state.measurements.bmiCategory = structured.bmiCategory;
+    state.measurements.heightCm = structured.heightCm || Math.round(structured.heightM * 100);
+    state.dealDraft.dealEstatura = String(state.measurements.heightCm);
+  }
+
+  if (state.measurements.weightKg && state.measurements.heightM) {
+    const bmi = structured.bmi || calculateBMI(state.measurements.weightKg, state.measurements.heightM);
+    state.measurements.bmi = bmi;
+    state.measurements.bmiCategory = structured.bmiCategory || getBMICategory(bmi);
   }
 
   return state;
