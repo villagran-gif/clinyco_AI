@@ -1,5 +1,0 @@
-# Local env y output del backup — nunca commitear datos de Zendesk
-.env
-backup-output/
-*.log
-_state.json
