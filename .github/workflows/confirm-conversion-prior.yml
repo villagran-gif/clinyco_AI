@@ -1,0 +1,30 @@
+name: Confirm conversion prior surgery
+on:
+  push:
+    branches: [fix/antonia-natural-language-intake-v2]
+    paths:
+      - '.github/workflows/confirm-conversion-prior.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/antonia-natural-language-intake-v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/patch_conversion_confirmation.py
+      - run: |
+          node --check fonasapad-preevaluation.js
+          node --test fonasapad-preevaluation.test.js extraction/updateDraftsFromText.test.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fonasapad-preevaluation.js fonasapad-preevaluation.test.js
+          git commit -m "fix: confirmar manga antes de asumir conversión"
+          git rm -f .github/workflows/confirm-conversion-prior.yml scripts/patch_conversion_confirmation.py
+          git commit -m "chore: retirar parche temporal de conversión"
+          git push origin fix/antonia-natural-language-intake-v2
