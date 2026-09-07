@@ -1,0 +1,32 @@
+name: AntonIA clarify not repeat
+on:
+  push:
+    branches: [fix/antonia-clarify-not-repeat]
+    paths:
+      - '.github/workflows/antonia-clarify-not-repeat.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/antonia-clarify-not-repeat
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/patch_clarify_not_repeat.py
+      - run: |
+          node --check server.js
+          node --check fonasapad-preevaluation.js
+          node --check extraction/updateDraftsFromText.js
+          node --test fonasapad-preevaluation.test.js extraction/updateDraftsFromText.test.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js fonasapad-preevaluation.js fonasapad-preevaluation.test.js extraction/updateDraftsFromText.js extraction/updateDraftsFromText.test.js
+          git commit -m "fix: afinar comprensión y PAD revisional"
+          git rm -f .github/workflows/antonia-clarify-not-repeat.yml scripts/patch_clarify_not_repeat.py
+          git commit -m "chore: retirar parche temporal"
+          git push origin fix/antonia-clarify-not-repeat
