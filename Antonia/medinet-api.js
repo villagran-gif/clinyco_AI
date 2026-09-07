@@ -78,32 +78,46 @@ let _jwtExpiresAt = 0;
 
 /**
  * Authenticate via POST /token-login/ and cache the JWT.
- * Requires MEDINET_JWT_USERNAME and MEDINET_JWT_PASSWORD env vars.
+ * Tries MEDINET_USER first, then legacy JWT/email credential families.
  */
 async function loginJwt() {
-  const username = process.env.MEDINET_JWT_USERNAME;
-  const password = process.env.MEDINET_JWT_PASSWORD;
-  if (!username || !password) {
-    throw new Error("MEDINET_JWT_USERNAME and MEDINET_JWT_PASSWORD are required for JWT auth");
+  // The active Medinet account changed over time. Try the known credential
+  // families in priority order and keep the first one accepted by /token-login/.
+  const candidates = [
+    [process.env.MEDINET_USER, process.env.MEDINET_USER_KEY, "MEDINET_USER"],
+    [process.env.MEDINET_JWT_USERNAME, process.env.MEDINET_JWT_PASSWORD, "MEDINET_JWT"],
+    [process.env.MEDINET_EMAIL, process.env.MEDINET_EMAIL_KEY, "MEDINET_EMAIL"],
+  ];
+
+  let lastError = "no credentials configured";
+  for (const [username, password, label] of candidates) {
+    if (!username || !password) continue;
+    try {
+      const res = await fetch(`${BASE_URL}/token-login/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        lastError = `${label}: ${res.status} ${text.slice(0, 120)}`;
+        continue;
+      }
+      const data = await res.json();
+      if (!data?.token) {
+        lastError = `${label}: response did not include token`;
+        continue;
+      }
+      _jwtToken = data.token;
+      _jwtExpiresAt = Date.now() + 22 * 60 * 60 * 1000;
+      console.log(`[medinet-api] JWT login OK via ${label}`);
+      return _jwtToken;
+    } catch (error) {
+      lastError = `${label}: ${error.message}`;
+    }
   }
 
-  const res = await fetch(`${BASE_URL}/token-login/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Medinet JWT login failed: ${res.status} ${text.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  _jwtToken = data.token;
-  if (!_jwtToken) throw new Error("Medinet /token-login/ did not return a token");
-  // Cache for ~22h (conservative; actual expiry may differ)
-  _jwtExpiresAt = Date.now() + 22 * 60 * 60 * 1000;
-  return _jwtToken;
+  throw new Error(`Medinet JWT login failed: ${lastError}`);
 }
 
 async function getJwtToken() {
@@ -276,9 +290,17 @@ async function noAuthFetch(path, { method = "GET", headers = {}, body = null, ti
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
+    // These endpoints are used by agendaweb and now require the same
+    // browser/XHR context even when they do not require a user session.
     const options = {
       method,
-      headers,
+      headers: {
+        "Referer": `${BASE_URL}/agendaweb/planned/`,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        ...headers,
+      },
       signal: controller.signal,
     };
     if (body) options.body = body;
@@ -304,7 +326,7 @@ async function noAuthFetch(path, { method = "GET", headers = {}, body = null, ti
  * Response: [{ id, nombres, paterno, display }]   (83 items)
  */
 export async function fetchActiveProfessionals() {
-  return apiFetch("/api/profesional/activos-list/");
+  return noAuthFetch("/api/profesional/activos-list/");
 }
 
 /**
@@ -351,7 +373,7 @@ export async function fetchSpecialtiesByBranch(ubicacionId) {
 
 /** Get specialties for a professional at a branch */
 export async function fetchSpecialtiesForProfessional(ubicacionId, profesionalId) {
-  return apiFetch(`/api/especialidad/get_por_profesional/${ubicacionId}/${profesionalId}/`);
+  return noAuthFetch(`/api/especialidad/get_por_profesional/${ubicacionId}/${profesionalId}/`);
 }
 
 // ─── Appointment types ──────────────────────────────────────────
@@ -466,7 +488,7 @@ export async function fetchProfessionalResourceAvailable(ubicacionId, especialid
  * @returns {{ status: boolean, mensaje: string, paciente_existe: boolean, puede_agendar: boolean, maximo_cupos: number }}
  */
 export async function checkCupos(ubicacionId, identifier) {
-  return apiFetch(
+  return noAuthFetch(
     `/api/agenda/citas/get-check-cupos/${ubicacionId}/?identifier=${encodeURIComponent(identifier)}`
   );
 }

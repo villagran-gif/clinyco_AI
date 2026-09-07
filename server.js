@@ -485,6 +485,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
         query: slot.professional || slot.professionalId,
         slotIndex: 0,
         branchId: melaniaBranchId,
+        slot,
         patientData: {
           ...patientData,
           rut: patientData.rut || patientData.run || "",
@@ -501,8 +502,8 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       }
       if (melaniaResult) {
         console.log("[medinet-booking] path=melania | FAILED:", melaniaResult.message || melaniaResult.step);
-        // If MelanIA says cupos blocked, don't retry other methods
-        if (melaniaResult.step === "check_cupos") return melaniaResult;
+        // Do not retry a stale/non-existent slot through another booking path.
+        if (["check_cupos", "slot_revalidate", "search_slots"].includes(melaniaResult.step)) return melaniaResult;
       }
     } catch (melaniaError) {
       console.warn("[medinet-booking] path=melania ERROR, falling through:", melaniaError.message);
