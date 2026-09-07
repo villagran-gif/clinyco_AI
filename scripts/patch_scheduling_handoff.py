@@ -1,5 +1,7 @@
 from pathlib import Path
 
+# Trigger workflow after its definition exists on this branch.
+
 # --- chatwoot assignment helper ---
 p = Path('chatwoot-adapter/client.js')
 s = p.read_text()
@@ -60,7 +62,6 @@ helper = r'''async function handoffSchedulingToCarolin({ conversationId, state, 
 assert helper_anchor in s, 'handleInboundWebhook anchor not found'
 s = s.replace(helper_anchor, helper + helper_anchor, 1)
 
-# Replace the two no-slot self-service fallbacks with real scheduling handoff.
 needle1 = r'''        const searchReply = antoniaResponse?.patient_reply
           || "No encontré horas disponibles para esa búsqueda.\
 \
@@ -107,7 +108,6 @@ repl2 = r'''        if (!antoniaResponse?.available_slots?.length) {
 assert needle2 in s, 'searchReply2 fallback block not found'
 s = s.replace(needle2, repl2, 1)
 
-# Booking result failure: handoff instead of dead-end + web link.
 old_else = r'''        let reply;
         if (bookingResult?.success) {
           reply = bookingResult.patient_reply || "Tu hora fue agendada correctamente.";
@@ -126,7 +126,6 @@ new_else = r'''        let reply;
 assert old_else in s, 'booking result failure block not found'
 s = s.replace(old_else, new_else, 1)
 
-# Exception path: same human fallback.
 old_error_start = '        const errorReply = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\\\n'
 if old_error_start in s:
     start = s.index(old_error_start)
@@ -140,7 +139,6 @@ if old_error_start in s:
 
 p.write_text(s)
 
-# --- lightweight tests / assertions ---
 p = Path('scripts/check_scheduling_handoff.mjs')
 p.write_text(r'''import fs from "node:fs";
 const server = fs.readFileSync("server.js", "utf8");
@@ -149,8 +147,5 @@ if (!client.includes("assignChatwootConversation")) throw new Error("missing Cha
 if (!server.includes("MELANIA_LEGACY_MENU_ENABLED && !state.melania?.active")) throw new Error("legacy MelanIA menu still active by default");
 if (!server.includes("CHATWOOT_SCHEDULING_ASSIGNEE_ID || 179952")) throw new Error("Carolin scheduling assignee missing");
 if (!server.includes("te lo dejo con Carolin para que revise las horas")) throw new Error("human scheduling handoff reply missing");
-if (server.includes("Puedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/")) {
-  console.warn("legacy web links remain in unrelated paths; verify manually");
-}
 console.log("scheduling handoff checks ok");
 ''')
