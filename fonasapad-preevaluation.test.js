@@ -218,3 +218,17 @@ test("año respondido a tu manga rehidrata también antecedente manga", () => {
   assert.notEqual(next?.key, "prior_surgery");
   assert.notEqual(next?.key, "prior_year");
 });
+
+
+test("pregunta ciudad usa vive y explica sedes", () => {
+  const s = state("Manga gástrica");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "bariatric";
+  s.preevaluation.answers = { weight: 90, height: 1.7, age: 40, prior_surgery: "ninguna", comorbidities: "no", smoking: "no_fuma", safety: "no", insurance: "FONASA", fonasa_tramo: "Tramo C" };
+  s.measurements.weightKg = 90;
+  s.measurements.heightM = 1.7;
+  const step = nextFonasaPadPreevaluationStep(s, "");
+  assert.equal(step.key, "city");
+  assert.match(step.reply, /en que ciudad vives/i);
+  assert.match(step.reply, /Santiago y Antofagasta/i);
+});

@@ -434,7 +434,7 @@ function nextRevisional(state, p) {
   if (!hasAnswer(p, "smoking")) return prompt("smoking", "fumas actualmente?");
   if (!hasAnswer(p, "safety")) return prompt("safety", "hay embarazo actual o alguna enfermedad importante descompensada?");
   if (!hasAnswer(p, "insurance")) return prompt("insurance", "tienes fonasa isapre o particular?");
-  if (!hasAnswer(p, "city")) return prompt("city", "en qué ciudad estás?");
+  if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");
   return null;
 }
 
@@ -454,7 +454,7 @@ function nextBariatric(state, p) {
   if (String(p.answers.insurance || "").toUpperCase().includes("FONASA") && !state?.system?.padNonEligibilityLead && !hasAnswer(p, "fonasa_tramo")) {
     return prompt("fonasa_tramo", "qué tramo Fonasa tienes A B C o D?");
   }
-  if (!hasAnswer(p, "city")) return prompt("city", "en qué ciudad estás?");
+  if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");
   return null;
 }
 
@@ -466,7 +466,7 @@ function nextBalloon(state, p) {
   if (!hasAnswer(p, "comorbidities")) return prompt("comorbidities", "tienes alguna enfermedad importante diagnosticada?");
   if (!hasAnswer(p, "smoking")) return prompt("smoking", "fumas actualmente?");
   if (!hasAnswer(p, "insurance")) return prompt("insurance", "tienes fonasa isapre o particular?");
-  if (!hasAnswer(p, "city")) return prompt("city", "en qué ciudad estás?");
+  if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");
   return null;
 }
 
@@ -484,7 +484,7 @@ function nextAbdomen(state, p) {
   if (String(p.answers.insurance || "").toUpperCase().includes("FONASA") && !state?.system?.padNonEligibilityLead && !hasAnswer(p, "fonasa_tramo")) {
     return prompt("fonasa_tramo", "qué tramo Fonasa tienes A B C o D?");
   }
-  if (!hasAnswer(p, "city")) return prompt("city", "en qué ciudad estás?");
+  if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");
   return null;
 }
 

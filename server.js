@@ -3645,11 +3645,12 @@ function splitAntoniaReplyBubbles(text) {
     }
   }
 
-  if (parts.length > 2) {
+  const isAfterHoursSequence = /Carolin/i.test(clean) && /\+56973763009/.test(clean);
+  if (parts.length > 2 && !isAfterHoursSequence) {
     parts = [parts[0], cleanHumanBubble(parts.slice(1).join("\n"))];
   }
 
-  return parts.slice(0, 2);
+  return parts.slice(0, isAfterHoursSequence ? 4 : 2);
 }
 
 function buildReferralPromptContext(referralContext) {
