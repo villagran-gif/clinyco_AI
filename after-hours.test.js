@@ -69,6 +69,18 @@ test("guarda preferencia después del cierre", () => {
 
 test("cierre nocturno mantiene typo humano y contacto separado", () => {
   const reply = buildAfterHoursClosureReply();
-  assert.match(reply, /escribem am o pm/);
-  assert.match(reply, /Carolin\n\+56973763009\nsaludos/);
+  assert.match(reply, /Me queda bastanta claro/);
+  assert.match(reply, /Carolin\[\[MSG\]\]\+56973763009/);
+});
+
+
+test("cierre nocturno son cinco burbujas humanas", () => {
+  const reply = buildAfterHoursClosureReply("Lorena Patricia");
+  const parts = reply.split("[[MSG]]");
+  assert.equal(parts.length, 5);
+  assert.equal(parts[0], "Me queda bastanta claro Lorena");
+  assert.equal(parts[1], "por la hora");
+  assert.equal(parts[2], "mañana escribeme am o pm");
+  assert.equal(parts[3], "Carolin");
+  assert.equal(parts[4], "+56973763009");
 });

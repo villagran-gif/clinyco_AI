@@ -130,10 +130,14 @@ export function setCallbackPreference(state, preference) {
   state.system.afterHours.callbackPreference = preference;
 }
 
-export function buildAfterHoursClosureReply() {
+export function buildAfterHoursClosureReply(patientName = "") {
+  const safeName = String(patientName || "").trim().split(/\s+/)[0] || "";
   return [
-    "por la hora\nmañana continuamos\nescribem am o pm",
-    `${CONTACT_NAME}\n${CONTACT_PHONE}\nsaludos`,
+    `Me queda bastanta claro${safeName ? ` ${safeName}` : ""}`,
+    "por la hora",
+    "mañana escribeme am o pm",
+    CONTACT_NAME,
+    CONTACT_PHONE,
   ].join("[[MSG]]");
 }
 

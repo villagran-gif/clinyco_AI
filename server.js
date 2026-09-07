@@ -3650,7 +3650,7 @@ function splitAntoniaReplyBubbles(text) {
     parts = [parts[0], cleanHumanBubble(parts.slice(1).join("\n"))];
   }
 
-  return parts.slice(0, isAfterHoursSequence ? 4 : 2);
+  return parts.slice(0, isAfterHoursSequence ? 5 : 2);
 }
 
 function buildReferralPromptContext(referralContext) {
@@ -4128,7 +4128,7 @@ const handleInboundWebhook = async (req, res) => {
 
       return res.json(await sendManagedReply({
         appId, conversationId, messageId, userText,
-        reply: buildAfterHoursClosureReply(),
+        reply: buildAfterHoursClosureReply(state?.contactDraft?.c_nombres || ""),
         kind: "after_hours_closed_reminder",
         state, info, channelLabel,
         resolverDecision: { stage: "after_hours", nextAction: "wait_until_tomorrow", reason: "Night conversation already closed" }
@@ -4857,7 +4857,7 @@ const handleInboundWebhook = async (req, res) => {
       await persistConversationSnapshot(conversationId, state, channelLabel);
       return res.json(await sendManagedReply({
         appId, conversationId, messageId, userText,
-        reply: buildAfterHoursClosureReply(),
+        reply: buildAfterHoursClosureReply(state?.contactDraft?.c_nombres || ""),
         kind: "after_hours_schedule_close",
         state, info, channelLabel,
         resolverDecision: { stage: "after_hours", nextAction: "callback_tomorrow", reason: "Schedule request received after 21:00 Chile" }
@@ -4921,7 +4921,7 @@ const handleInboundWebhook = async (req, res) => {
           if (preevalStep.completed && preevalStep.summary) state.dealDraft.dealValidacionPad = `Preevaluación FONASAPAD completa | ${preevalStep.summary}`;
           if (preevalStep.completed && afterHoursContext.active) {
             markAfterHoursClosed(state);
-            preevalStep.reply = `${preevalStep.reply}[[MSG]]${buildAfterHoursClosureReply()}`;
+            preevalStep.reply = `${preevalStep.reply}[[MSG]]${buildAfterHoursClosureReply(state?.contactDraft?.c_nombres || "")}`;
           }
           await persistConversationSnapshot(conversationId, state, channelLabel);
           return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: preevalStep.reply, kind: preevalStep.completed ? "fonasapad_preevaluation_complete" : "fonasapad_preevaluation_question", state, info, channelLabel, resolverDecision: { stage: "fonasapad_preevaluation", nextAction: preevalStep.completed ? "complete" : preevalStep.key, reason: "Conversational FONASAPAD preevaluation" } }));
@@ -4935,7 +4935,7 @@ const handleInboundWebhook = async (req, res) => {
       await persistConversationSnapshot(conversationId, state, channelLabel);
       return res.json(await sendManagedReply({
         appId, conversationId, messageId, userText,
-        reply: buildAfterHoursClosureReply(),
+        reply: buildAfterHoursClosureReply(state?.contactDraft?.c_nombres || ""),
         kind: "after_hours_general_close",
         state, info, channelLabel,
         resolverDecision: { stage: "after_hours", nextAction: "callback_tomorrow", reason: "Night conversation reached useful-turn threshold" }
