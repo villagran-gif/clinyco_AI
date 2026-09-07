@@ -4904,7 +4904,6 @@ const handleInboundWebhook = async (req, res) => {
           return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]Santiago o Antofagasta?", kind: "schedule_choose_city", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_city") }));
         }
         state.booking.awaitingScheduleQuery = true;
-        state.booking.awaitingScheduleQuery = true;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));
       }
@@ -4913,7 +4912,6 @@ const handleInboundWebhook = async (req, res) => {
         if (!city) return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "Santiago o Antofagasta?", kind: "schedule_choose_city", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_city") }));
         state.booking.preferredCity = city;
         state.booking.awaitingCityChoice = false;
-        state.booking.awaitingScheduleQuery = true;
         state.booking.awaitingScheduleQuery = true;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));
