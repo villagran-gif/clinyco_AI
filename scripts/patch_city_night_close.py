@@ -8,7 +8,7 @@ s = p.read_text()
 old = '  if (!hasAnswer(p, "city")) return prompt("city", "en qué ciudad estás?");'
 new = '  if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");'
 assert old in s, 'city prompt not found'
-s = s.replace(old, new, 1)
+s = s.replace(old, new)
 p.write_text(s)
 
 # 2) Night closure tone + one intentional typo only in the non-clinical close
