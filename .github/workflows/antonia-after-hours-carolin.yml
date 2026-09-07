@@ -1,0 +1,31 @@
+name: AntonIA after hours Carolin
+on:
+  push:
+    branches: [feat/antonia-after-hours-carolin]
+    paths:
+      - '.github/workflows/antonia-after-hours-carolin.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/antonia-after-hours-carolin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 scripts/patch_after_hours_carolin.py
+      - run: |
+          node --check server.js
+          node --check after-hours.js
+          node --test after-hours.test.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js after-hours.js after-hours.test.js
+          git commit -m "feat: cerrar conversaciones nocturnas con Carolin"
+          git rm -f .github/workflows/antonia-after-hours-carolin.yml scripts/patch_after_hours_carolin.py
+          git commit -m "chore: retirar parche temporal horario nocturno"
+          git push origin feat/antonia-after-hours-carolin
