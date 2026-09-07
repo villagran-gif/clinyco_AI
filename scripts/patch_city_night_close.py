@@ -1,5 +1,7 @@
 from pathlib import Path
 
+# Trigger workflow after its definition exists on this branch.
+
 # 1) FONASAPAD city wording
 p = Path('fonasapad-preevaluation.js')
 s = p.read_text()
