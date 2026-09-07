@@ -118,3 +118,26 @@ export async function sendChatwootAttachment({
   }
   return { messageId: json?.id ?? null };
 }
+
+
+export async function assignChatwootConversation({ conversationId, assigneeId = null, teamId = null }) {
+  const realId = stripConversationNamespace(conversationId);
+  if (!realId) throw new Error("assignChatwootConversation: conversationId requerido");
+  if (!assigneeId && !teamId) throw new Error("assignChatwootConversation: assigneeId o teamId requerido");
+  if (isDryRun()) {
+    console.log("[chatwoot-adapter/dry-run] assignChatwootConversation", { conversationId: realId, assigneeId, teamId });
+    return { assigned: true, dryRun: true };
+  }
+  const body = {};
+  if (assigneeId) body.assignee_id = Number(assigneeId);
+  if (teamId) body.team_id = Number(teamId);
+  const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/assignments`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", api_access_token: token() },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Chatwoot assignment failed ${res.status}: ${text.slice(0, 300)}`);
+  return { assigned: true };
+}
