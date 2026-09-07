@@ -1,9 +1,9 @@
 from pathlib import Path
 
+# Trigger one-shot workflow after its definition exists.
 p = Path('server.js')
 s = p.read_text()
 
-# Cuando AntonIA pide profesional/especialidad, la respuesta siguiente es una consulta de agenda.
 old = '''        await persistConversationSnapshot(conversationId, state, channelLabel);
         return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));'''
 new = '''        state.booking.awaitingScheduleQuery = true;
@@ -29,8 +29,6 @@ interceptor = r'''      if (state.booking?.awaitingScheduleQuery) {
         state.booking.pendingProfessional = scheduleQuery;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
-        // El worker de Medinet actualmente tiene Antofagasta (39) y telemedicina (2/3).
-        // No inventamos una sucursal Santiago: esa agenda presencial pasa a Carolin.
         if (state.booking.preferredMode === "presencial" && state.booking.preferredCity === "Santiago") {
           const schedulingHandoff = await handoffSchedulingToCarolin({
             conversationId, state, channelLabel, reason: "santiago_medinet_branch_not_configured"
