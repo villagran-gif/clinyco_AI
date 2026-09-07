@@ -1,0 +1,29 @@
+name: Final scheduling check
+on:
+  push:
+    branches: [feat/scheduling-handoff-carolin-v6]
+    paths: [scripts/trigger_final_scheduling.txt]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/scheduling-handoff-carolin-v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python3 scripts/fix_scheduling_handoff_order.py
+      - run: |
+          node --check server.js
+          node --check chatwoot-adapter/client.js
+          node scripts/check_scheduling_final.mjs
+          node --test after-hours.test.js fonasapad-preevaluation.test.js tests/chatwoot-adapter.test.js tests/identity-normalizers.test.js extraction/updateDraftsFromText.test.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js scripts/check_scheduling_final.mjs
+          git commit -m "fix: conservar sucursal y enviar handoff antes de pausar"
+          git push origin HEAD:feat/scheduling-handoff-carolin-v6
