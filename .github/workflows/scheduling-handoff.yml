@@ -19,7 +19,7 @@ jobs:
           node --check server.js
           node --check chatwoot-adapter/client.js
           node scripts/check_scheduling_handoff.mjs
-          npm test
+          node --test after-hours.test.js fonasapad-preevaluation.test.js tests/chatwoot-adapter.test.js tests/identity-normalizers.test.js extraction/updateDraftsFromText.test.js
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
