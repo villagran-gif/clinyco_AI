@@ -38,6 +38,9 @@ p.write_text(s)
 # tests
 p = Path('after-hours.test.js')
 s = p.read_text()
+# Actualiza el test heredado del cierre anterior. El typo humano ahora es "bastanta".
+s = s.replace('assert.match(reply, /escribem am o pm/);', 'assert.match(reply, /Me queda bastanta claro/);')
+s = s.replace('assert.match(reply, /Carolin\\n\\+56973763009\\nsaludos/);', 'assert.match(reply, /Carolin\\[\\[MSG\\]\\]\\+56973763009/);')
 if 'cierre nocturno son cinco burbujas humanas' not in s:
     s += '''\n\ntest("cierre nocturno son cinco burbujas humanas", () => {\n  const reply = buildAfterHoursClosureReply("Lorena Patricia");\n  const parts = reply.split("[[MSG]]");\n  assert.equal(parts.length, 5);\n  assert.equal(parts[0], "Me queda bastanta claro Lorena");\n  assert.equal(parts[1], "por la hora");\n  assert.equal(parts[2], "mañana escribeme am o pm");\n  assert.equal(parts[3], "Carolin");\n  assert.equal(parts[4], "+56973763009");\n});\n'''
 p.write_text(s)
