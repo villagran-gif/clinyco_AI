@@ -563,7 +563,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
     const result = await callMedinetWorkerApiBook({
       slot,
       patientData,
-      branchId: DEFAULT_BRANCH_ID
+      branchId: slot.branchId || DEFAULT_BRANCH_ID
     }, timeoutMs);
 
     if (result !== null) {
@@ -2585,7 +2585,8 @@ async function sendManagedReply({
   await sleep(delayMs);
 
   const latestState = getConversationState(conversationId);
-  if (!latestState.system.aiEnabled) {
+  const isSchedulingHandoffReply = Boolean(latestState.booking?.handoffToScheduling);
+  if (!latestState.system.aiEnabled && !isSchedulingHandoffReply) {
     return resJsonSkip("ai_disabled_after_delay");
   }
 
