@@ -446,6 +446,50 @@ export async function getConversationRecord(conversationId) {
   );
 }
 
+
+function normalizeChatwootConversationId(conversationId) {
+  return String(conversationId || "").replace(/^cw:/i, "").trim();
+}
+
+export async function getRecentCompleteConversationHistory(conversationId, limit = 60) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 60, 200));
+  const chatwootConversationId = normalizeChatwootConversationId(conversationId);
+
+  if (dbEnabled() && chatwootConversationId) {
+    try {
+      const { rows } = await getPool().query(
+        `
+        select
+          case
+            when payload->>'message_type' = 'incoming' then 'user'
+            else 'assistant'
+          end as role,
+          nullif(trim(payload->>'content'), '') as content,
+          received_at as created_at,
+          payload->>'id' as message_id,
+          payload->'sender'->>'name' as author_display_name,
+          payload->'sender'->>'type' as author_type
+        from chatwoot.raw_events
+        where event_type = 'message_created'
+          and payload->>'event' = 'message_created'
+          and payload->'conversation'->>'id' = $1
+          and payload->>'message_type' in ('incoming', 'outgoing')
+          and nullif(trim(coalesce(payload->>'content', '')), '') is not null
+        order by received_at desc
+        limit $2
+        `,
+        [chatwootConversationId, safeLimit]
+      );
+
+      if (rows.length > 0) return rows.reverse();
+    } catch (error) {
+      console.warn(`[history] chatwoot.raw_events unavailable for ${conversationId}; fallback conversation_messages:`, error.message);
+    }
+  }
+
+  return getRecentConversationMessages(conversationId, safeLimit);
+}
+
 export async function getRecentConversationMessages(conversationId, limit = 14) {
   const { rows } = await getPool().query(
     `

@@ -12,6 +12,7 @@ import {
   initDb,
   getConversationRecord,
   getRecentConversationMessages,
+  getRecentCompleteConversationHistory,
   upsertConversationState,
   insertConversationMessage,
   upsertStructuredLead,
@@ -2099,7 +2100,7 @@ async function hydrateConversationCache(conversationId) {
       conversationStates.set(conversationId, mergeConversationState(baseState, record.state_json));
     }
 
-    const recentMessages = await getRecentConversationMessages(conversationId, MAX_HISTORY_MESSAGES);
+    const recentMessages = await getRecentCompleteConversationHistory(conversationId, MAX_HISTORY_MESSAGES);
     if (recentMessages.length > 0) {
       conversationHistory.set(
         conversationId,
@@ -3932,6 +3933,26 @@ const handleInboundWebhook = async (req, res) => {
     updateIdentityChannelContext(state, info, channelLabel);
 
     if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
+      const humanBusinessText = String(info?.businessText || "").trim();
+      if (humanBusinessText) {
+        addToHistory(conversationId, "assistant", humanBusinessText);
+        if (dbEnabled()) {
+          try {
+            await insertConversationMessage({
+              conversationId,
+              role: "assistant",
+              messageId: messageId || null,
+              channel: info.sourceType || info.entryPoint || null,
+              sourceType: info.sourceType || null,
+              content: humanBusinessText,
+              rawJson: { transport: "chatwoot", senderType: info.senderType || "user", humanAgent: true },
+              authorDisplayName: null,
+            });
+          } catch (humanHistoryError) {
+            console.warn(`[history] no se pudo normalizar mensaje humano ${conversationId}:`, humanHistoryError.message);
+          }
+        }
+      }
       state.system.aiEnabled = false;
       state.system.humanTakenOver = true;
       state.system.humanPauseUntil = new Date(Date.now() + HUMAN_HANDOFF_PAUSE_MS).toISOString();
@@ -4901,14 +4922,14 @@ const handleInboundWebhook = async (req, res) => {
       // Un deploy/restart no puede hacer que AntonIA olvide hechos ya dichos.
       // Rehidratamos una vez por versión desde mensajes persistidos, sin mandar
       // todo ese historial al modelo ni aumentar el costo de OpenAI.
-      if (Number(state.preevaluation?.historyHydratedVersion || 0) < 2) {
+      if (dbEnabled() || Number(state.preevaluation?.historyHydratedVersion || 0) < 3) {
         try {
           const preevalHistory = dbEnabled()
-            ? await getRecentConversationMessages(conversationId, 60)
+            ? await getRecentCompleteConversationHistory(conversationId, 80)
             : getHistory(conversationId);
           hydrateFonasaPadPreevaluationFromHistory(state, preevalHistory);
           await persistConversationSnapshot(conversationId, state, channelLabel);
-          console.log(`[fonasapad] history hydrated conversation=${conversationId} messages=${preevalHistory.length}`);
+          console.log(`[fonasapad] history hydrated conversation=${conversationId} messages=${preevalHistory.length} source=complete-db`);
         } catch (historyErr) {
           console.warn(`[fonasapad] history hydration failed conversation=${conversationId}:`, historyErr.message);
           hydrateFonasaPadPreevaluationFromHistory(state, getHistory(conversationId));

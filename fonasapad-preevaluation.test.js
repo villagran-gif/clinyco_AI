@@ -232,3 +232,30 @@ test("pregunta ciudad usa vive y explica sedes", () => {
   assert.match(step.reply, /en que ciudad vives/i);
   assert.match(step.reply, /Santiago y Antofagasta/i);
 });
+
+
+test("absorbe peso y talla entregados durante atencion humana", () => {
+  const s = state("Abdominoplastia");
+  hydrateFonasaPadPreevaluationFromHistory(s, [
+    { role: "assistant", content: "comentame tu peso y estatura", created_at: "2026-09-07T13:30:00Z" },
+    { role: "user", content: "Hola buenos dias modo un metro 65 y peso 88 kilos", created_at: "2026-09-07T13:31:00Z" },
+  ]);
+  assert.equal(s.measurements.weightKg, 88);
+  assert.equal(s.measurements.heightM, 1.65);
+  assert.equal(s.preevaluation.answers.weight, 88);
+  assert.equal(s.preevaluation.answers.height, 1.65);
+  assert.equal(s.preevaluation.historyHydratedVersion, 3);
+});
+
+test("acepta mido 1.65 como respuesta de talla", () => {
+  const s = state("Manga gástrica");
+  s.preevaluation.active = true;
+  s.preevaluation.track = "bariatric";
+  s.preevaluation.awaiting = "height";
+  s.preevaluation.answers.weight = 88;
+  s.measurements.weightKg = 88;
+  const result = applyFonasaPadPreevaluationAnswer(s, "Mido 1.65");
+  assert.equal(result.matched, true);
+  assert.equal(s.measurements.heightM, 1.65);
+  assert.equal(s.preevaluation.answers.height, 1.65);
+});

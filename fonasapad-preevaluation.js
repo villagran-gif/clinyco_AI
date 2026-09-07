@@ -112,6 +112,29 @@ function meaningful(text) {
   return value.length >= 2 ? value : null;
 }
 
+
+function parseHeightValue(text) {
+  const raw = String(text || "").trim();
+  const key = normalize(raw);
+  if (!raw) return null;
+
+  const words = key.match(/\b(?:mido|modo|soy|estatura(?: es)?|altura(?: es)?)\s+(?:un|1)\s+metro(?:s)?\s+(\d{1,2})\b/);
+  if (words) {
+    const cm = Number(words[1]);
+    if (cm >= 20 && cm <= 99) return Math.round((1 + cm / 100) * 100) / 100;
+  }
+
+  const direct = raw.match(/^\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:cm|m|mt|mts|metros?)?\s*$/i);
+  const prefixed = raw.match(/\b(?:mido|modo|soy|estatura(?:\s+es)?|altura(?:\s+es)?)\s*[:=]?\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:cm|m|mt|mts|metros?)?\b/i);
+  const m = direct || prefixed;
+  if (!m) return null;
+
+  let value = Number(m[1].replace(",", "."));
+  if (value >= 100 && value <= 220) value = value / 100;
+  if (value >= 1.2 && value <= 2.2) return Math.round(value * 100) / 100;
+  return null;
+}
+
 function answerExpected(p, state, text) {
   const key = p.awaiting;
   if (!key) return { matched: false };
@@ -133,17 +156,13 @@ function answerExpected(p, state, text) {
   }
   if (key === "height") {
     if (state?.measurements?.heightM) return { matched: true, value: state.measurements.heightM };
-    const m = String(text || "").trim().match(/^(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:cm|m|mt|mts|metros?)?$/i);
-    if (m) {
-      let value = Number(m[1].replace(",", "."));
-      if (value >= 100 && value <= 220) value = value / 100;
-      if (value >= 1.2 && value <= 2.2) {
-        state.measurements.heightM = value;
-        state.measurements.heightCm = Math.round(value * 100);
-        state.dealDraft.dealEstatura = String(state.measurements.heightCm);
-        if (state.measurements.weightKg) state.measurements.bmi = Math.round((state.measurements.weightKg / (value * value)) * 10) / 10;
-        return { matched: true, value };
-      }
+    const value = parseHeightValue(text);
+    if (value) {
+      state.measurements.heightM = value;
+      state.measurements.heightCm = Math.round(value * 100);
+      state.dealDraft.dealEstatura = String(state.measurements.heightCm);
+      if (state.measurements.weightKg) state.measurements.bmi = Math.round((state.measurements.weightKg / (value * value)) * 10) / 10;
+      return { matched: true, value };
     }
     return { matched: false };
   }
@@ -285,6 +304,16 @@ function ingestExplicitFacts(state, p, text = "") {
     }
   }
 
+  const explicitHeight = parseHeightValue(raw);
+  if (explicitHeight && /mido|modo|estatura|altura|metro|metros|\bcm\b/.test(key)) {
+    state.measurements.heightM = explicitHeight;
+    state.measurements.heightCm = Math.round(explicitHeight * 100);
+    state.dealDraft.dealEstatura = String(state.measurements.heightCm);
+    p.answers.height = explicitHeight;
+    if (state.measurements.weightKg) state.measurements.bmi = Math.round((state.measurements.weightKg / (explicitHeight * explicitHeight)) * 10) / 10;
+    if (p.awaiting === "height") p.awaiting = null;
+  }
+
   if (/tengo\s+\d{2}\s+anos|tengo\s+\d{2}\s+años|edad\s*[:=]?\s*\d{2}/i.test(raw)) {
     const age = parseAge(raw);
     if (age) p.answers.age = age;
@@ -364,7 +393,7 @@ export function hydrateFonasaPadPreevaluationFromHistory(state, history = []) {
   // Si el dato que estábamos esperando ya apareció antes, no lo volvemos a preguntar.
   if (p.awaiting && hasAnswer(p, p.awaiting)) p.awaiting = null;
 
-  p.historyHydratedVersion = 2;
+  p.historyHydratedVersion = 3;
   p.historyHydratedAt = new Date().toISOString();
   return { ...p.answers };
 }
