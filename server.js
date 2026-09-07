@@ -50,6 +50,15 @@ import {
   isFonasaPadPreevaluationRelevant,
   nextFonasaPadPreevaluationStep,
 } from "./fonasapad-preevaluation.js";
+import {
+  registerAfterHoursInbound,
+  parseCallbackPreference,
+  shouldCloseAfterHours,
+  markAfterHoursClosed,
+  setCallbackPreference,
+  buildAfterHoursClosureReply,
+  buildAfterHoursPreferenceReply,
+} from "./after-hours.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
@@ -4089,6 +4098,42 @@ const handleInboundWebhook = async (req, res) => {
     state.system.lastQuestionKey = null;
 
     updateDraftsFromText(state, userText, info);
+
+    const afterHoursContext = registerAfterHoursInbound(state);
+    if (afterHoursContext.active && afterHoursContext.state.closed) {
+      const callbackPreference = parseCallbackPreference(userText);
+      if (callbackPreference) {
+        setCallbackPreference(state, callbackPreference);
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: buildAfterHoursPreferenceReply(callbackPreference),
+          kind: "after_hours_callback_preference",
+          state, info, channelLabel,
+          resolverDecision: { stage: "after_hours", nextAction: "callback_preference_saved", reason: "Night callback preference saved" }
+        }));
+      }
+
+      const simpleCloseAck = /^(gracias|ok|okay|perfecto|dale|ya|bueno|chao|chau|buenas noches)$/i.test(String(userText || "").trim());
+      if (simpleCloseAck) {
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: "perfecto[[MSG]]buenas noches",
+          kind: "after_hours_closed_ack",
+          state, info, channelLabel,
+          resolverDecision: { stage: "after_hours", nextAction: "closed_ack", reason: "Night conversation already closed" }
+        }));
+      }
+
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText,
+        reply: buildAfterHoursClosureReply(),
+        kind: "after_hours_closed_reminder",
+        state, info, channelLabel,
+        resolverDecision: { stage: "after_hours", nextAction: "wait_until_tomorrow", reason: "Night conversation already closed" }
+      }));
+    }
+
     state.leadScore = calculateLeadScore(state);
     try {
       await ensureCustomerContext({
@@ -4804,6 +4849,20 @@ const handleInboundWebhook = async (req, res) => {
       }
     }
 
+    // --- Night scheduling: after 21:00 Chile, AntonIA gathers what it can but
+    // does not force a live booking. Carolin continues the next day. ---
+    if (afterHoursContext.active && (hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText))) {
+      markAfterHoursClosed(state);
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText,
+        reply: buildAfterHoursClosureReply(),
+        kind: "after_hours_schedule_close",
+        state, info, channelLabel,
+        resolverDecision: { stage: "after_hours", nextAction: "callback_tomorrow", reason: "Schedule request received after 21:00 Chile" }
+      }));
+    }
+
     // --- Simple booking conversation: AntonIA stays in control ---
     if (!state.melania?.active && !state.booking?.awaitingSlotChoice && !state.booking?.chosenSlot) {
       if (state.booking?.awaitingCareMode) {
@@ -4859,12 +4918,28 @@ const handleInboundWebhook = async (req, res) => {
         const preevalStep = nextFonasaPadPreevaluationStep(state, userText);
         if (preevalStep) {
           if (preevalStep.completed && preevalStep.summary) state.dealDraft.dealValidacionPad = `Preevaluación FONASAPAD completa | ${preevalStep.summary}`;
+          if (preevalStep.completed && afterHoursContext.active) {
+            markAfterHoursClosed(state);
+            preevalStep.reply = `${preevalStep.reply}[[MSG]]${buildAfterHoursClosureReply()}`;
+          }
           await persistConversationSnapshot(conversationId, state, channelLabel);
           return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: preevalStep.reply, kind: preevalStep.completed ? "fonasapad_preevaluation_complete" : "fonasapad_preevaluation_question", state, info, channelLabel, resolverDecision: { stage: "fonasapad_preevaluation", nextAction: preevalStep.completed ? "complete" : preevalStep.key, reason: "Conversational FONASAPAD preevaluation" } }));
         }
       }
     }
     // --- End FONASAPAD preevaluation ---
+
+    if (afterHoursContext.active && !state.preevaluation?.active && shouldCloseAfterHours(state)) {
+      markAfterHoursClosed(state);
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText,
+        reply: buildAfterHoursClosureReply(),
+        kind: "after_hours_general_close",
+        state, info, channelLabel,
+        resolverDecision: { stage: "after_hours", nextAction: "callback_tomorrow", reason: "Night conversation reached useful-turn threshold" }
+      }));
+    }
 
     // --- MelanIA activation: when Antonia detects booking intent ---
     if (!state.melania?.active) {
