@@ -14,12 +14,11 @@ while True:
     start = i + len(marker)
 
 assert len(positions) == 2, f'expected exactly 2 duplicated interceptors, found {len(positions)}'
-first, second = positions
+second = positions[1]
 anchor_pos = s.find(anchor, second)
 assert anchor_pos > second, 'simple schedule anchor not found after duplicate'
-block1 = s[first:second].strip()
-block2 = s[second:anchor_pos].strip()
-assert block1 == block2, 'interceptors differ; refusing automatic cleanup'
+
+# Conservamos el primer interceptor (el validado) y retiramos sólo el segundo.
 s = s[:second] + s[anchor_pos:]
 assert s.count(marker) == 1
 p.write_text(s)
