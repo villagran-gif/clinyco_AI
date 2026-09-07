@@ -7,7 +7,7 @@ s = p.read_text()
 old = '''export function buildAfterHoursClosureReply() {
   return [
     "por la hora\\nmañana continuamos\\nescribem am o pm",
-    `${CONTACT_NAME}\\n${CONTACT_PHONE}`,
+    `${CONTACT_NAME}\\n${CONTACT_PHONE}\\nsaludos`,
   ].join("[[MSG]]");
 }
 '''
