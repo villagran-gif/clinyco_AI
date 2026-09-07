@@ -60,7 +60,7 @@ import {
   buildAfterHoursPreferenceReply,
 } from "./after-hours.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
-import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
+import { sendChatwootReply, sendChatwootAttachment, assignChatwootConversation } from "./chatwoot-adapter/client.js";
 import reviewRouter from "./review/router.js";
 import { start as startFonasapadCron } from "./queue/cron.js";
 import { start as startMonthlyCron } from "./queue/monthly-cron.js";
@@ -128,6 +128,8 @@ const HUMAN_HANDOFF_PAUSE_MS = Math.max(
   1,
   Number(process.env.HUMAN_HANDOFF_PAUSE_MINUTES || 120)
 ) * 60 * 1000;
+const MELANIA_LEGACY_MENU_ENABLED = process.env.MELANIA_LEGACY_MENU_ENABLED === "true";
+const CHATWOOT_SCHEDULING_ASSIGNEE_ID = Number(process.env.CHATWOOT_SCHEDULING_ASSIGNEE_ID || 179952);
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 function firstExistingPath(paths) {
@@ -561,7 +563,7 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
     const result = await callMedinetWorkerApiBook({
       slot,
       patientData,
-      branchId: DEFAULT_BRANCH_ID
+      branchId: slot.branchId || DEFAULT_BRANCH_ID
     }, timeoutMs);
 
     if (result !== null) {
@@ -2583,7 +2585,8 @@ async function sendManagedReply({
   await sleep(delayMs);
 
   const latestState = getConversationState(conversationId);
-  if (!latestState.system.aiEnabled) {
+  const isSchedulingHandoffReply = Boolean(latestState.booking?.handoffToScheduling);
+  if (!latestState.system.aiEnabled && !isSchedulingHandoffReply) {
     return resJsonSkip("ai_disabled_after_delay");
   }
 
@@ -3899,6 +3902,27 @@ app.get("/api/lead-score-history/:conversationId", requireDebugKey, async (req, 
   }
 });
 
+async function handoffSchedulingToCarolin({ conversationId, state, channelLabel, reason = "scheduling_fallback" }) {
+  let assigned = false;
+  try {
+    await assignChatwootConversation({ conversationId, assigneeId: CHATWOOT_SCHEDULING_ASSIGNEE_ID });
+    assigned = true;
+    console.log("[scheduling-handoff] assigned to Carolin", { conversationId, assigneeId: CHATWOOT_SCHEDULING_ASSIGNEE_ID, reason });
+  } catch (error) {
+    console.error("[scheduling-handoff] assignment failed:", error.message);
+  }
+  state.system ||= {};
+  state.booking ||= {};
+  state.system.aiEnabled = false;
+  state.system.humanTakenOver = true;
+  state.system.humanPauseUntil = new Date(Date.now() + HUMAN_HANDOFF_PAUSE_MS).toISOString();
+  state.system.handoffReason = reason;
+  state.booking.handoffToScheduling = true;
+  state.booking.handoffAssigneeId = CHATWOOT_SCHEDULING_ASSIGNEE_ID;
+  await persistConversationSnapshot(conversationId, state, channelLabel);
+  return { assigned, reply: "ok[[MSG]]te lo dejo con Carolin para que revise las horas" };
+}
+
 const handleInboundWebhook = async (req, res) => {
   try {
     console.log("===== /chatwoot/inbound =====");
@@ -4779,7 +4803,8 @@ const handleInboundWebhook = async (req, res) => {
         if (bookingResult?.success) {
           reply = bookingResult.patient_reply || "Tu hora fue agendada correctamente.";
         } else {
-          reply = bookingFailureMessage;
+          const schedulingHandoff = await handoffSchedulingToCarolin({ conversationId, state, channelLabel, reason: "medinet_booking_failed" });
+          reply = schedulingHandoff.reply;
         }
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
@@ -4806,7 +4831,8 @@ const handleInboundWebhook = async (req, res) => {
         state.booking.pendingSlots = null;
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
-        const errorReply = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\n\nPuedes encontrar el mismo calendario en https://clinyco.medinetapp.com/agendaweb/planned/\n\nGracias\n\nAntonia, soy una IA mejorando cada día.";
+        const schedulingHandoff = await handoffSchedulingToCarolin({ conversationId, state, channelLabel, reason: "medinet_booking_exception" });
+        const errorReply = schedulingHandoff.reply;
         addToHistory(conversationId, "user", userText);
         return res.json(await sendManagedReply({
           appId, conversationId, messageId, userText,
@@ -4878,6 +4904,7 @@ const handleInboundWebhook = async (req, res) => {
           await persistConversationSnapshot(conversationId, state, channelLabel);
           return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]Santiago o Antofagasta?", kind: "schedule_choose_city", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_city") }));
         }
+        state.booking.awaitingScheduleQuery = true;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));
       }
@@ -4886,9 +4913,99 @@ const handleInboundWebhook = async (req, res) => {
         if (!city) return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "Santiago o Antofagasta?", kind: "schedule_choose_city", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_city") }));
         state.booking.preferredCity = city;
         state.booking.awaitingCityChoice = false;
+        state.booking.awaitingScheduleQuery = true;
         await persistConversationSnapshot(conversationId, state, channelLabel);
         return res.json(await sendManagedReply({ appId, conversationId, messageId, userText, reply: "ok[[MSG]]con qué profesional o especialidad buscas hora?", kind: "schedule_choose_professional", state, info, channelLabel, resolverDecision: buildResolverQuestionDecision(state, "schedule_choose_professional") }));
       }
+      if (state.booking?.awaitingScheduleQuery) {
+        const scheduleQuery = String(userText || "").trim();
+        if (scheduleQuery.length < 2) {
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: "con qué profesional o especialidad?",
+            kind: "schedule_query_retry", state, info, channelLabel,
+            resolverDecision: buildResolverQuestionDecision(state, "schedule_query_retry")
+          }));
+        }
+
+        state.booking.awaitingScheduleQuery = false;
+        state.booking.pendingProfessional = scheduleQuery;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        // El worker de Medinet actualmente tiene Antofagasta (39) y telemedicina (2/3).
+        // No inventamos una sucursal Santiago: esa agenda presencial pasa a Carolin.
+        if (state.booking.preferredMode === "presencial" && state.booking.preferredCity === "Santiago") {
+          const schedulingHandoff = await handoffSchedulingToCarolin({
+            conversationId, state, channelLabel, reason: "santiago_medinet_branch_not_configured"
+          });
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: schedulingHandoff.reply,
+            kind: "schedule_handoff_santiago",
+            state, info, channelLabel,
+            resolverDecision: { stage: "scheduling_handoff", nextAction: "human_scheduling", reason: "Santiago branch not configured in Medinet worker" }
+          }));
+        }
+
+        const branchCandidates = state.booking.preferredMode === "telemedicina"
+          ? [2, 3]
+          : [39];
+
+        let scheduleResult = null;
+        let selectedBranchId = null;
+        try {
+          for (const branchId of branchCandidates) {
+            const candidate = await runMedinetAntonia({
+              query: scheduleQuery,
+              patientPhone: info?.channelDisplayName || info?.authorDisplayName || "",
+              patientMessage: userText,
+              patientRut: state.contactDraft?.c_rut || "",
+              branchId,
+            });
+            if (candidate?.available_slots?.length) {
+              scheduleResult = candidate;
+              selectedBranchId = branchId;
+              break;
+            }
+          }
+        } catch (scheduleError) {
+          console.error("[scheduling] direct Medinet search failed:", scheduleError.message);
+        }
+
+        if (!scheduleResult?.available_slots?.length) {
+          const schedulingHandoff = await handoffSchedulingToCarolin({
+            conversationId, state, channelLabel, reason: "medinet_direct_search_no_slots"
+          });
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: schedulingHandoff.reply,
+            kind: "schedule_handoff_no_slots",
+            state, info, channelLabel,
+            resolverDecision: { stage: "scheduling_handoff", nextAction: "human_scheduling", reason: "Direct Medinet scheduling search returned no slots" }
+          }));
+        }
+
+        const slots = scheduleResult.available_slots.slice(0, 6).map((slot) => ({
+          ...slot,
+          branchId: slot.branchId || selectedBranchId,
+        }));
+        state.booking.pendingSlots = slots;
+        state.booking.pendingProfessional = scheduleResult.professional || scheduleQuery;
+        state.booking.pendingSpecialty = scheduleResult.specialty || "";
+        state.booking.awaitingSlotChoice = true;
+        state.booking.slotReminderSent = false;
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+
+        const slotLines = slots.map((slot, index) => `${index + 1}- ${slot.date || slot.dataDia} ${slot.time}`).join("\n");
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText,
+          reply: `tengo estas horas[[MSG]]${slotLines}\ncuál te acomoda?`,
+          kind: "schedule_direct_slots",
+          state, info, channelLabel,
+          resolverDecision: { stage: "scheduling", nextAction: "choose_slot", reason: "Direct Medinet slot search" }
+        }));
+      }
+
       if (isSimpleScheduleRequest(userText) && !parseRequestedCareMode(userText)) {
         state.booking.awaitingCareMode = true;
         await persistConversationSnapshot(conversationId, state, channelLabel);
@@ -4942,8 +5059,8 @@ const handleInboundWebhook = async (req, res) => {
       }));
     }
 
-    // --- MelanIA activation: when Antonia detects booking intent ---
-    if (!state.melania?.active) {
+    // --- MelanIA headless: el menú legacy queda apagado salvo opt-in explícito. ---
+    if (MELANIA_LEGACY_MENU_ENABLED && !state.melania?.active) {
       const hasIntent = hasScheduleIntent(userText) || hasExplicitScheduleIntent(userText);
       if (hasIntent && !state.system.humanTakenOver && state.system.aiEnabled) {
         console.log("[melania] Booking intent detected, activating MelanIA");
@@ -5048,8 +5165,18 @@ const handleInboundWebhook = async (req, res) => {
           patientRut: state.contactDraft?.c_rut || ""
         });
 
-        const searchReply = antoniaResponse?.patient_reply
-          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+        if (!antoniaResponse?.available_slots?.length) {
+          const schedulingHandoff = await handoffSchedulingToCarolin({ conversationId, state, channelLabel, reason: "medinet_no_slots_or_search_failed" });
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: schedulingHandoff.reply,
+            kind: "schedule_handoff_no_slots",
+            state, info, channelLabel,
+            resolverDecision: { stage: "scheduling_handoff", nextAction: "human_scheduling", reason: "Medinet did not return usable slots" }
+          }));
+        }
+
+        const searchReply = antoniaResponse?.patient_reply;
         if (searchReply) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
@@ -5519,8 +5646,18 @@ const handleInboundWebhook = async (req, res) => {
           patientMessage: userText
         });
 
-        const searchReply2 = antoniaResponse?.patient_reply
-          || "No encontré horas disponibles para esa búsqueda.\n\nPuedes agendar directamente en https://clinyco.medinetapp.com/agendaweb/planned/";
+        if (!antoniaResponse?.available_slots?.length) {
+          const schedulingHandoff = await handoffSchedulingToCarolin({ conversationId, state, channelLabel, reason: "medinet_no_slots_or_search_failed" });
+          return res.json(await sendManagedReply({
+            appId, conversationId, messageId, userText,
+            reply: schedulingHandoff.reply,
+            kind: "schedule_handoff_no_slots",
+            state, info, channelLabel,
+            resolverDecision: { stage: "scheduling_handoff", nextAction: "human_scheduling", reason: "Medinet did not return usable slots" }
+          }));
+        }
+
+        const searchReply2 = antoniaResponse?.patient_reply;
         if (searchReply2) {
           // Store available slots for booking flow
           if (antoniaResponse.available_slots?.length) {
