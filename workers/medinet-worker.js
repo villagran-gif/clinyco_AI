@@ -239,9 +239,9 @@ app.post("/medinet/run", authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 
 const MEDINET_BASE = "https://clinyco.medinetapp.com";
-// Usa MEDINET_JWT (rvillagran) — las credenciales que funcionan con /api/agenda/citas/add/
-const MELANIA_USERNAME = process.env.MEDINET_JWT_USERNAME || "";
-const MELANIA_PASSWORD = process.env.MEDINET_JWT_PASSWORD || "";
+// Prefer the active Medinet service account; keep legacy JWT credentials as fallback.
+const MELANIA_USERNAME = process.env.MEDINET_USER || process.env.MEDINET_JWT_USERNAME || process.env.MELANIA_USERNAME || "";
+const MELANIA_PASSWORD = process.env.MEDINET_USER_KEY || process.env.MEDINET_JWT_PASSWORD || process.env.MELANIA_PASSWORD || "";
 
 // ── Mapeo prevision texto → IDs Medinet ──
 // ── Comuna text → Medinet numeric ID ──
@@ -497,12 +497,12 @@ async function melaniaBookWithSession(payload) {
  * }
  */
 app.post("/melania/book", authMiddleware, async (req, res) => {
-  const { query, patientData = {}, slotIndex = 0, branchId } = req.body || {};
+  const { query, patientData = {}, slotIndex = 0, branchId, slot: requestedSlot = null } = req.body || {};
 
   if (!query) return res.status(400).json({ success: false, error: "query is required" });
   if (!patientData.rut) return res.status(400).json({ success: false, error: "patientData.rut is required" });
 
-  const branch = Number(branchId || DEFAULT_BRANCH_ID);
+  const branch = Number(requestedSlot?.branchId || branchId || DEFAULT_BRANCH_ID);
   const rut = formatRutWithDots(patientData.rut);
 
   console.log(`[melania] book: query="${query}" rut=${rut} slotIndex=${slotIndex}`);
@@ -519,21 +519,51 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       });
     }
 
-    // 2. Search slots
-    const search = await searchSlotsViaApi({ query, branchId: branch });
-    const slots = search.available_slots || [];
+    // 2. Re-read live availability. The selected slot must still exist before booking.
+    let search = null;
+    try {
+      search = await searchSlotsViaApi({ query, branchId: branch });
+    } catch (error) {
+      console.warn("[melania] api slot search failed, trying agendaweb availability:", error.message);
+    }
+    if (!search?.available_slots?.length) {
+      search = await searchSlotsNoAuth({ query, branchId: branch }).catch(() => search);
+    }
+
+    const slots = search?.available_slots || [];
     if (!slots.length) {
       return res.json({
         success: false,
         source: "melania",
         step: "search_slots",
         message: "No hay horas disponibles.",
-        professional: search.professional,
-        specialty: search.specialty,
+        professional: search?.professional || query,
+        specialty: search?.specialty || null,
       });
     }
 
-    const slot = slots[slotIndex] || slots[0];
+    let slot = null;
+    if (requestedSlot?.dataDia && requestedSlot?.time) {
+      slot = slots.find((candidate) =>
+        String(candidate.dataDia) === String(requestedSlot.dataDia) &&
+        String(candidate.time) === String(requestedSlot.time) &&
+        (!requestedSlot.professionalId || String(candidate.professionalId) === String(requestedSlot.professionalId))
+      ) || null;
+
+      if (!slot) {
+        return res.json({
+          success: false,
+          source: "melania",
+          step: "slot_revalidate",
+          message: "La hora seleccionada ya no está disponible.",
+          professional: search?.professional || query,
+          specialty: search?.specialty || null,
+          available_slots: slots,
+        });
+      }
+    } else {
+      slot = slots[slotIndex] || slots[0];
+    }
 
     // 3. Build agendaweb-add payload (form-urlencoded, no auth, no overwrite)
     const pacienteExiste = cupos?.paciente_existe !== false;
@@ -620,8 +650,16 @@ app.post("/melania/search", authMiddleware, async (req, res) => {
 
   try {
     const branch = Number(branchId || DEFAULT_BRANCH_ID);
-    const search = await searchSlotsViaApi({ query, branchId: branch });
-    return res.json({ success: true, source: "melania", ...search });
+    let search = null;
+    try {
+      search = await searchSlotsViaApi({ query, branchId: branch });
+    } catch (error) {
+      console.warn("[melania] api search failed, trying agendaweb availability:", error.message);
+    }
+    if (!search?.available_slots?.length) {
+      search = await searchSlotsNoAuth({ query, branchId: branch }).catch(() => search);
+    }
+    return res.json({ success: true, source: "melania", ...(search || { available_slots: [] }) });
   } catch (error) {
     console.error("[melania] search error:", error.message);
     return res.status(500).json({ success: false, error: error.message });
@@ -631,9 +669,10 @@ app.post("/melania/search", authMiddleware, async (req, res) => {
 // MelanIA: all clinic branches
 const MELANIA_BRANCHES = [
   { id: 39, name: "Antofagasta Mall Arauco" },
-  { id: 38, name: "Unidad de Endoscopia Clinyco/Hospital Militar ANF" },
-  { id: 2, name: "Telemedicina Clinyco1" },
-  { id: 3, name: "Telemedicina Clinyco2" },
+  { id: 41, name: "Santiago" },
+  { id: 38, name: "Endoscopia Antofagasta" },
+  { id: 2, name: "Telemedicina Médica" },
+  { id: 3, name: "Telemedicina Nutrición/Psicología" },
 ];
 
 /**
@@ -647,7 +686,9 @@ app.post("/melania/availability", authMiddleware, async (req, res) => {
       MELANIA_BRANCHES.map(async (b) => {
         try {
           const profs = await fetchProximosCuposAll(b.id);
-          return (profs || []).map(p => ({ ...p, branchId: b.id, branchName: b.name }));
+          return (profs || [])
+            .filter((p) => (p.cupos || []).some((c) => Array.isArray(c.horas) && c.horas.length > 0))
+            .map((p) => ({ ...p, branchId: b.id, branchName: b.name }));
         } catch (e) {
           console.warn(`[melania] availability branch ${b.id} failed:`, e.message);
           return [];
