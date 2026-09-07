@@ -53,7 +53,7 @@ test("cierre usa exactamente Carolin y teléfono solicitado", () => {
   const reply = buildAfterHoursClosureReply();
   assert.match(reply, /Carolin/);
   assert.doesNotMatch(reply, /Carolina/);
-  assert.match(reply, /\+56 9 7376 3009/);
+  assert.match(reply, /\+56973763009/);
 });
 
 test("guarda preferencia después del cierre", () => {
@@ -64,4 +64,11 @@ test("guarda preferencia después del cierre", () => {
   setCallbackPreference(s, "am");
   assert.equal(s.system.afterHours.callbackPreference, "am");
   assert.match(buildAfterHoursPreferenceReply("am"), /mañana en la mañana/);
+});
+
+
+test("cierre nocturno mantiene typo humano y contacto separado", () => {
+  const reply = buildAfterHoursClosureReply();
+  assert.match(reply, /escribem am o pm/);
+  assert.match(reply, /Carolin\n\+56973763009\nsaludos/);
 });

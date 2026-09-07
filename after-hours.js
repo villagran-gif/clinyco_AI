@@ -3,7 +3,7 @@ const DEFAULT_START_HOUR = 21;
 const DEFAULT_END_HOUR = 8;
 const DEFAULT_MAX_INBOUND_TURNS = 5;
 const CONTACT_NAME = "Carolin";
-const CONTACT_PHONE = "+56 9 7376 3009";
+const CONTACT_PHONE = "+56973763009";
 
 function localParts(date = new Date(), timeZone = DEFAULT_TIMEZONE) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -132,10 +132,8 @@ export function setCallbackPreference(state, preference) {
 
 export function buildAfterHoursClosureReply() {
   return [
-    "mañana continuamos",
-    "prefieres horario am o pm?",
-    `${CONTACT_NAME}\n${CONTACT_PHONE}`,
-    "saludos",
+    "por la hora\nmañana continuamos\nescribem am o pm",
+    `${CONTACT_NAME}\n${CONTACT_PHONE}\nsaludos`,
   ].join("[[MSG]]");
 }
 
