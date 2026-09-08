@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { accessSync, constants as fsConstants } from "fs";
 import {
   checkCupos,
+  bookAppointmentForPatient,
   searchSlotsNoAuth,
   searchSlotsViaApi,
   fetchProximosCuposAll,
@@ -530,8 +531,14 @@ async function handleMelaniaBooking(req, res) {
     // Restore the flat /citas/add/ contract from the successful April flow.
     // Existing patients are referenced by RUN; do not update their demographics.
     if (!cupos.paciente_existe) {
-      return res.status(409).json({ success: false, step: "patient_registration",
-        message: "El paciente debe estar registrado en Medinet antes de reservar por esta ruta." });
+      const insurance = resolvePrevisionIds(patientData.prevision);
+      const result = await bookAppointmentForPatient({
+        slot, branchId: branch,
+        patientData: { ...patientData, rut,
+          aseguradoraId: patientData.aseguradoraId || insurance.aseguradoraId,
+        },
+      });
+      return res.json(result);
     }
     if (![slot.professionalId, slot.specialtyId, slot.tipoCitaId].every(v => Number(v) > 0)) {
       return res.status(400).json({ success: false, step: "booking_payload",
@@ -679,3 +686,4 @@ app.listen(PORT, () => {
     console.log(`MelanIA: disabled (no MELANIA_USERNAME configured)`);
   }
 });
+
