@@ -76,3 +76,26 @@ test("unregistered patient is not sent to admin endpoint", async () => {
   assert.equal(posts.length, 0);
   assert.equal(res.body.step, "patient_registration");
 });
+
+const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+const orchestrator = server.slice(server.indexOf("async function runMedinetAntoniaBooking"),
+  server.indexOf("function detectBookingSlotChoice"));
+for (const mode of ["failure", "timeout", "empty"]) {
+  test("Render never falls through after remote " + mode, async () => {
+    let calls = 0;
+    const context = vm.createContext({
+      process: { env: {} }, console: { log() {}, warn() {} },
+      useRemoteWorker: () => true,
+      callMedinetWorkerPath: async () => {
+        calls++;
+        if (mode === "timeout") throw Error("timeout");
+        return mode === "empty" ? null : { success: false, step: "book" };
+      },
+      apiBookAppointment: () => { throw Error("Unexpected second booking"); },
+    });
+    vm.runInContext(orchestrator, context);
+    const result = await context.runMedinetAntoniaBooking({ slot, patientData: { rut: "TEST" } });
+    assert.equal(calls, 1);
+    assert.equal(result.success, false);
+  });
+}
