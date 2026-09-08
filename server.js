@@ -1,3 +1,5 @@
+import { publishedProfessionals, publishedSlots, reservePublishedSlot, UNAVAILABLE } from "./melania/agendaweb-only.js";
+import { bookAgendaweb } from "./Antonia/medinet-api.js";
 import { isEndoscopyBooking, ENDOSCOPY_HANDOFF } from "./melania/booking-policy.js";
 import express from "express";
 import OpenAI from "openai";
@@ -408,219 +410,32 @@ function extractMedinetQuery(text = "") {
   return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
 }
 
-async function runMedinetAntonia({ query, patientPhone, patientMessage, patientRut, branchId }) {
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 45000);
-  const safeQuery = String(query || "").trim();
-  if (!safeQuery) return null;
-  const rut = String(patientRut || process.env.MEDINET_RUT || "").trim();
-  const effectiveBranchId = Number(branchId || DEFAULT_BRANCH_ID);
+async function loadPublishedAgendaweb() {
+  const result = await callMedinetWorkerPath("/melania/availability", {}, 60000);
+  if (result?.success !== true || !Array.isArray(result.professionals)) throw new Error("agendaweb_unavailable");
+  return publishedProfessionals(result.professionals);
+}
 
-  // ── 1. Try remote API-only worker (VPS Chile) ──
-  if (useRemoteWorker()) {
-    console.log("[medinet-search] path=remote api worker | query:", safeQuery, "| branch:", effectiveBranchId);
-
-    const result = await callMedinetWorkerApiSearch({
-      query: safeQuery,
-      patientRut: rut || "",
-      patientPhone: String(patientPhone || ""),
-      patientMessage: String(patientMessage || ""),
-      branchId: effectiveBranchId,
-    }, timeoutMs);
-
-    if (result !== null) {
-      console.log("[medinet-search] path=remote api worker | SUCCESS");
-      return result;
-    }
-
-    console.warn("[medinet-search] path=remote api worker | FAILED, trying legacy worker");
-    const legacyResult = await callMedinetWorkerLegacy("search", {
-      query: safeQuery,
-      patientPhone: String(patientPhone || ""),
-      patientMessage: String(patientMessage || ""),
-      patientRut: rut
-    }, timeoutMs);
-
-    if (legacyResult !== null) {
-      console.log("[medinet-search] path=fallback remote worker | SUCCESS");
-      return legacyResult;
-    }
-
-    console.warn("[medinet-search] path=fallback remote worker | FAILED, falling to local");
-  }
-
-  // ── 3. Local Playwright (last resort) ──
-  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
-    env: {
-      ...process.env,
-      MEDINET_RUT: rut,
-      MEDINET_QUERY: safeQuery,
-      MEDINET_PATIENT_PHONE: String(patientPhone || ""),
-      MEDINET_PATIENT_MESSAGE: String(patientMessage || ""),
-      MEDINET_HEADED: "false"
-    },
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024
-  });
-
-  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
-  if (!match) return null;
-
+async function runMedinetAntonia({ query, branchId, professionalId }) {
   try {
-    return JSON.parse(match[1]);
-  } catch (parseError) {
-    console.error("ANTONIA JSON PARSE ERROR:", parseError.message, "raw:", match[1].slice(0, 200));
-    return null;
+    const slots = publishedSlots(await loadPublishedAgendaweb(), {query,branchId,professionalId}).slice(0,6);
+    return { source:"agendaweb", professional:slots[0]?.professional || query,
+      specialty:slots[0]?.specialty || "", available_slots:slots,
+      patient_reply: slots.length ? "Cupos publicados en Agenda Web:\n\n" + slots.map((s,i)=>
+        (i+1)+". "+s.date+" a las "+s.time+" con "+s.professional+" — "+s.branchName).join("\n") :
+        "No encontré cupos publicados en Agenda Web para esa búsqueda." };
+  } catch {
+    return {source:"agendaweb",available_slots:[],patient_reply:UNAVAILABLE};
   }
 }
 
-async function runMedinetAntoniaBooking({ slot, patientData }) {
-  if (isEndoscopyBooking(slot)) return { success: false, step: "endoscopy_human_only", message: ENDOSCOPY_HANDOFF };
-  const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
-  if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
-
-  // ── 0. Try MelanIA first (session cookie booking with full patient data) ──
-  if (useRemoteWorker()) {
-    try {
-      const melaniaBranchId = slot.branchId || null;
-      console.log("[medinet-booking] path=melania | starting:", slot.professionalId, slot.dataDia, slot.time, "| branch:", melaniaBranchId || "default");
-      const melaniaResult = await callMedinetWorkerPath("/melania/book", {
-        query: slot.professional || slot.professionalId,
-        slotIndex: 0,
-        branchId: melaniaBranchId,
-        slot,
-        patientData: {
-          ...patientData,
-          rut: patientData.rut || patientData.run || "",
-          aseguradoraId: patientData.aseguradoraId || "",
-          previsionId: patientData.previsionId || "",
-          comuna: patientData.comuna || "",
-          sexo: patientData.sexo || 3,
-        },
-      }, timeoutMs);
-
-      if (melaniaResult?.success) {
-        console.log("[medinet-booking] path=melania | SUCCESS id=", melaniaResult.appointmentId);
-        return melaniaResult;
-      }
-      if (melaniaResult) {
-        console.log("[medinet-booking] path=melania | FAILED:", melaniaResult.message || melaniaResult.step);
-        // Do not retry a stale/non-existent slot through another booking path.
-        return melaniaResult;
-      }
-    } catch (melaniaError) {
-      console.warn("[medinet-booking] path=melania ERROR:", melaniaError.message);
-    }
-    // Never submit the same reservation through another endpoint after a
-    // missing response or transport failure: the first POST may have succeeded.
-    return { success: false, source: "melania", step: "booking_unconfirmed",
-      message: "No se pudo confirmar la reserva. Verifica Medinet antes de reintentar.",
-      patient_reply: "No pude confirmar tu reserva. El equipo debe verificarla antes de volver a intentarlo." };
-  }
-
-  // ── 1. Try REST API booking (agendaweb-add, no patient data saved) ──
+async function runMedinetAntoniaBooking({slot,patientData}) {
   try {
-    console.log("[medinet-booking] path=api | starting:", slot.professionalId, slot.dataDia, slot.time);
-    const rut = formatRutWithDots(patientData.rut || patientData.run || "");
-    let pacienteExiste = true;
-    if (rut) {
-      const cupos = await checkCupos(DEFAULT_BRANCH_ID, rut).catch(() => null);
-      if (cupos && !cupos.puede_agendar) {
-        console.log("[medinet-booking] path=api cupos_blocked | rut:", rut, "mensaje:", cupos.mensaje);
-        return {
-          source: "antonia_api_cupos_check",
-          success: false,
-          message: cupos.mensaje || "El paciente no puede agendar.",
-          patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
-        };
-      }
-      if (cupos) pacienteExiste = cupos.paciente_existe !== false;
-      console.log("[medinet-booking] path=api checkCupos | rut:", rut, "pacienteExiste:", pacienteExiste);
-    }
-    console.log("[medinet-booking] slot payload:", JSON.stringify({
-      professionalId: slot?.professionalId,
-      specialtyId: slot?.specialtyId,
-      tipoCitaId: slot?.tipoCitaId,
-      duration: slot?.duration,
-      dataDia: slot?.dataDia,
-      time: slot?.time,
-      branchId: DEFAULT_BRANCH_ID
-    }));
-    const apiResult = await apiBookAppointment({
-      slot,
-      patientData: { ...patientData, run: rut },
-      branchId: DEFAULT_BRANCH_ID,
-      pacienteExiste,
-    });
-    if (apiResult?.success) {
-      console.log("[medinet-booking] path=api", apiResult.source, "| SUCCESS");
-      return apiResult;
-    }
-    console.log("[medinet-booking] path=api FAILED:", apiResult?.source, apiResult?.message);
-  } catch (apiError) {
-    console.warn("[medinet-booking] path=api ERROR, falling through to Playwright:", apiError.message);
-  }
-
-  // Use search_and_book: searches for the slot first, then books in the same browser session.
-  const medinetMode = "search_and_book";
-
-  // ── 2. Try remote API-only worker ──
-  if (useRemoteWorker()) {
-    console.log("[medinet-booking] path=remote api worker:", slot.professionalId, slot.dataDia, slot.time);
-
-    const result = await callMedinetWorkerApiBook({
-      slot,
-      patientData,
-      branchId: DEFAULT_BRANCH_ID
-    }, timeoutMs);
-
-    if (result !== null) {
-      console.log("[medinet-booking] path=remote api worker | result:", result.success ? "SUCCESS" : "FAILED");
-      return result;
-    }
-
-    console.warn("[medinet-booking] path=remote api worker FAILED, trying legacy worker");
-    const legacyResult = await callMedinetWorkerLegacy("search_and_book", { slot, patientData }, timeoutMs);
-
-    if (legacyResult !== null) {
-      console.log("[medinet-booking] path=fallback remote worker | result:", legacyResult.success ? "SUCCESS" : "FAILED");
-      return legacyResult;
-    }
-
-    console.warn("[medinet-booking] path=fallback remote worker FAILED, falling to local");
-  }
-
-  console.log("[medinet-booking] path=fallback local playwright:", slot.professionalId, slot.dataDia, slot.time);
-  const { stdout } = await execFileAsync("node", [MEDINET_ANTONIA_SCRIPT], {
-    env: {
-      ...process.env,
-      MEDINET_MODE: medinetMode,
-      MEDINET_RUT,
-      MEDINET_PROFESSIONAL_ID: String(slot.professionalId || ""),
-      MEDINET_SLOT_DATE: String(slot.dataDia || ""),
-      MEDINET_SLOT_TIME: String(slot.time || ""),
-      MEDINET_PATIENT_RUT: String(patientData.rut || ""),
-      MEDINET_PATIENT_NOMBRES: String(patientData.nombres || ""),
-      MEDINET_PATIENT_AP_PATERNO: String(patientData.apPaterno || ""),
-      MEDINET_PATIENT_AP_MATERNO: String(patientData.apMaterno || ""),
-      MEDINET_PATIENT_PREVISION: String(patientData.prevision || ""),
-      MEDINET_PATIENT_NACIMIENTO: String(patientData.nacimiento || ""),
-      MEDINET_PATIENT_EMAIL: String(patientData.email || ""),
-      MEDINET_PATIENT_FONO: String(patientData.fono || ""),
-      MEDINET_PATIENT_DIRECCION: String(patientData.direccion || ""),
-      MEDINET_HEADED: "false"
-    },
-    timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024
-  });
-
-  const match = stdout.match(/ANTONIA_RESPONSE\s+(\{[\s\S]*\})/);
-  if (!match) return null;
-
-  try {
-    return JSON.parse(match[1]);
-  } catch (parseError) {
-    console.error("ANTONIA BOOKING JSON PARSE ERROR:", parseError.message);
-    return null;
+    return await reservePublishedSlot({slot, patientData:{...patientData,rut:formatRutWithDots(patientData.rut || patientData.run || "")},
+      load:loadPublishedAgendaweb,check:checkCupos,post:bookAgendaweb});
+  } catch {
+    return {success:false,step:"booking_unconfirmed",message:UNAVAILABLE,
+      patient_reply:"No pude confirmar la reserva. El equipo debe verificar Medinet antes de reintentar."};
   }
 }
 
@@ -4259,6 +4074,7 @@ const handleInboundWebhook = async (req, res) => {
         try {
           const searchResult = await runMedinetAntonia({
             query: result.searchQuery,
+            professionalId: result.searchProfessionalId,
             patientPhone: info?.channelDisplayName || "",
             patientMessage: "",
             patientRut: state.contactDraft?.c_rut || "",
@@ -4327,7 +4143,7 @@ const handleInboundWebhook = async (req, res) => {
         }
 
         state.melania.active = false;
-        state.melania.lastBookingAt = new Date().toISOString();
+        state.melania.lastBookingAt = null; // Set only after Agenda Web confirms success.
         state.melania.lastBookingSlot = slotToBook;
         state.melania.lastBookingPatient = patientData;
         // Pass MelanIA collected data to Antonia's contactDraft
@@ -4357,11 +4173,9 @@ const handleInboundWebhook = async (req, res) => {
 
         const reply = bookingResult?.success
           ? bookingResult.patient_reply || "Tu hora fue agendada correctamente."
-          : "No fue posible agendar. Puedes intentar en https://clinyco.medinetapp.com/agendaweb/planned/";
+          : bookingResult?.patient_reply || UNAVAILABLE;
 
-        if (!bookingResult?.success) {
-          state.melania.lastBookingAt = null; // don't trigger handoff on failure
-        }
+        state.melania.lastBookingAt = bookingResult?.success ? new Date().toISOString() : null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
         addToHistory(conversationId, "user", userText);
@@ -4998,8 +4812,7 @@ const handleInboundWebhook = async (req, res) => {
         // Fetch availability cache from worker
         let professionals = [];
         try {
-          const avail = await callMedinetWorkerPath("/melania/availability", {}, 15000);
-          professionals = avail?.professionals || [];
+          professionals = await loadPublishedAgendaweb();
         } catch (e) {
           console.warn("[melania] Availability fetch failed:", e.message);
         }
@@ -5017,7 +4830,12 @@ const handleInboundWebhook = async (req, res) => {
             resolverDecision: { stage: "melania_start", reason: "MelanIA activated on booking intent" },
           }));
         }
-        // No professionals available — fall through to Antonia fast-path
+        // Availability failure must not fall through to a different source.
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText, reply: UNAVAILABLE,
+          kind:"agendaweb_unavailable",state,info,channelLabel,
+          resolverDecision:{stage:"agendaweb_only",nextAction:"human_required"}
+        }));
         console.log("[melania] No professionals available, falling through to Antonia");
       }
     }
