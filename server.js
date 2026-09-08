@@ -1,3 +1,4 @@
+import { requestedExam, publishedExamProfessionals, examFollowup, EXAM_HANDOFF } from "./melania/exam-policy.js";
 import { publishedProfessionals, publishedSlots, reservePublishedSlot, UNAVAILABLE } from "./melania/agendaweb-only.js";
 import { bookAgendaweb } from "./Antonia/medinet-api.js";
 import { isEndoscopyBooking, ENDOSCOPY_HANDOFF } from "./melania/booking-policy.js";
@@ -3992,6 +3993,50 @@ const handleInboundWebhook = async (req, res) => {
       console.error("CUSTOMER_CONTEXT_ERROR (known-patient):", memErr.message);
     }
     await persistConversationSnapshot(conversationId, state, channelLabel);
+
+    // Exam requests must pass the published service catalogue before any AI questions.
+    let examRequest = requestedExam(userText);
+    // Recover exam context in conversations started before this deployment.
+    if (!examRequest && !state.booking?.unpublishedExam && examFollowup(userText)) {
+      try {
+        const recent = dbEnabled() ? await getRecentCompleteConversationHistory(conversationId, 20) : getHistory(conversationId);
+        for (const message of [...recent].reverse()) {
+          if (message.role !== "user") continue;
+          const content = message.content || message.text || "";
+          if (!content || examFollowup(content)) continue;
+          examRequest = requestedExam(content);
+          break;
+        }
+      } catch (error) { console.warn("[agendaweb-policy] History unavailable:", error.message); }
+    }
+    const pendingExam = state.booking?.unpublishedExam;
+    if (examRequest || (pendingExam && examFollowup(userText))) {
+      const requested = examRequest || pendingExam;
+      let published = [];
+      try { published = publishedExamProfessionals(await loadPublishedAgendaweb(), requested); }
+      catch (error) { console.warn("[agendaweb-policy] Exam catalogue unavailable:", error.message); }
+      if (!published.length) {
+        state.melania = { active: false, step: "human_required" };
+        state.booking = { ...state.booking, unpublishedExam: requested, chosenSlot: null,
+          pendingProfessional: null, pendingSlots: [], awaitingSlotChoice: false,
+          awaitingConfirmation: false, awaitingPatientData: false, awaitingRutVerification: false };
+        await persistConversationSnapshot(conversationId, state, channelLabel);
+        return res.json(await sendManagedReply({
+          appId, conversationId, messageId, userText, reply: EXAM_HANDOFF,
+          kind: "unpublished_exam_human_only", state, info, channelLabel,
+          resolverDecision: { stage: "agendaweb_only", nextAction: "human_required", reason: "Exam not verified in published appointment types" }
+        }));
+      }
+      state.booking.unpublishedExam = null;
+      const { reply, melaniaState } = startMelaniaFlow(buildPatientDataFromState(state), published);
+      state.melania = melaniaState;
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText, reply, kind: "melania_published_exam",
+        state, info, channelLabel, resolverDecision: { stage: "agendaweb_only", nextAction: "choose_published_service" }
+      }));
+    }
+    if (pendingExam) state.booking.unpublishedExam = null;
 
     // Never enter automatic booking for an endoscopy, including sessions opened before this policy.
     const normalizedProcedureText = String(userText || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
