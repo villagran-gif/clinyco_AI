@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import {requestedExam,publishedExamProfessionals,examFollowup} from "../melania/exam-policy.js";
+assert.equal(requestedExam("Necesito el examen de una manómetros tengo la orden médica en antofagasta"),"manometros");
+assert.equal(requestedExam("Para un examen"),"examen");
+assert.equal(requestedExam("Quiero agendar una manometría"),"manometria");
+assert.equal(requestedExam("Necesito hora con nutricionista"),null);
+assert.equal(requestedExam("Qué significa el resultado de mi manometría"),null);
+assert.deepEqual(publishedExamProfessionals([{especialidad:"Enfermeria",nombres:"Connie"}],"manometria"),[]);
+assert.deepEqual(publishedExamProfessionals([{especialidad:"Manometría"}],"manometria"),[]);
+assert.deepEqual(publishedExamProfessionals([{tipoNombre:"Consulta"}],"examen"),[]);
+assert.equal(publishedExamProfessionals([{tipoNombre:"Manometría Esofágica"}],"manometria").length,1);
+assert.equal(examFollowup("Sí"),true);
+assert.equal(examFollowup("Antofagasta"),true);
+assert.equal(examFollowup("Ahora quiero nutricionista"),false);
+console.log("Exam policy regression checks passed");
