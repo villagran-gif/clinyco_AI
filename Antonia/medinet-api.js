@@ -563,6 +563,35 @@ export async function bookOverschedule(data) {
  * @returns {{ status: string }} e.g. { status: "agendado_correctamente" }
  */
 export async function bookAgendaweb(opts) {
+  if (typeof opts.pacienteExiste !== "boolean") {
+    throw new Error("Se requiere pacienteExiste confirmado por check-cupos.");
+  }
+  if (!opts.pacienteExiste) {
+    const missing = ["nombre", "apellidos", "direccion", "sexo", "fechaNacimiento", "aseguradora", "telefono", "email"]
+      .filter(key => !String(opts[key] ?? "").trim());
+    if (missing.length) {
+      const error = new Error(`Faltan datos del paciente nuevo: ${missing.join(", ")}`);
+      error.missingFields = missing;
+      throw error;
+    }
+  }
+  const personal = value => opts.pacienteExiste ? "" : String(value ?? "").trim();
+  let birth = personal(opts.fechaNacimiento);
+  let sex = personal(opts.sexo).toLowerCase();
+  if (!opts.pacienteExiste) {
+    birth = birth.replace(/^(\d{2})[/.](\d{2})[/.](\d{4})$/, "$3-$2-$1");
+    const parsed = new Date(`${birth}T12:00:00Z`);
+    sex = ({ masculino: "1", hombre: "1", m: "1", femenino: "2", mujer: "2", f: "2", indeterminado: "3", desconocido: "4" })[sex] || sex;
+    const invalid = [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birth) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== birth) invalid.push("fechaNacimiento");
+    if (!/^[1-4]$/.test(sex)) invalid.push("sexo");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(opts.email || ""))) invalid.push("email");
+    if (invalid.length) {
+      const error = new Error(`Datos del paciente inválidos: ${invalid.join(", ")}`);
+      error.missingFields = invalid;
+      throw error;
+    }
+  }
   const params = new URLSearchParams({
     es_recurso: String(opts.esRecurso || false),
     estado: "1",
@@ -576,14 +605,13 @@ export async function bookAgendaweb(opts) {
     tipoagenda: "",
     observacion: "Agendado vía AgendaWeb.",
 
-    // Campos personales SIEMPRE vacíos — backend busca por RUT.
-    // Llenarlos causa 500 (tanto paciente nuevo como existente).
-    nombre: "",
-    apellidos: "",
-    direccion: "",
-    sexo: "",
-    fecha_nacimiento: "",
-    aseguradora: "",
+    // Existing patients are looked up by RUN. New patients need their data.
+    nombre: personal(opts.nombre),
+    apellidos: personal(opts.apellidos),
+    direccion: personal(opts.direccion),
+    sexo: sex,
+    fecha_nacimiento: birth,
+    aseguradora: personal(opts.aseguradora),
 
     telefono_fijo: opts.telefono || "",
     email: opts.email || "",
@@ -599,8 +627,11 @@ export async function bookAgendaweb(opts) {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Requested-With": "XMLHttpRequest",
       "Accept": "application/json",
+      "Referer": `${BASE_URL}/agendaweb/planned/`,
     },
     body: params.toString(),
+    redirect: "manual",
+    signal: AbortSignal.timeout(20000),
   });
 
   const text = await res.text();
@@ -945,149 +976,92 @@ export async function searchAvailableSlots({ professionalId, ubicacionId, especi
 }
 
 /**
- * Book an appointment via API (replaces Playwright bookSlot).
- *
- * Strategy (3-tier fallback):
- *  1. bookAgendaweb()  — form-urlencoded, same endpoint the web UI uses (proven working)
- *  2. bookChatbot()    — JSON, chatbot-specific endpoint
- *  3. bookOverschedule() — JSON, public API endpoint
- *
- * @param {object} opts
- * @param {object} opts.slot          Slot object { professionalId, dataDia, time, duration, specialtyId, tipoCitaId }
- * @param {object} opts.patientData   Patient { run, email, fono, nombres, apPaterno, apMaterno, direccion, sexo, fechaNacimiento, prevision }
- * @param {number} opts.branchId      Branch/ubicacion ID
- * @param {boolean} [opts.pacienteExiste]  Whether patient already exists (from checkCupos)
- * @param {number} [opts.scheduleTypeId]   Schedule type (default 1)
+ * One agendaweb attempt after fresh patient and exact-slot checks.
+ * Never fall through to another write endpoint after an ambiguous response.
  */
-export async function bookAppointmentForPatient({
-  slot,
-  patientData,
-  branchId = DEFAULT_BRANCH_ID,
-  pacienteExiste = true,
-}) {
-  const run = formatRutWithDots(patientData?.run || patientData?.rut || "");
-  const email = patientData?.email || "";
-  const telefono = patientData?.fono || patientData?.telefono || "";
-  const duration = Number(slot?.duration || 30);
-  const specialtyId = Number(slot?.specialtyId || slot?.especialidad || 0);
-  const tipoCitaId = Number(slot?.tipoCitaId || slot?.tipo || 0);
-  const professionalId = Number(slot?.professionalId || slot?.profesional || 0);
-
-  if (!run || !slot?.dataDia || !slot?.time || !specialtyId || !tipoCitaId || !professionalId) {
-    return {
-      success: false,
-      source: "antonia_booking_invalid_input",
-      message: "Faltan datos obligatorios para reservar.",
-      patient_reply: "No pude completar la reserva porque faltan datos de la hora seleccionada.",
-    };
+export async function bookAppointmentForPatient({ slot, patientData = {}, branchId = DEFAULT_BRANCH_ID }) {
+  const source = "antonia_booking_via_api_agendaweb";
+  const fail = (step, message, extra = {}) => ({ success: false, source, step,
+    message, patient_reply: message, ...extra });
+  const run = formatRutWithDots(patientData.run || patientData.rut || "");
+  if (!run || !slot?.dataDia || !slot?.time ||
+      ![slot.professionalId, slot.specialtyId, slot.tipoCitaId, branchId].every(v => Number(v) > 0)) {
+    return fail("booking_payload", "Faltan datos de la hora seleccionada.");
   }
-
-  // 1) agendaweb-add (API pública sin token, probada)
+  let cupos;
+  let selected;
   try {
-    const agendawebResult = await bookAgendaweb({
-      run,
-      fecha: slot.dataDia,
-      hora: slot.time,
-      profesional: professionalId,
-      especialidad: specialtyId,
-      tipo: tipoCitaId,
-      duracion: duration,
-      ubicacion: branchId,
-      email,
-      telefono,
-      pacienteExiste,
-    });
-
-    if (agendawebResult?.status === "agendado_correctamente") {
-      return {
-        success: true,
-        source: "antonia_booking_via_api_agendaweb",
-        message: "Reserva completada correctamente.",
-        patient_reply: `Tu hora quedó agendada para el ${slot.date || slot.dataDia} a las ${slot.time}.`,
-        booking: agendawebResult,
-      };
+    cupos = await checkCupos(branchId, run);
+    if (typeof cupos?.paciente_existe !== "boolean") {
+      return fail("check_cupos", "Medinet no confirmó si el paciente existe.");
     }
-
-    // Si agendaweb respondió, pero con error de negocio, NO continuar a overschedule/chatbot
-    if (isAgendawebBusinessFailure(agendawebResult)) {
-      return {
-        success: false,
-        source: "antonia_booking_via_api_agendaweb",
-        message: agendawebResult?.message || "La hora seleccionada ya no tiene cupo.",
-        patient_reply: agendawebResult?.message || "La hora seleccionada ya no está disponible. ¿Quieres que busque otra?",
-        booking: agendawebResult,
-      };
+    if (cupos.puede_agendar === false) {
+      return fail("check_cupos", cupos.mensaje || "El paciente no puede agendar.");
     }
-
-    // Si vino una respuesta rara, la tratamos como error técnico y seguimos a fallback controlado
-    console.warn("[medinet-api] agendaweb-add unexpected response:", agendawebResult);
-  } catch (error) {
-    if (isAgendawebBusinessError(error)) {
-      return {
-        success: false,
-        source: "antonia_booking_via_api_agendaweb",
-        message: error?.responseBody?.message || "La hora seleccionada ya no tiene cupo.",
-        patient_reply: error?.responseBody?.message || "La hora seleccionada ya no está disponible. ¿Quieres que busque otra?",
-      };
-    }
-
-    console.warn("[medinet-api] agendaweb-add technical error:", error.message);
+    const live = await searchSlotsViaApi({ query: slot.professional, branchId });
+    selected = live?.available_slots?.find(candidate =>
+      candidate.dataDia === slot.dataDia && candidate.time === slot.time &&
+      String(candidate.professionalId) === String(slot.professionalId) &&
+      String(candidate.specialtyId) === String(slot.specialtyId) &&
+      String(candidate.tipoCitaId) === String(slot.tipoCitaId));
+    if (!selected) return fail("slot_revalidate", "La hora elegida no está disponible.");
+  } catch {
+    return fail("preflight", "No se pudo verificar al paciente y la disponibilidad.");
   }
-
-  // 2) chatbot endpoint
+  // A read-only lookup identifies agendaweb responses that omit the appointment id.
+  // This verification uses the existing authenticated read API; the booking POST has no token.
+  const matches = rows => Array.isArray(rows) ? rows.filter(a =>
+    formatRutWithDots(a.paciente?.run) === run &&
+    String(a.fecha).replaceAll("/", "-") === selected.dataDia &&
+    String(a.hora).slice(0, 5) === selected.time &&
+    String(a.sucursal?.id) === String(branchId) &&
+    String(a.tipo_id) === String(selected.tipoCitaId) &&
+    normalizeText([a.profesional?.nombres, a.profesional?.paterno, a.profesional?.materno].filter(Boolean).join(" ")) === normalizeText(selected.professional)
+  ) : [];
+  const lookup = async () => {
+    const rows = await fetchAllAppointments(selected.dataDia, selected.dataDia, { branchId });
+    if (!Array.isArray(rows)) throw new Error("Invalid appointment list");
+    return matches(rows);
+  };
   try {
-    const chatbotResult = await bookChatbot({
-      slot,
-      patientData: { ...patientData, run },
-      branchId,
-    });
-
-    if (chatbotResult?.status === true || chatbotResult?.success === true) {
-      return {
-        success: true,
-        source: "antonia_booking_via_api_chatbot",
-        message: "Reserva completada por API chatbot.",
-        patient_reply: `Tu hora quedó agendada para el ${slot.date || slot.dataDia} a las ${slot.time}.`,
-        booking: chatbotResult,
-      };
-    }
-  } catch (error) {
-    console.warn("[medinet-api] chatbot booking error:", error.message);
+    if ((await lookup()).length) return fail("already_booked", "Ya existe una cita para ese paciente y horario. Debe revisarse antes de reservar otra.");
+  } catch {
+    return fail("booking_verification", "No se pudo habilitar la verificación de la reserva. No se ha enviado una nueva solicitud.");
   }
-
-  // 3) overschedule
+  let result;
   try {
-    const overscheduleResult = await bookOverschedule({
-      slot,
-      patientData: { ...patientData, run },
-      branchId,
+    result = await bookAgendaweb({
+      run, fecha: selected.dataDia, hora: selected.time,
+      profesional: selected.professionalId, especialidad: selected.specialtyId,
+      tipo: selected.tipoCitaId, duracion: selected.duration || 30, ubicacion: branchId,
+      pacienteExiste: cupos.paciente_existe,
+      nombre: patientData.nombres,
+      apellidos: patientData.apellidos || [patientData.apPaterno, patientData.apMaterno].filter(Boolean).join(" "),
+      direccion: patientData.direccion, sexo: patientData.sexo,
+      fechaNacimiento: patientData.fechaNacimiento || patientData.nacimiento,
+      aseguradora: patientData.aseguradoraId || patientData.aseguradora,
+      telefono: patientData.fono || patientData.telefono,
+      email: patientData.email,
     });
-
-    if (overscheduleResult?.status === true || overscheduleResult?.success === true) {
-      return {
-        success: true,
-        source: "antonia_booking_via_api_overschedule",
-        message: "Reserva completada por overschedule.",
-        patient_reply: `Tu hora quedó agendada para el ${slot.date || slot.dataDia} a las ${slot.time}.`,
-        booking: overscheduleResult,
-      };
-    }
-
-    return {
-      success: false,
-      source: "antonia_booking_via_api_overschedule",
-      message: overscheduleResult?.message || "No se pudo reservar la hora.",
-      patient_reply: overscheduleResult?.message || "No pude completar la reserva. ¿Quieres que busque otra hora?",
-      booking: overscheduleResult,
-    };
   } catch (error) {
-    return {
-      success: false,
-      source: "antonia_booking_via_api_overschedule",
-      message: error.message,
-      patient_reply: "No pude completar la reserva por API. ¿Quieres que intente otra alternativa?",
-    };
+    if (error.missingFields) return fail("patient_data", error.message, { missingFields: error.missingFields });
+    return fail("booking_verification", "No pude confirmar la reserva. Debe verificarse antes de volver a intentar.",
+      { requiresVerification: true });
   }
+  if (isAgendawebBusinessFailure(result)) {
+    return fail("book", result.message || "La hora seleccionada no tiene cupo.");
+  }
+  let appointmentId = null;
+  try {
+    const found = await lookup();
+    if (found.length === 1 && Number(found[0].id) > 0) appointmentId = found[0].id;
+  } catch { /* A failed read must never trigger another write. */ }
+  if (!appointmentId || result?.status !== "agendado_correctamente") {
+    return fail("booking_verification", "Medinet respondió sin una reserva verificable. Debe verificarse antes de volver a intentar.",
+      { requiresVerification: true, booking: result });
+  }
+  return { success: true, source, step: "book", appointmentId, booking: result,
+    patient_reply: `Tu hora quedó agendada para el ${selected.dataDia} a las ${selected.time}.` };
 }
 
 // ─── API-first search (replaces Playwright for slot discovery) ──
