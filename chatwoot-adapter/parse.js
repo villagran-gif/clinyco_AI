@@ -14,7 +14,39 @@ export function isChatwootPayload(payload) {
   );
 }
 
+
+/** Ignore transport/service events before state changes, history or AI calls. */
+export function chatwootSkipReason(payload) {
+  const conv = payload?.conversation || {};
+  const current = (Array.isArray(conv.messages) ? conv.messages : [])
+    .find(m => payload?.id != null && String(m.id) === String(payload.id)) || {};
+  const message = { ...current, ...payload };
+  const truthy = v => v === true || v === 1 || v === "true";
+  if (truthy(message.private)) return "private_note";
+  if (message.message_type === "activity" || message.message_type === 2) return "activity";
+  const inboxId = payload?.inbox?.id ?? conv.inbox_id;
+  const accountId = payload?.account?.id ?? process.env.CHATWOOT_ACCOUNT_ID;
+  // Verified Clinyco Voice inbox. Other accounts are not affected by this ID.
+  if (String(accountId) === "162472" && String(inboxId) === "114783") return "voice_inbox";
+  const channel = String(conv.channel || payload?.inbox?.channel_type || "").toLowerCase();
+  const inboxName = String(payload?.inbox?.name || "").trim();
+  if (channel === "channel::voice" || /^voice(?:\s|\(|$)/i.test(inboxName)) return "voice_channel";
+  const contentType = String(message.content_type || "").toLowerCase();
+  if (["call", "voice_call", "call_transcription"].includes(contentType)) return "call_event";
+  const attrs = message.content_attributes || {};
+  if (attrs.call_id != null || attrs.call != null) return "call_event";
+  const senderType = String(payload?.sender?.type || conv.meta?.sender?.type || payload?.sender_type || "").toLowerCase();
+  if (["agentbot", "agent_bot", "bot"].includes(senderType)) return "bot_message";
+  const content = String(message.content || "").trim();
+  // Narrow legacy fallbacks: do not match a patient's normal sentence about a call.
+  if (/^(?:missed call|call ended|incoming call|outgoing call|llamada perdida|llamada finalizada)[.!]?$/i.test(content))
+    return "call_status";
+  if (/^(?:🤖\s*)?transcripci[oó]n de la llamada\b/i.test(content)) return "call_transcription";
+  return null;
+}
+
 export function parseChatwootInbound(payload) {
+  const skipReason = chatwootSkipReason(payload);
   const conv = payload?.conversation || {};
   const sender = payload?.sender || conv.meta?.sender || {};
   const messageType = payload?.message_type || null;
@@ -52,7 +84,8 @@ export function parseChatwootInbound(payload) {
     appId: String(payload?.account?.id ?? process.env.CHATWOOT_ACCOUNT_ID ?? "162472"),
     conversationId: conv.id != null ? `cw:${conv.id}` : null,
     userText,
-    eventType: "conversation:message",
+    eventType: skipReason ? "conversation:ignored" : "conversation:message",
+    skipReason,
     authorType,
     senderType,
     isHumanAgent,
