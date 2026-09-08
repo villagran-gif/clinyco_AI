@@ -16,6 +16,8 @@ async function run({ cupos = { paciente_existe: true, puede_agendar: true },
   const context = vm.createContext({
     console: { log() {}, warn() {}, error() {} }, DEFAULT_BRANCH_ID: 39,
     formatRutWithDots: s => s,
+    resolvePrevisionIds: () => ({ aseguradoraId: 4 }),
+    bookAppointmentForPatient: async () => ({ success: false, step: "patient_data" }),
     checkCupos: async () => { if (checkError) throw Error("403"); return cupos; },
     searchSlotsViaApi: async () => ({ available_slots: live }),
     searchSlotsNoAuth: async () => ({ available_slots: live }),
@@ -41,6 +43,30 @@ test("flat authenticated booking preserves selected slot and omits patient edits
   assert.equal(res.body.success, true);
   assert.equal(res.body.appointmentId, 123);
 });
+
+const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+const orchestrator = server.slice(server.indexOf("async function runMedinetAntoniaBooking"),
+  server.indexOf("function detectBookingSlotChoice"));
+for (const mode of ["failure", "timeout", "empty"]) {
+  test("Render never falls through after remote " + mode, async () => {
+    let calls = 0;
+    const context = vm.createContext({
+      process: { env: {} }, console: { log() {}, warn() {} },
+      useRemoteWorker: () => true,
+      callMedinetWorkerPath: async () => {
+        calls++;
+        if (mode === "timeout") throw Error("timeout");
+        return mode === "empty" ? null : { success: false, step: "book" };
+      },
+      apiBookAppointment: () => { throw Error("Unexpected second booking"); },
+    });
+    vm.runInContext(orchestrator, context);
+    const result = await context.runMedinetAntoniaBooking({ slot, patientData: { rut: "TEST" } });
+    assert.equal(calls, 1);
+    assert.equal(result.success, false);
+  });
+}
+
 test("permission check failure prevents any booking", async () => {
   const { posts, res } = await run({ checkError: true });
   assert.equal(posts.length, 0);
@@ -74,28 +100,5 @@ test("Medinet rejection makes one attempt without overschedule fallback", async 
 test("unregistered patient is not sent to admin endpoint", async () => {
   const { posts, res } = await run({ cupos: { paciente_existe: false } });
   assert.equal(posts.length, 0);
-  assert.equal(res.body.step, "patient_registration");
+  assert.equal(res.body.step, "patient_data");
 });
-
-const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
-const orchestrator = server.slice(server.indexOf("async function runMedinetAntoniaBooking"),
-  server.indexOf("function detectBookingSlotChoice"));
-for (const mode of ["failure", "timeout", "empty"]) {
-  test("Render never falls through after remote " + mode, async () => {
-    let calls = 0;
-    const context = vm.createContext({
-      process: { env: {} }, console: { log() {}, warn() {} },
-      useRemoteWorker: () => true,
-      callMedinetWorkerPath: async () => {
-        calls++;
-        if (mode === "timeout") throw Error("timeout");
-        return mode === "empty" ? null : { success: false, step: "book" };
-      },
-      apiBookAppointment: () => { throw Error("Unexpected second booking"); },
-    });
-    vm.runInContext(orchestrator, context);
-    const result = await context.runMedinetAntoniaBooking({ slot, patientData: { rut: "TEST" } });
-    assert.equal(calls, 1);
-    assert.equal(result.success, false);
-  });
-}
