@@ -1,3 +1,4 @@
+import { isEndoscopyBooking, endoscopyExit } from "./booking-policy.js";
 /**
  * melania/flow.js — MelanIA complete booking flow (no AI, numbers only)
  *
@@ -79,7 +80,7 @@ export function startMelaniaFlow(patientData = {}, professionals = [], specialti
     active: true,
     step: "menu",
     collectedData: { ...patientData },
-    professionals,
+    professionals: professionals.filter(p => !isEndoscopyBooking(p)),
     specialties,
     filteredProfessionals: null,
     filteredSpecialties: null,
@@ -115,6 +116,8 @@ export function handleMelaniaMessage(melaniaState, userText) {
 
   const text = (userText || "").trim();
   const s = { ...melaniaState, collectedData: { ...melaniaState.collectedData } };
+
+  if (isEndoscopyBooking(s.chosenProfessional) || isEndoscopyBooking(s.chosenSlot)) return endoscopyExit(s);
 
   // ════════════════════════════════════════════════
   //  STEP: menu (1=especialidad, 2=profesional, 3=salir)
@@ -212,6 +215,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
     const num = parseInt(text, 10);
     if (num >= 1 && num <= list.length) {
       const chosen = list[num - 1];
+      if (isEndoscopyBooking(chosen)) return endoscopyExit(s);
       s.chosenProfessional = chosen;
       s.step = "awaiting_slots";
       s.retryCount = 0;
@@ -249,6 +253,7 @@ export function handleMelaniaMessage(melaniaState, userText) {
       if (!chosen.branchId && s.chosenProfessional?.branchId) {
         chosen.branchId = s.chosenProfessional.branchId;
       }
+      if (isEndoscopyBooking(chosen)) return endoscopyExit(s);
       s.chosenSlot = chosen;
       s.step = "collecting_data";
       s.retryCount = 0;
@@ -431,6 +436,8 @@ export function handleMelaniaMessage(melaniaState, userText) {
  */
 export function setMelaniaSlots(melaniaState, slots, professional, specialty) {
   const s = { ...melaniaState };
+  if (isEndoscopyBooking(s.chosenProfessional)) return endoscopyExit(s);
+  slots = (slots || []).filter(slot => !isEndoscopyBooking(slot));
   s.availableSlots = slots;
   s.step = "choose_slot";
   s.retryCount = 0;
