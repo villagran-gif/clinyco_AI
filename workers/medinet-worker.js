@@ -7,7 +7,6 @@ import {
   checkCupos,
   searchSlotsNoAuth,
   searchSlotsViaApi,
-  bookAppointmentForPatient,
   fetchProximosCuposAll,
   fetchSpecialtiesByBranchNoAuth,
   formatRutWithDots,
@@ -143,48 +142,13 @@ app.post("/medinet/api/search", authMiddleware, async (req, res) => {
  * slot: { professionalId, dataDia, time, duration, specialtyId, tipoCitaId }
  * patientData: { run, email, fono, nombres?, apPaterno?, apMaterno?, direccion?, sexo?, fechaNacimiento?, prevision? }
  */
-app.post("/medinet/api/book", authMiddleware, async (req, res) => {
+app.post("/medinet/api/book", authMiddleware, (req, res) => {
   const { slot, patientData = {}, branchId } = req.body || {};
-
-  if (!slot?.professionalId || !slot?.dataDia || !slot?.time) {
-    return res.status(400).json({ error: "slot.professionalId, slot.dataDia, and slot.time are required" });
-  }
-
-  const rut = formatRutWithDots(patientData.run || patientData.rut || MEDINET_RUT);
-  const branch = Number(branchId || DEFAULT_BRANCH_ID);
-
-  try {
-    // Step 1: Check cupos and whether patient exists
-    const cupos = await checkCupos(branch, rut).catch(() => null);
-
-    if (cupos && cupos.puede_agendar === false) {
-      return res.json({
-        source: "antonia_api_book",
-        success: false,
-        message: cupos.mensaje || "El paciente no puede agendar.",
-        patient_reply: cupos.mensaje || "No puedes agendar más citas en este momento.",
-      });
-    }
-
-    const pacienteExiste = cupos?.paciente_existe !== false;
-
-    // Step 2: Book via API (3-tier: agendaweb → chatbot → overschedule)
-    const result = await bookAppointmentForPatient({
-      slot,
-      patientData: { ...patientData, run: rut },
-      branchId: branch,
-      pacienteExiste,
-    });
-
-    return res.json(result);
-  } catch (error) {
-    console.error("[medinet-worker] api/book error:", error.message);
-    return res.status(500).json({
-      source: "antonia_api_book",
-      success: false,
-      error: error.message,
-    });
-  }
+  req.body = {
+    slot, branchId, patientData: { ...patientData, rut: patientData.rut || patientData.run },
+    query: slot?.professional || String(slot?.professionalId || ""),
+  };
+  return handleMelaniaBooking(req, res);
 });
 
 // ─── Legacy Puppeteer-based endpoints ─────────────────────────
@@ -427,12 +391,12 @@ async function melaniaLogin() {
   const sessionid = cookies2.find(c => c.startsWith("sessionid="))?.split(";")[0]?.split("=")[1];
   const csrftoken = cookies2.find(c => c.startsWith("csrftoken="))?.split(";")[0]?.split("=")[1];
 
-  if (!sessionid) throw new Error("MelanIA login failed: no sessionid");
+  if (!sessionid || !csrftoken) throw new Error("MelanIA login failed: no sessionid");
 
   _melaniaSession = sessionid;
   _melaniaCsrf = csrftoken;
   _melaniaSessionAt = Date.now();
-  console.log("[melania] Login OK, session:", sessionid.slice(0, 10) + "...");
+  console.log("[melania] Login OK");
   return { sessionid, csrftoken };
 }
 
@@ -462,25 +426,10 @@ async function melaniaBookWithSession(payload) {
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-  // Session expired — retry once
-  if (res.status === 403 || res.status === 302) {
-    console.log("[melania] Session expired, re-logging in...");
+  // A booking POST is never retried: a timeout or ambiguous response may
+  // already have created a reservation. A permission denial is not expiry.
+  if (res.status === 401 || res.status === 403 || res.status === 302) {
     _melaniaSession = null;
-    const fresh = await getMelaniaSession();
-    const retryRes = await fetch(`${MEDINET_BASE}/api/agenda/citas/add/?format=json`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json;charset=UTF-8",
-        "X-CSRFToken": fresh.csrftoken,
-        "Cookie": `csrftoken=${fresh.csrftoken}; sessionid=${fresh.sessionid}`,
-        "Referer": `${MEDINET_BASE}/agenda/`,
-        "Accept": "application/json, text/plain, */*",
-      },
-      body: JSON.stringify(payload),
-    });
-    const retryText = await retryRes.text();
-    try { data = JSON.parse(retryText); } catch { data = { raw: retryText }; }
-    return { status: retryRes.status, data };
   }
 
   return { status: res.status, data };
@@ -496,7 +445,9 @@ async function melaniaBookWithSession(payload) {
  *   branchId: 39,          // optional
  * }
  */
-app.post("/melania/book", authMiddleware, async (req, res) => {
+app.post("/melania/book", authMiddleware, handleMelaniaBooking);
+
+async function handleMelaniaBooking(req, res) {
   const { query, patientData = {}, slotIndex = 0, branchId, slot: requestedSlot = null } = req.body || {};
 
   if (!query) return res.status(400).json({ success: false, error: "query is required" });
@@ -509,7 +460,17 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
 
   try {
     // 1. Check cupos
-    const cupos = await checkCupos(branch, rut).catch(() => null);
+    let cupos;
+    try {
+      cupos = await checkCupos(branch, rut);
+    } catch {
+      return res.status(502).json({ success: false, step: "check_cupos",
+        message: "No se pudo verificar al paciente y sus permisos de agenda." });
+    }
+    if (typeof cupos?.paciente_existe !== "boolean") {
+      return res.status(502).json({ success: false, step: "check_cupos",
+        message: "Medinet no confirmó si el paciente existe." });
+    }
     if (cupos && cupos.puede_agendar === false) {
       return res.json({
         success: false,
@@ -562,58 +523,45 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
         });
       }
     } else {
-      slot = slots[slotIndex] || slots[0];
+      return res.status(400).json({ success: false, step: "selected_slot",
+        message: "Se requiere la fecha y hora exactas del cupo elegido." });
     }
 
-    // 3. Build agendaweb-add payload (form-urlencoded, no auth, no overwrite)
-    const pacienteExiste = cupos?.paciente_existe !== false;
-
-    const formData = new URLSearchParams({
-      es_recurso: "false",
-      estado: "1",
-      fecha: slot.dataDia,
-      tipo: String(slot.tipoCitaId),
-      duracion: String(slot.duration || 20),
-      especialidad: String(slot.specialtyId),
-      hora: slot.time,
-      profesional: String(slot.professionalId),
-      sesion_id: "",
-      tipoagenda: "",
-      observacion: "Agendado via MelanIA Bot.",
-      // For existing patients: personal fields empty (Medinet uses stored data)
-      // For new patients: all fields populated
-      nombre: pacienteExiste ? "" : (patientData.nombres || ""),
-      apellidos: pacienteExiste ? "" : `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim(),
-      telefono_fijo: patientData.fono || "",
-      direccion: pacienteExiste ? "" : (patientData.direccion || ""),
-      sexo: pacienteExiste ? "" : String(Number(patientData.sexo) || 3),
-      email: patientData.email || "",
-      fecha_nacimiento: pacienteExiste ? "" : (patientData.nacimiento || ""),
-      aseguradora: pacienteExiste ? "" : String(Number(patientData.aseguradoraId) || resolvePrevisionIds(patientData.prevision).aseguradoraId || ""),
+    // Restore the flat /citas/add/ contract from the successful April flow.
+    // Existing patients are referenced by RUN; do not update their demographics.
+    if (!cupos.paciente_existe) {
+      return res.status(409).json({ success: false, step: "patient_registration",
+        message: "El paciente debe estar registrado en Medinet antes de reservar por esta ruta." });
+    }
+    if (![slot.professionalId, slot.specialtyId, slot.tipoCitaId].every(v => Number(v) > 0)) {
+      return res.status(400).json({ success: false, step: "booking_payload",
+        message: "Faltan identificadores del cupo seleccionado." });
+    }
+    const bookPayload = {
       run: rut,
-      ubicacion: String(branch),
-      desde_agendaweb: "true",
-      is_patient_created_from_two_factor: "false",
-    });
-
-    console.log("[melania] agendaweb-add:", JSON.stringify({ run: rut, fecha: slot.dataDia, hora: slot.time, profesional: slot.professionalId, pacienteExiste }));
-
-    // 4. Book via agendaweb-add (public, form-urlencoded, no admin session)
-    const bookRes = await fetch(`${MEDINET_BASE}/api/agenda/citas/agendaweb-add/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Requested-With": "XMLHttpRequest",
-      },
-      body: formData.toString(),
-    });
-
-    const bookText = await bookRes.text();
-    let bookData;
-    try { bookData = JSON.parse(bookText); } catch { bookData = { raw: bookText }; }
-    const result = { status: bookRes.status, data: bookData };
-
-    const isSuccess = result.status === 200 && (result.data?.status === true || result.data?.status === "agendado_correctamente" || result.data?.message === "agendado correctamente" || result.data?.message === "agendado_correctamente");
+      profesional: String(slot.professionalId),
+      resource: String(slot.professionalId),
+      especialidad: Number(slot.specialtyId),
+      tipo: Number(slot.tipoCitaId),
+      ubicacion: branch,
+      fecha: slot.dataDia,
+      hora: slot.time,
+      duracion: Number(slot.duration || 20),
+      estado: 1,
+      tipoagenda: "1",
+      es_recurso: "0",
+      tienerut: true,
+      cargar: true,
+      enviar_correo: false,
+      enable_sms_notifications: false,
+      enable_wsp_notifications: false,
+      scheduled_from: 3,
+    };
+    const result = await melaniaBookWithSession(bookPayload);
+    const appointmentId = result.data?.id || result.data?.appointment_id || null;
+    const accepted = result.data?.status === true ||
+      result.data?.status === "agendado_correctamente";
+    const isSuccess = result.status === 200 && accepted && !!appointmentId;
 
     console.log(`[melania] book result: ${isSuccess ? "SUCCESS" : "FAILED"} id=${result.data?.id || "n/a"} status=${result.status} data=${JSON.stringify(result.data).slice(0, 200)}`);
 
@@ -621,7 +569,7 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       success: isSuccess,
       source: "melania",
       step: "book",
-      appointmentId: result.data?.id || null,
+      appointmentId: isSuccess ? appointmentId : null,
       slot: { date: slot.dataDia, time: slot.time, professional: slot.professional, specialty: slot.specialty },
       patient: { rut, nombres: patientData.nombres, apellidos: `${patientData.apPaterno || ""} ${patientData.apMaterno || ""}`.trim() },
       medinet: result.data,
@@ -637,7 +585,7 @@ app.post("/melania/book", authMiddleware, async (req, res) => {
       error: error.message,
     });
   }
-});
+}
 
 /**
  * MelanIA: Search slots only (no booking).
