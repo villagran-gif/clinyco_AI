@@ -503,11 +503,16 @@ async function runMedinetAntoniaBooking({ slot, patientData }) {
       if (melaniaResult) {
         console.log("[medinet-booking] path=melania | FAILED:", melaniaResult.message || melaniaResult.step);
         // Do not retry a stale/non-existent slot through another booking path.
-        if (["check_cupos", "slot_revalidate", "search_slots"].includes(melaniaResult.step)) return melaniaResult;
+        return melaniaResult;
       }
     } catch (melaniaError) {
-      console.warn("[medinet-booking] path=melania ERROR, falling through:", melaniaError.message);
+      console.warn("[medinet-booking] path=melania ERROR:", melaniaError.message);
     }
+    // Never submit the same reservation through another endpoint after a
+    // missing response or transport failure: the first POST may have succeeded.
+    return { success: false, source: "melania", step: "booking_unconfirmed",
+      message: "No se pudo confirmar la reserva. Verifica Medinet antes de reintentar.",
+      patient_reply: "No pude confirmar tu reserva. El equipo debe verificarla antes de volver a intentarlo." };
   }
 
   // ── 1. Try REST API booking (agendaweb-add, no patient data saved) ──
