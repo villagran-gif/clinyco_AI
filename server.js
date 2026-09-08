@@ -1,3 +1,4 @@
+import { isEndoscopyBooking, ENDOSCOPY_HANDOFF } from "./melania/booking-policy.js";
 import express from "express";
 import OpenAI from "openai";
 import { execFile } from "node:child_process";
@@ -473,6 +474,7 @@ async function runMedinetAntonia({ query, patientPhone, patientMessage, patientR
 }
 
 async function runMedinetAntoniaBooking({ slot, patientData }) {
+  if (isEndoscopyBooking(slot)) return { success: false, step: "endoscopy_human_only", message: ENDOSCOPY_HANDOFF };
   const timeoutMs = Number(process.env.MEDINET_ANTONIA_TIMEOUT_MS || 180000);
   if (!slot || !slot.professionalId || !slot.dataDia || !slot.time) return null;
 
@@ -4175,6 +4177,23 @@ const handleInboundWebhook = async (req, res) => {
       console.error("CUSTOMER_CONTEXT_ERROR (known-patient):", memErr.message);
     }
     await persistConversationSnapshot(conversationId, state, channelLabel);
+
+    // Never enter automatic booking for an endoscopy, including sessions opened before this policy.
+    const normalizedProcedureText = String(userText || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const endoscopyRequest = /endoscop|gastroscop/.test(normalizedProcedureText) &&
+      /agend|reserv|hora|cupo|turno|quiero|necesito|hacerme|disponib/.test(normalizedProcedureText);
+    if (endoscopyRequest || isEndoscopyBooking(state.melania?.chosenProfessional) ||
+        isEndoscopyBooking(state.melania?.chosenSlot) || isEndoscopyBooking(state.booking?.chosenSlot)) {
+      state.melania = { active: false };
+      state.booking = { ...state.booking, chosenSlot: null, pendingSlots: [], awaitingConfirmation: false,
+        awaitingPatientData: false, awaitingRutVerification: false };
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      return res.json(await sendManagedReply({
+        appId, conversationId, messageId, userText, reply: ENDOSCOPY_HANDOFF,
+        kind: "endoscopy_human_only", state, info, channelLabel,
+        resolverDecision: { stage: "endoscopy_human_only", nextAction: "human_required" }
+      }));
+    }
 
     // --- MelanIA just booked: Antonia confirms with patient details ---
     if (state.melania?.lastBookingAt && !state.melania?.active) {
