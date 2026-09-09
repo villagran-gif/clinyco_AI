@@ -80,11 +80,11 @@ export function planSurgicalTurn({
   const result = { structure: STRUCTURE, intents, action: 'respond', bubbles: [], questionKey: null };
   if (intents.stop) return { ...result, action: 'stop', bubbles: ['De acuerdo, no continuaré con las preguntas.'] };
   if (intents.human) return { ...result, action: 'request_handoff' };
-  if (intents.identity) return { ...result, action: 'disclose_identity', bubbles: ['Sí, soy Antonia, la asistente virtual de Clinyco.'] };
-  if (intents.repair) return {
-    ...result, action: 'reconcile_history',
-    bubbles: ['Disculpa la repetición. Revisaré lo que ya respondiste antes de continuar.']
-  };
+  // Only answer identity when explicitly asked, briefly and truthfully.
+  if (intents.identity) return { ...result, action: 'disclose_identity', bubbles: ['Soy una asistente de IA.'] };
+  // Internal recovery, without a scripted apology or a promise to review later.
+  // The caller must reconcile facts and then continue, not simply drop the turn.
+  if (intents.repair) return { ...result, action: 'reconcile_history', bubbles: [] };
   if (intents.scheduling) return { ...result, action: 'handoff_to_agenda', context: { ...known } };
   if (intents.acknowledgement) return { ...result, action: 'wait' };
 
