@@ -22,13 +22,14 @@ test('semantic question ledger survives any elapsed time', () => {
 test('pending question is not repeated', () => {
   assert.equal(plan({ text: 'cirugía revisional', pendingKey: 'prior_surgery' }).action, 'wait');
 });
-test('repair complaint never becomes a clinical answer or another question', () => {
+test('repair complaint requests internal reconciliation without canned speech', () => {
   const r = plan({ text: 'Ya respondí 2013' });
   assert.equal(r.action, 'reconcile_history'); assert.equal(r.questionKey, null);
+  assert.deepEqual(r.bubbles, []);
 });
-test('robot question gets truthful identity', () => {
+test('explicit robot question gets brief truthful identity, not an apology script', () => {
   const r = plan({ text: 'Es un robot?' });
-  assert.equal(r.action, 'disclose_identity'); assert.match(r.bubbles[0], /asistente virtual/);
+  assert.equal(r.action, 'disclose_identity'); assert.equal(r.bubbles[0], 'Soy una asistente de IA.');
 });
 test('courtesy message does not restart questionnaire', () => {
   assert.equal(plan({ text: 'Gracias' }).bubbles.length, 0);
@@ -61,44 +62,86 @@ test('question is counted only after confirmed delivery', () => {
   assert.deepEqual(recordQuestionDelivered({}, r, null), {});
   assert.equal(recordQuestionDelivered({}, r, 'synthetic-message').prior_surgery.count, 1);
 });
-test('pauses have a bound and never add to a slow or urgent turn', () => {
-  assert.equal(pauseMs('x'.repeat(10000)), 1600);
-  assert.equal(pauseMs('x', { elapsedMs: 3000 }), 0);
+test('pauses span 2.5 to 5 seconds and do not add to a slow or urgent turn', () => {
+  assert.equal(pauseMs('', { random: () => 0 }), 2500);
+  assert.equal(pauseMs('x'.repeat(10000), { random: () => 1 }), 5000);
+  assert.equal(pauseMs('x', { elapsedMs: 5000 }), 0);
   assert.equal(pauseMs('x', { urgent: true }), 0);
 });
 test('release gate sends nothing before P0 and explicit enablement', async () => {
   const r = await deliverBubbles({ bubbles: ['test'], send: () => assert.fail(), isCurrent: () => true });
   assert.equal(r.skipped, 'release_gate');
 });
-test('incoming interruption during pause cancels obsolete output', async () => {
+test('incoming interruption during pause cancels obsolete output without typing', async () => {
   let current = true; const statuses = [];
   const r = await deliverBubbles({ enabled: true, foundationReady: true, bubbles: ['test'],
     isCurrent: () => current, send: () => assert.fail('stale send'),
     wait: async () => { current = false; }, setTyping: async s => statuses.push(s)
   });
-  assert.equal(r.skipped, 'stale_or_human_takeover'); assert.deepEqual(statuses, ['on', 'off']);
+  assert.equal(r.skipped, 'stale_or_human_takeover'); assert.deepEqual(statuses, []);
 });
-test('typing failure cannot suppress a valid answer; total pauses bounded', async () => {
-  const waits = []; const r = await deliverBubbles({ enabled: true, foundationReady: true,
+test('legacy typing callback never runs; total added pauses bounded', async () => {
+  const waits = []; let typingCalls = 0;
+  const r = await deliverBubbles({ enabled: true, foundationReady: true,
     bubbles: Array(8).fill('Synthetic response.'), isCurrent: () => true,
     send: async () => ({ id: 'synthetic' }), wait: async n => waits.push(n),
-    setTyping: async () => { throw new Error('offline'); }
+    setTyping: async () => { typingCalls++; throw new Error('must not run'); }
   });
-  assert.equal(r.sent.length, 8); assert.ok(waits.reduce((a, b) => a + b, 0) <= 4000);
+  assert.equal(r.sent.length, 8); assert.equal(typingCalls, 0);
+  assert.ok(waits.reduce((a, b) => a + b, 0) <= 15000);
 });
-test('sending failure clears typing and does not fabricate a receipt', async () => {
+test('sending failure does not fabricate a receipt or call typing', async () => {
   const statuses = []; await assert.rejects(deliverBubbles({ enabled: true, foundationReady: true,
     bubbles: ['test'], isCurrent: () => true, wait: async () => {},
     send: async () => { throw new Error('failed'); }, setTyping: async s => statuses.push(s)
-  })); assert.equal(statuses.at(-1), 'off');
+  })); assert.deepEqual(statuses, []);
 });
-test('typing is off by default and API acceptance is not a visibility claim', async () => {
+test('typing stays deferred even when legacy provider flags are passed', async () => {
   let calls = 0;
-  const common = { accountId: '162472', conversationId: 'cw:1', token: 'synthetic',
-    fetchImpl: async (_url, options) => { calls++; assert.equal(JSON.parse(options.body).is_private, false); return { ok: true, status: 200 }; }
-  };
-  assert.equal((await createChatwootTypingAdapter(common)('on')).skipped, 'customer_visibility_unverified');
+  const adapter = createChatwootTypingAdapter({ accountId: '162472', conversationId: 'cw:1',
+    token: 'synthetic', dryRun: false, customerVisibilityVerified: true,
+    fetchImpl: async () => { calls++; return { ok: true, status: 200 }; }
+  });
+  assert.equal((await adapter('on')).skipped, 'typing_deferred_issue_216');
+  assert.equal((await adapter('off')).skipped, 'typing_deferred_issue_216');
   assert.equal(calls, 0);
-  const r = await createChatwootTypingAdapter({ ...common, dryRun: false, customerVisibilityVerified: true })('on');
-  assert.equal(r.accepted, true); assert.equal(calls, 1); assert.equal(r.visibleToCustomer, undefined);
+});
+test('length and bounded variation stay inside the requested pause range', () => {
+  for (const length of [0, 5, 100, 300, 10000]) for (const sample of [0, 0.25, 0.75, 1]) {
+    const n = pauseMs('x'.repeat(length), { random: () => sample });
+    assert.ok(n >= 2500 && n <= 5000);
+  }
+  assert.notEqual(pauseMs('test', { random: () => 0 }), pauseMs('test', { random: () => 1 }));
+});
+test('first response accounts for elapsed preparation without shortening later gaps', async () => {
+  const waits = [];
+  await deliverBubbles({ enabled: true, foundationReady: true, bubbles: ['a', 'b'],
+    elapsedMs: 1000, random: () => 0, isCurrent: () => true,
+    send: async () => ({}), wait: async ms => waits.push(ms)
+  });
+  assert.deepEqual(waits, [1510, 2510]);
+});
+test('slow or urgent replies skip artificial pauses entirely', async () => {
+  for (const options of [{ urgent: true }, { elapsedMs: 5000 }]) {
+    const waits = [];
+    const r = await deliverBubbles({ enabled: true, foundationReady: true,
+      bubbles: ['a', 'b', 'c'], ...options, isCurrent: () => true,
+      send: async () => ({}), wait: async n => waits.push(n)
+    });
+    assert.equal(r.sent.length, 3); assert.deepEqual(waits, []);
+  }
+});
+test('human takeover between bubbles cancels the remaining delivery', async () => {
+  let current = true;
+  const r = await deliverBubbles({ enabled: true, foundationReady: true, bubbles: ['a', 'b'],
+    isCurrent: () => current, wait: async () => {},
+    send: async () => { current = false; return { id: 'first' }; }
+  });
+  assert.equal(r.sent.length, 1); assert.equal(r.skipped, 'stale_or_human_takeover');
+});
+test('no automatic identity speech is added to a normal commercial answer', () => {
+  assert.doesNotMatch(plan({ text: 'precio y financiamiento' }).bubbles.join(' '), /asistente|disculpa|revisare/i);
+});
+test('typing stub validates state without network access', async () => {
+  await assert.rejects(createChatwootTypingAdapter()('unknown'), TypeError);
 });
