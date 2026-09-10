@@ -20,13 +20,13 @@ function state(overrides = {}) {
 test("construye una ficha consolidada con datos bariátricos útiles", () => {
   const built = buildPrivateLeadNote(state());
   assert.ok(built);
-  assert.match(built.content, /FICHA VIVA — ANTONIA/);
+  assert.doesNotMatch(built.content, /FICHA VIVA|YA INFORMADO|SIGUIENTE DATO|Actualizada automáticamente/);
   assert.match(built.content, /Lorena Ríos Echiburú/);
   assert.match(built.content, /84 kg/);
   assert.match(built.content, /1,65 m/);
   assert.match(built.content, /Manga gástrica/);
   assert.match(built.content, /2013/);
-  assert.match(built.content, /NO VOLVER A PREGUNTAR/);
+  assert.doesNotMatch(built.content, /NO VOLVER A PREGUNTAR/);
 });
 
 test("no acepta como nombre una frase capturada por error", () => {
