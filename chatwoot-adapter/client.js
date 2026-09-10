@@ -118,3 +118,62 @@ export async function sendChatwootAttachment({
   }
   return { messageId: json?.id ?? null };
 }
+
+// Crea una nota privada: visible en Chatwoot para agentes, nunca enviada al contacto.
+// No registrar su contenido en logs porque puede contener datos clínicos o personales.
+export async function sendChatwootPrivateNote({ conversationId, content }) {
+  const realId = stripConversationNamespace(conversationId);
+  if (!realId) throw new Error("sendChatwootPrivateNote: conversationId requerido");
+  if (!String(content || "").trim()) throw new Error("sendChatwootPrivateNote: content requerido");
+
+  if (isDryRun()) {
+    console.log("[chatwoot-adapter/dry-run] sendChatwootPrivateNote", {
+      conversationId: realId,
+      contentLength: String(content).length,
+      private: true,
+    });
+    return { messageId: `dry_run_private_${Date.now()}`, dryRun: true };
+  }
+
+  const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/messages`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", api_access_token: token() },
+    body: JSON.stringify({
+      content: String(content).trim(),
+      message_type: "outgoing",
+      private: true,
+      content_type: "text",
+      content_attributes: { generated_by: "antonia", kind: "live_lead_card" },
+    }),
+    signal: AbortSignal.timeout(2500),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Chatwoot private note failed ${res.status}`);
+  let json;
+  try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+  return { messageId: json?.id ?? null };
+}
+
+// Chatwoot no expone edición de contenido de mensajes en la Application API.
+// Para mantener una sola ficha viva creamos primero la nueva nota confirmada y
+// eliminamos la anterior. Esta función sólo se usa con IDs guardados por Antonia.
+export async function deleteChatwootMessage({ conversationId, messageId }) {
+  const realId = stripConversationNamespace(conversationId);
+  const realMessageId = String(messageId || "").trim();
+  if (!realId || !/^\d+$/.test(realMessageId)) {
+    // Los IDs dry-run no se eliminan por API.
+    if (isDryRun() && realMessageId.startsWith("dry_run_")) return { deleted: true, dryRun: true };
+    throw new Error("deleteChatwootMessage: ids inválidos");
+  }
+
+  if (isDryRun()) return { deleted: true, dryRun: true };
+  const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/messages/${realMessageId}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { api_access_token: token() },
+    signal: AbortSignal.timeout(2500),
+  });
+  if (!res.ok) throw new Error(`Chatwoot delete message failed ${res.status}`);
+  return { deleted: true };
+}
