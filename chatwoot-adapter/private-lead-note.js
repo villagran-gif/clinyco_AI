@@ -71,8 +71,7 @@ export function buildPrivateLeadSnapshot(state = {}) {
     studies: clean(answers.studies),
     age: answers.age ?? null,
     comorbidities: clean(answers.comorbidities),
-    smoking: clean(answers.smoking),
-    awaiting: clean(state.preevaluation?.awaiting)
+    smoking: clean(answers.smoking)
   };
 
   const meaningfulKeys = Object.keys(FIELD_LABELS).filter((key) => present(data[key]));
@@ -101,7 +100,7 @@ export function buildPrivateLeadNote(state = {}) {
   const lines = ["📋 FICHA VIVA — ANTONIA", ""];
 
   if (data.name) lines.push(`👤 Nombre: ${data.name}`);
-  else if (data.profile_name) lines.push(`👤 Perfil WhatsApp: ${data.profile_name} (sin verificar)`);
+  else if (data.profile_name) lines.push(`👤 Perfil: ${data.profile_name} (sin verificar)`);
   if (data.procedure) lines.push(`🎯 Interés: ${data.procedure}`);
   if (present(data.weight)) lines.push(`⚖️ Peso: ${formatWeight(data.weight)}`);
   if (present(data.height)) lines.push(`📏 Estatura: ${formatHeight(data.height)}`);
@@ -118,12 +117,8 @@ export function buildPrivateLeadNote(state = {}) {
 
   lines.push("", "✅ YA INFORMADO — NO VOLVER A PREGUNTAR:");
   for (const key of meaningfulKeys) lines.push(`• ${FIELD_LABELS[key]}`);
+  lines.push("", "Actualizada automáticamente por Antonia. Confirmar correcciones antes de decisiones clínicas.");
 
-  if (data.awaiting && FIELD_LABELS[data.awaiting]) {
-    lines.push("", "⏳ SIGUIENTE DATO PENDIENTE:", `• ${FIELD_LABELS[data.awaiting]}`);
-  }
-
-  lines.push("", "Actualizada automáticamente por Antonia. Confirmar identidad y correcciones antes de decisiones clínicas.");
   const content = lines.join("\n");
   const fingerprint = createHash("sha256").update(content).digest("hex").slice(0, 24);
   return { content, fingerprint, snapshot };
