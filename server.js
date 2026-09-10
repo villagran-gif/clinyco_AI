@@ -1950,9 +1950,6 @@ async function persistConversationSnapshot(conversationId, state, channel = null
   try {
     const previousScore = state.leadScore?.score ?? 0;
     state.leadScore = calculateLeadScore(state);
-    // Best-effort: maintain one private agent card with the facts Antonia already knows.
-    // This must never block persistence or a patient reply if Chatwoot notes are unavailable.
-    await maybeSyncPrivateLeadNote({ conversationId, channel, state });
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
     await trackLeadScoreChange(conversationId, state.leadScore, previousScore, channel || "message", state.system?.botMessagesSent || 0);
@@ -2491,6 +2488,8 @@ async function sendManagedReply({
 
   latestState.system.botMessagesSent += 1;
   rememberOutboundReply(latestState, deliveredReply, kind);
+  // Public reply has already been delivered. Keep the private agent card secondary.
+  await maybeSyncPrivateLeadNote({ conversationId, channel: channelLabel, state: latestState });
   let shouldSaveSummary = false;
 
   if (disableAiAfterSend) {
