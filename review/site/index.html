@@ -171,6 +171,7 @@
 <main class="container">
   <div class="tabs">
     <button class="active" onclick="showTab('dashboard')">Dashboard</button>
+    <button onclick="showTab('crm')">CRM</button>
     <button onclick="showTab('eugenia')">EugenIA</button>
     <button onclick="showTab('waha')">WhatsApp WAHA</button>
     <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
@@ -189,6 +190,19 @@
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
+  <div id="tab-crm" class="tab-content">
+    <h2>Contactos</h2>
+    <p>Abre la conversación, el contacto o la ficha desde sus iniciales.</p>
+    <label for="crm-month">Mes de actividad</label>
+    <input id="crm-month" type="month" value="2026-09" style="max-width:220px">
+    <button id="crm-refresh" type="button">Actualizar</button>
+    <p id="crm-state" role="status" aria-live="polite"></p>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Contacto ChWt</th><th>Conversación ChWt</th><th>Ficha Medinet</th></tr></thead>
+      <tbody id="crm-rows"></tbody>
+    </table></div>
+    <button id="crm-more" type="button" hidden>Cargar más</button>
+  </div>
   <div id="tab-dashboard" class="tab-content active">
     <div id="dash-loading" class="loading">Cargando dashboard...</div>
     <div id="dash-content" style="display:none">
@@ -1478,6 +1492,7 @@
     <div id="cola-history" style="font-size:12px"></div>
   </div>
 </main>
+<script src="crm-links.js"></script>
 
 <script>
 
@@ -1717,6 +1732,7 @@ window.mnHideDetail = function() {
 
 // ── Tabs ──
 function showTab(name) {
+  if (name === "crm") window.loadCrm();
   document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");

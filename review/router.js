@@ -5,6 +5,7 @@
  * All endpoints are read-only. CORS enabled for Netlify frontend.
  */
 import { Router } from "express";
+import { listLinks } from "./crm-links.js";
 import { PDFParse } from "pdf-parse";
 import {
   eugeniaAccuracy,
@@ -123,6 +124,17 @@ import {
 } from "../queue/monthly-cron.js";
 
 const router = Router();
+
+router.get("/crm/links", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  const month = req.query.month || "2026-09";
+  const offset = Number(req.query.offset || 0);
+  if (typeof month !== "string" || !/^20\d{2}-(0[1-9]|1[0-2])$/.test(month)
+    || !Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) return res.status(400).json({ error: "invalid_filter" });
+  try { return res.json({ links: await listLinks(getPool(), month, offset) }); }
+  catch { return res.status(503).json({ error: "crm_unavailable" }); }
+});
 
 // ── CORS (allow Netlify origin + localhost dev) ──
 const ALLOWED_ORIGINS = (process.env.REVIEW_CORS_ORIGINS || "")

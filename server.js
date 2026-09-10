@@ -65,6 +65,8 @@ import {
   buildAfterHoursPreferenceReply,
 } from "./after-hours.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
+import { recordContactEvent } from "./review/crm-links.js";
+import { getPool as getCrmPool } from "./review/db.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import { maybeSyncPrivateLeadNote } from "./chatwoot-adapter/private-lead-note.js";
 import reviewRouter from "./review/router.js";
@@ -3732,6 +3734,10 @@ const handleInboundWebhook = async (req, res) => {
     console.log("===== /chatwoot/inbound =====");
 
     const info = extractConversationInfo(req.body);
+    // Independent projection: failures must not stop Antonia's reply.
+    if (process.env.CRM_LINKS_SYNC_ENABLED === "true" && isChatwootPayload(req.body)) {
+      recordContactEvent(getCrmPool(), req.body).catch(() => console.warn("CRM_LINKS_SYNC_FAILED"));
+    }
     if (!info) {
       return res.status(400).json({ ok: false, error: "invalid_chatwoot_payload" });
     }
