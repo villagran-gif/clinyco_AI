@@ -66,6 +66,7 @@ import {
 } from "./after-hours.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
+import { maybeSyncPrivateLeadNote } from "./chatwoot-adapter/private-lead-note.js";
 import reviewRouter from "./review/router.js";
 import { start as startFonasapadCron } from "./queue/cron.js";
 import { start as startMonthlyCron } from "./queue/monthly-cron.js";
@@ -1949,6 +1950,9 @@ async function persistConversationSnapshot(conversationId, state, channel = null
   try {
     const previousScore = state.leadScore?.score ?? 0;
     state.leadScore = calculateLeadScore(state);
+    // Best-effort: maintain one private agent card with the facts Antonia already knows.
+    // This must never block persistence or a patient reply if Chatwoot notes are unavailable.
+    await maybeSyncPrivateLeadNote({ conversationId, channel, state });
     await upsertConversationState(conversationId, channel, state);
     await upsertStructuredLead(conversationId, channel, state);
     await trackLeadScoreChange(conversationId, state.leadScore, previousScore, channel || "message", state.system?.botMessagesSent || 0);
