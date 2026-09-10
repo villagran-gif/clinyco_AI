@@ -1,0 +1,42 @@
+name: Apply private lead note hook
+
+on:
+  push:
+    branches:
+      - feat/chatwoot-private-lead-note
+    paths:
+      - scripts/apply-private-note-hook.mjs
+      - chatwoot-adapter/private-lead-note.js
+      - chatwoot-adapter/client.js
+      - tests/chatwoot-private-lead-note.test.mjs
+      - .github/workflows/apply-private-note-hook.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/chatwoot-private-lead-note
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply minimal server hook
+        run: node scripts/apply-private-note-hook.mjs
+      - name: Run private note tests
+        run: node --test tests/chatwoot-private-lead-note.test.mjs tests/chatwoot-call-guard.test.mjs
+      - name: Commit generated hook if needed
+        run: |
+          if git diff --quiet -- server.js; then
+            echo "server.js already patched"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js
+          git commit -m "feat: conectar ficha privada al estado de conversación"
+          git push origin HEAD:feat/chatwoot-private-lead-note
