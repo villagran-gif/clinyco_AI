@@ -1,0 +1,11 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+const path='server.js'; let s=readFileSync(path,'utf8');
+const old='    // Best-effort: maintain one private agent card with the facts Antonia already knows.\n    // This must never block persistence or a patient reply if Chatwoot notes are unavailable.\n    await maybeSyncPrivateLeadNote({ conversationId, channel, state });\n    await upsertConversationState(conversationId, channel, state);';
+const repl='    await upsertConversationState(conversationId, channel, state);';
+if(!s.includes(old)) throw new Error('old persist hook not found');
+s=s.replace(old,repl);
+const anchor='  rememberOutboundReply(latestState, deliveredReply, kind);\n  let shouldSaveSummary = false;';
+const insert='  rememberOutboundReply(latestState, deliveredReply, kind);\n  // Public reply has already been delivered. Keep the private agent card secondary.\n  await maybeSyncPrivateLeadNote({ conversationId, channel: channelLabel, state: latestState });\n  let shouldSaveSummary = false;';
+if(!s.includes(anchor)) throw new Error('send hook anchor not found');
+s=s.replace(anchor,insert);
+writeFileSync(path,s,'utf8');
