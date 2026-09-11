@@ -219,7 +219,7 @@
   function openOpportunity(item=null,contact=null){
     activeOpportunity=item;activeContact=contact;
     const form=$('crm-op-form');form.reset();
-    $('crm-op-heading').textContent=item?'Ficha del DEAL':'Crear DEAL';$('crm-op-state').textContent='';
+    $('crm-op-heading').textContent=item?(item.details?.dealName || item.links?.contact?.text || 'Ficha del DEAL'):'Crear DEAL';$('crm-op-state').textContent='';
     $('crm-op-contact').replaceChildren();links($('crm-op-contact'),item?.links || contact);
     renderDealFields(item,contact);
     selectOptions(form.elements.pipeline,config.pipelines,null,item?.pipeline||$('crm-pipeline').value);form.elements.pipeline.disabled=!!item;

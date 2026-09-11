@@ -103,3 +103,30 @@ html:not(.review-locked) main.container{width:100%;max-width:none;padding:0 24px
 #tab-contacts td{background:#fff;padding:8px 10px}
 #tab-contacts label,#tab-contacts input,#tab-contacts button{font-size:13px}
 #tab-contacts button{padding:7px 12px;border-radius:3px}
+
+/* Expanded deal detail workspace, inspired by Sell's record layout. */
+#tab-crm #crm-op-dialog{width:calc(100vw - 64px);max-width:1440px;height:calc(100dvh - 64px);max-height:920px;padding:0;border:1px solid #cfd8df;border-radius:5px;background:#f5f7f9;overflow:auto}
+#crm-op-form{margin:0;min-height:100%;display:flex;flex-direction:column}
+.deal-detail-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;background:#fff;border-bottom:1px solid #dce1e5}
+.deal-detail-header small{font-size:10px;color:#788795;letter-spacing:1px}
+#tab-crm .deal-detail-header h3{font-size:22px;font-weight:500;margin:5px 0 0;overflow-wrap:anywhere}
+#tab-crm .deal-detail-header button{background:#fff;color:#526575;border:1px solid #d5dce2;white-space:nowrap}
+.deal-detail-layout{display:grid;grid-template-columns:250px minmax(0,1fr) 260px;flex:1;align-items:start}
+.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking{padding:20px;min-width:0}
+.deal-detail-properties{background:#fff;border-right:1px solid #dce1e5;align-self:stretch}
+.deal-detail-fields{padding:20px 24px}
+.deal-detail-tracking{background:#fff;border-left:1px solid #dce1e5;align-self:stretch}
+#tab-crm .deal-detail-layout h4{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#617180;margin:0 0 16px}
+#tab-crm #crm-op-dialog label{font-size:12px;margin:10px 0}
+#crm-op-contact{border-bottom:1px solid #e5e9ec;padding-bottom:12px;line-height:1.8}
+#crm-op-contact a{display:block;color:#2878bd}
+#crm-deal-fields details{background:#fff;border:1px solid #dce1e5;border-radius:3px;padding:14px;margin-bottom:12px}
+#crm-deal-fields summary{color:#39444d;font-size:13px;margin-bottom:0}
+#crm-deal-fields details[open] summary{margin-bottom:12px}
+#crm-deal-computed{display:block;font-size:12px;margin:0}
+#crm-deal-computed dt{color:#758391;margin-top:14px;font-weight:400}
+#crm-deal-computed dd{color:#39444d;margin-top:3px;padding-bottom:10px;border-bottom:1px solid #edf0f3}
+.deal-detail-footer{position:sticky;bottom:0;display:flex;align-items:center;justify-content:flex-end;gap:10px;background:#fff;border-top:1px solid #dce1e5;padding:12px 24px;z-index:4}
+#crm-op-state{margin:0 auto 0 0;color:#b42318;font-size:12px}
+@media(max-width:1100px){.deal-detail-layout{grid-template-columns:220px minmax(0,1fr)}.deal-detail-tracking{grid-column:1/-1;border-left:0;border-top:1px solid #dce1e5}#crm-deal-computed{display:grid;grid-template-columns:1fr 1fr;gap:8px}}
+@media(max-width:640px){#tab-crm #crm-op-dialog{width:100%;height:100dvh;max-height:100dvh;border-radius:0}.deal-detail-layout{display:block}.deal-detail-properties{border-right:0;border-bottom:1px solid #dce1e5}.deal-detail-header,.deal-detail-fields,.deal-detail-properties,.deal-detail-tracking{padding:16px}#tab-crm .deal-detail-header h3{font-size:18px}.deal-detail-footer{padding:12px;flex-wrap:wrap}#crm-op-state{flex-basis:100%}}
