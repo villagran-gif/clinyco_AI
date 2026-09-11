@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html lang="es" data-theme="light">
+<html lang="es" data-theme="light" class="review-locked">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clinyco Review Dashboard</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="same-origin">
+  <link rel="stylesheet" href="review-auth.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3/dist/jszip.min.js"></script>
@@ -166,9 +169,18 @@
     <h1>Clinyco Review Dashboard</h1>
     <small>EugenIA + WhatsApp WAHA + WhatsApp Zendesk — Consolidado</small>
   </div>
+  <div id="review-user"><span id="review-user-email"></span><button id="review-signout" type="button">Cerrar sesión</button></div>
   <div id="sync-status" style="margin-left:auto;font-size:.75rem;opacity:.7;text-align:right"></div>
 </div>
 
+<section id="review-login" aria-labelledby="review-login-title">
+  <h2 id="review-login-title">Acceso del equipo Clinyco</h2>
+  <p>Ingresa con tu cuenta de Google autorizada para abrir el panel y el CRM.</p>
+  <p id="review-auth-message" role="status" aria-live="polite">Verificando acceso…</p>
+  <button id="review-google-login" type="button" disabled>Continuar con Google</button>
+  <button id="review-switch-account" type="button" class="secondary" hidden>Cerrar sesión y cambiar de cuenta</button>
+  <noscript>Activa JavaScript para iniciar sesión.</noscript>
+</section>
 <main class="container">
   <div class="tabs">
     <button class="active" onclick="showTab('dashboard')">Dashboard</button>
@@ -1546,6 +1558,7 @@
     <div id="cola-history" style="font-size:12px"></div>
   </div>
 </main>
+<script src="review-auth.js"></script>
 <script src="crm-workspace.js"></script>
 <script src="crm-links.js"></script>
 
@@ -4203,7 +4216,7 @@ function hb(key) {
 }
 
 // ── Init ──
-loadDashboard();
+window.reviewAuthReady.then(allowed => { if (allowed) loadDashboard(); });
 </script>
 
 <!-- Help popup overlay -->

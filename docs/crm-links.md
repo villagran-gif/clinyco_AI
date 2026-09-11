@@ -1,10 +1,11 @@
 # Directorio CRM: primera entrega
 
-Pestaña CRM en el dashboard existente, sin Atomic ni cuentas nuevas. API pública
+Pestaña CRM en el dashboard existente, sin Atomic. API privada con acceso Google
+y correos autorizados (ver [configuración](review-google-auth.md)):
 `GET /api/review/crm/links?month=2026-09&offset=0`, páginas de 100 contactos.
 Solo devuelve tres tipos de enlaces con iniciales: contacto, conversaciones y
 ficha Medinet verificada. No devuelve RUT, nombre, teléfono, mensajes ni datos
-clínicos. Ninguna ruta pública modifica registros.
+clínicos. Todas las rutas Review requieren autenticación y autorización.
 
 ## Activación
 
@@ -42,11 +43,9 @@ de identidades es una siguiente implementación; no sustituirla por unión de no
 ## Alcance
 
 Esta entrega implementa el directorio de enlaces solicitado, no un CRM completo.
-Embudos, etapas exactas de Zendesk Sell y tareas configurables siguen pendientes:
-no se inventan etapas para llenar el tablero. Tampoco incorpora Google login.
-La API nueva es de solo lectura y permite consultar iniciales e identificadores
-de destino públicamente según la solicitud. No modifica otros endpoints antiguos
-del dashboard ni afirma que los convierte en privados.
+Las ampliaciones operativas se describen más abajo. Google login protege todo
+el router Review, incluidos los endpoints anteriores del dashboard. El directorio
+sigue mostrando iniciales y enlaces: no se han incorporado nombres de pacientes.
 
 No activar consultas de datos clínicos ni servicios restringidos por costos.
 
@@ -85,14 +84,14 @@ Un contacto puede tener una oportunidad por embudo. La misma persona puede estar
 
 - `/api/review/crm/links` conserva exactamente la proyección de iniciales y enlaces.
 - `/api/review/crm/workspace/*` sirve **metadatos operativos adicionales** (embudo, etapa, sede, responsable y tareas). No devuelve nombres de pacientes, RUT, teléfono, mensajes ni ficha clínica. Los títulos de tareas son texto introducido por el operador; usar solo instrucciones operativas, sin identificadores ni información clínica.
-- El piloto no tiene cuentas individuales: cualquiera con acceso al sitio habilitado puede operar. El chequeo de Origin reduce escrituras desde otros sitios en navegadores; NO es autenticación ni bloquea clientes HTTP externos.
+- Google Identity y la lista de correos del backend son obligatorios. El control de Origin es adicional; no sustituye la autenticación. Una cuenta autorizada puede operar el panel completo, sin roles diferenciados en esta entrega.
 - Activar deliberadamente `CRM_WORKSPACE_ENABLED=true` en el backend. Por defecto las rutas operativas devuelven 503 `crm_not_enabled`; el directorio es independiente.
-- Origen de escritura por defecto: `https://clinyco-ai.netlify.app`. Otros orígenes exactos se configuran con `CRM_ALLOWED_ORIGINS` separados por comas. Para pruebas locales añadir `http://localhost:10000`. No se aceptan comodines de subdominios Netlify.
+- La capa de autenticación permite exclusivamente el origen `https://clinyco-ai.netlify.app`. `CRM_ALLOWED_ORIGINS` no amplía esta restricción superior. Las pruebas aisladas del router CRM no acreditan autorización de localhost.
 - Las tablas `crm_pipelines`, `crm_stages`, `crm_options`, `crm_opportunities`, `crm_tasks`, `crm_changes` se crean idempotentemente al primer acceso habilitado, usando el pool de DB existente. Los catálogos de responsables/tipos empiezan vacíos y se agregan desde Configuración; no se inventan tipos históricos de Sell.
 - Desplegar backend y `review/site` del mismo commit; habilitar el flag, importar eventos con `node scripts/sync-crm-links.mjs`, verificar el directorio y activar `CRM_LINKS_SYNC_ENABLED=true` para nuevos eventos. El importador solo cubre eventos archivados disponibles; no garantiza todo Chatwoot.
 - Reversión: deshabilitar `CRM_WORKSPACE_ENABLED`; conservar tablas y registros. No borrar datos para desactivar.
 
-Las restricciones anteriores de “solo consulta de estructura” quedan superadas por esta ampliación. Continúan pendientes Google OAuth, recordatorios/recurrencias automáticas y recuperación del catálogo histórico exacto de tipos de tarea.
+Las restricciones anteriores de “solo consulta de estructura” quedan superadas por esta ampliación. Google OAuth está implementado y requiere activación según `review-google-auth.md`. Continúan pendientes recordatorios/recurrencias automáticas y recuperación del catálogo histórico exacto de tipos de tarea.
 
 ### Validación reproducible
 

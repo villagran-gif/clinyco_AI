@@ -1,10 +1,24 @@
 [build]
   publish = "."
 
-# Proxy API calls to your Express server (avoids CORS issues)
-# Replace YOUR_SERVER_URL with your actual server URL
+# Same-origin proxy; Express verifies the Netlify Identity cookie on every request.
 [[redirects]]
   from = "/api/*"
   to = "https://clinyco-ai.onrender.com/api/review/:splat"
   status = 200
   force = true
+
+# Authenticated JSON and HTML reports must never enter the shared CDN cache.
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "private, no-store"
+    Netlify-CDN-Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    Referrer-Policy = "same-origin"
+    X-Content-Type-Options = "nosniff"

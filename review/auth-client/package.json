@@ -1,0 +1,12 @@
+{
+  "name": "clinyco-review-auth-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild auth.js --bundle --platform=browser --format=iife --minify --outfile=../site/review-auth.js"
+  },
+  "dependencies": {
+    "@netlify/identity": "2.0.0",
+    "esbuild": "0.28.2"
+  }
+}

@@ -5,6 +5,7 @@
  * Legacy review endpoints plus opt-in CRM workspace.
  */
 import { Router } from "express";
+import { reviewAuth } from "./auth.js";
 import { listLinks } from "./crm-links.js";
 import { workspaceRouter } from "./crm-workspace-router.js";
 import { PDFParse } from "pdf-parse";
@@ -125,6 +126,9 @@ import {
 } from "../queue/monthly-cron.js";
 
 const router = Router();
+// Protect every review route, including CRM and direct Render requests.
+router.use(reviewAuth());
+router.get("/auth/me", (req, res) => res.json({ user: req.reviewUser }));
 router.use("/crm/workspace", workspaceRouter({ getPool }));
 
 router.get("/crm/links", async (req, res) => {
@@ -136,27 +140,6 @@ router.get("/crm/links", async (req, res) => {
     || !Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) return res.status(400).json({ error: "invalid_filter" });
   try { return res.json({ links: await listLinks(getPool(), month, offset) }); }
   catch { return res.status(503).json({ error: "crm_unavailable" }); }
-});
-
-// ── CORS (allow Netlify origin + localhost dev) ──
-const ALLOWED_ORIGINS = (process.env.REVIEW_CORS_ORIGINS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-router.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (
-    ALLOWED_ORIGINS.includes(origin) ||
-    ALLOWED_ORIGINS.includes("*") ||
-    (origin && origin.endsWith(".netlify.app"))
-  ) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  }
-  if (req.method === "OPTIONS") return res.sendStatus(204);
-  next();
 });
 
 // ── Helper: wrap async handler ──
