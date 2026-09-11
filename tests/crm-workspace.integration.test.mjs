@@ -95,12 +95,9 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
         const nameHeader=()=>w.document.querySelector('#crm-deals-table th[data-key="dealName"]');
         nameHeader().querySelector('button').click();assert.equal(nameHeader().getAttribute('aria-sort'),'descending');
         const ownerHeader=w.document.querySelector('#crm-deals-table th[data-key="owner"]');
-        [...ownerHeader.querySelectorAll('button')].find(b=>b.textContent==='Mover a la izquierda').click();
+        ownerHeader.querySelector('button').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',altKey:true,bubbles:true}));
         assert.equal(w.document.querySelectorAll('#crm-deals-table th')[1].dataset.key,'owner');
-        const filter=nameHeader().querySelector('input');filter.value='no matching deal';filter.onchange();
-        assert.match(w.document.querySelector('#crm-deals-table tbody').textContent,/No hay DEALS/);
-        [...w.document.querySelectorAll('#crm-saved-views button')].find(b=>b.textContent==='Limpiar filtros de columnas').click();
-        assert.match(w.document.querySelector('#crm-deals-table tbody').textContent,/Trato de prueba/);
+        assert.equal(w.document.querySelectorAll('#crm-deals-table th details').length,0);
         w.document.getElementById('crm-view-name').value='Mi vista';
         [...w.document.querySelectorAll('#crm-saved-views button')].find(b=>b.textContent==='Guardar vista').click();
         assert.equal(JSON.parse(w.localStorage.getItem('crm-table:operator@example.test')).views.length,1);
