@@ -12,44 +12,10 @@
     a.href = url.href; a.textContent = link.text; a.target = "_blank";
     a.rel = "noopener noreferrer"; a.style.marginRight = "0.7rem"; cell.append(a);
   }
-  let structureLoaded = false;
-  async function loadStructure() {
-    if (structureLoaded) return;
-    try {
-      const response = await fetch("crm-structure.json", { cache: "no-store" });
-      if (!response.ok) throw new Error("Unavailable");
-      const data = await response.json();
-      const select = byId("crm-pipeline");
-      select.replaceChildren();
-      for (const pipeline of data.pipelines) {
-        const option = document.createElement("option");
-        option.value = pipeline.id; option.textContent = pipeline.name; select.append(option);
-      }
-      const render = () => {
-        const pipeline = data.pipelines.find(item => item.id === select.value);
-        byId("crm-structure-info").textContent = [
-          pipeline.branches.length ? `Sedes: ${pipeline.branches.join(" · ")}` : "",
-          pipeline.labels.length ? `Etiquetas: ${pipeline.labels.join(" · ")}` : ""
-        ].filter(Boolean).join(". ");
-        byId("crm-stages").replaceChildren();
-        for (const stage of pipeline.stages) {
-          const item = document.createElement("span");
-          item.textContent = stage.name;
-          item.style.cssText = "padding:8px 12px;border:1px solid #aab4c4;border-radius:6px";
-          if (stage.group === "other") item.style.borderStyle = "dashed";
-          byId("crm-stages").append(item);
-        }
-        byId("crm-structure-state").textContent = pipeline.id === "balon"
-          ? "Allurion y Orbera son alternativas. Las etapas no se asignan automáticamente."
-          : "Las etapas no se asignan automáticamente.";
-      };
-      select.onchange = render; render(); structureLoaded = true;
-    } catch { byId("crm-structure-state").textContent = "No se pudo cargar la estructura de embudos."; }
-  }
   window.loadCrm = async (more = false) => {
     if (busy) return;
     busy = true;
-    await loadStructure();
+    window.loadCrmWorkspace?.();
     for (const id of ["crm-refresh","crm-more","crm-month"]) byId(id).disabled = true;
     if (!more) { offset = 0; byId("crm-rows").replaceChildren(); }
     byId("crm-state").textContent = "Cargando contactos…";
@@ -65,7 +31,10 @@
         const contact = tr.insertCell(), conversations = tr.insertCell(), record = tr.insertCell();
         cellLink(item.contact, contact);
         for (const link of item.conversations) cellLink(link, conversations);
-        cellLink(item.record, record); fragment.append(tr);
+        cellLink(item.record, record);
+        const actions = tr.insertCell(), add = document.createElement("button");
+        add.type = "button"; add.textContent = "Agregar al embudo";
+        add.onclick = () => window.crmAddContact(item); actions.append(add); fragment.append(tr);
       }
       byId("crm-rows").append(fragment);
       offset += data.links.length;

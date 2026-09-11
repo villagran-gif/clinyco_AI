@@ -2,10 +2,11 @@
  * review/router.js — Express router for the Review Dashboard API.
  * Mount in server.js:  app.use("/api/review", reviewRouter);
  *
- * All endpoints are read-only. CORS enabled for Netlify frontend.
+ * Legacy review endpoints plus opt-in CRM workspace.
  */
 import { Router } from "express";
 import { listLinks } from "./crm-links.js";
+import { workspaceRouter } from "./crm-workspace-router.js";
 import { PDFParse } from "pdf-parse";
 import {
   eugeniaAccuracy,
@@ -124,6 +125,7 @@ import {
 } from "../queue/monthly-cron.js";
 
 const router = Router();
+router.use("/crm/workspace", workspaceRouter({ getPool }));
 
 router.get("/crm/links", async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
