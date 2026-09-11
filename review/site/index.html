@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Clinyco Review Dashboard</title>
+  <title>SELL | Clinyco</title>
   <meta name="robots" content="noindex, nofollow">
   <meta name="referrer" content="same-origin">
   <link rel="stylesheet" href="review-auth.css">
@@ -159,6 +159,11 @@
       font-size: .8rem; margin-bottom: .5rem; background: #f8fafc;
     }
     .table-search:focus { border-color: #2563eb; outline: none; background: #fff; }
+      .secondary-footer { margin-top: 3rem; padding: 1rem 0; border-top: 1px solid #e2e8f0; }
+    .tabs.secondary-nav { border: 0; gap: .35rem 1rem; flex-wrap: wrap; margin: 0; }
+    .tabs.secondary-nav button { flex: none; padding: .25rem 0; margin: 0; font-size: 12px; font-weight: 400; color: #64748b; background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+    .tabs.secondary-nav button.active { color: #0079aa; text-decoration: underline; }
+    .tabs.secondary-nav button:hover { color: #0079aa; }
   </style>
 <link rel="stylesheet" href="crm-workspace.css">
 </head>
@@ -167,8 +172,7 @@
 
 <div class="header-bar">
   <div>
-    <h1>Clinyco Review Dashboard</h1>
-    <small>EugenIA + WhatsApp WAHA + WhatsApp Zendesk — Consolidado</small>
+    <h1>SELL</h1>
   </div>
   <div id="review-user"><span id="review-user-email"></span><button id="review-signout" type="button">Cerrar sesión</button></div>
   <div id="sync-status" style="margin-left:auto;font-size:.75rem;opacity:.7;text-align:right"></div>
@@ -183,28 +187,13 @@
   <noscript>Activa JavaScript para iniciar sesión.</noscript>
 </section>
 <main class="container">
-  <div class="tabs">
-    <button class="active" onclick="showTab('dashboard')">Dashboard</button>
-    <button onclick="showTab('crm')">Contactos</button>
-    <button onclick="showTab('eugenia')">EugenIA</button>
-    <button onclick="showTab('waha')">WhatsApp WAHA</button>
-    <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
-    <button onclick="showTab('deals')">Deals Sell</button>
-    <button onclick="showTab('gold')">Gold Analysis</button>
-    <button onclick="showTab('agents')">Agentes</button>
-    <button onclick="showTab('marketing')" style="background:#d97706;color:#fff;border-radius:6px">Marketing $</button>
-    <button onclick="showTab('kpis')">KPIs</button>
-    <button onclick="showTab('medinet')" style="background:#0d9488;color:#fff;border-radius:6px">Medinet</button>
-    <button onclick="showTab('social')" style="background:#7c3aed;color:#fff;border-radius:6px">Social IG/FB</button>
-    <button onclick="showTab('benchmarks')" style="background:#0891b2;color:#fff;border-radius:6px">Benchmarks</button>
-    <button onclick="showTab('recomendaciones')" style="background:#f59e0b;color:#fff;border-radius:6px">Recomendaciones</button>
-    <button onclick="showTab('playbook')" style="background:#dc2626;color:#fff;border-radius:6px">Playbooks</button>
-    <button onclick="showTab('competidores')" style="background:#be185d;color:#fff;border-radius:6px">Competidores</button>
-    <button onclick="showTab('cola')" style="background:#16a34a;color:#fff;border-radius:6px">Cola fonasapad</button>
-  </div>
+  <nav class="tabs primary-nav" aria-label="Navegación principal">
+    <button class="active" onclick="showTab('crm')">SELL</button>
+    <button onclick="showTab('medinet')">Medinet</button>
+  </nav>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
-  <div id="tab-crm" class="tab-content">
+  <div id="tab-crm" class="tab-content active">
     <h2>DEALS</h2>
     <div id="crm-workspace">
       <div class="crm-toolbar">
@@ -278,7 +267,7 @@
     </table></div>
     <button id="crm-more" type="button" hidden>Cargar más</button>
   </div>
-  <div id="tab-dashboard" class="tab-content active">
+  <div id="tab-dashboard" class="tab-content">
     <div id="dash-loading" class="loading">Cargando dashboard...</div>
     <div id="dash-content" style="display:none">
       <h2>EugenIA</h2>
@@ -1566,6 +1555,23 @@
     <h3 style="margin:24px 0 8px;font-size:14px;color:#475569">Últimas decisiones</h3>
     <div id="cola-history" style="font-size:12px"></div>
   </div>
+  <footer class="secondary-footer"><nav class="tabs secondary-nav" aria-label="Otras herramientas">
+    <button onclick="showTab('dashboard')">Dashboard</button>
+    <button onclick="showTab('eugenia')">EugenIA</button>
+    <button onclick="showTab('waha')">WhatsApp WAHA</button>
+    <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
+    <button onclick="showTab('deals')">Deals Sell</button>
+    <button onclick="showTab('gold')">Gold Analysis</button>
+    <button onclick="showTab('agents')">Agentes</button>
+    <button onclick="showTab('marketing')">Marketing $</button>
+    <button onclick="showTab('kpis')">KPIs</button>
+    <button onclick="showTab('social')">Social IG/FB</button>
+    <button onclick="showTab('benchmarks')">Benchmarks</button>
+    <button onclick="showTab('recomendaciones')">Recomendaciones</button>
+    <button onclick="showTab('playbook')">Playbooks</button>
+    <button onclick="showTab('competidores')">Competidores</button>
+    <button onclick="showTab('cola')">Cola fonasapad</button>
+  </nav></footer>
 </main>
 <script src="review-auth.js"></script>
 <script src="crm-workspace.js"></script>
@@ -4225,7 +4231,7 @@ function hb(key) {
 }
 
 // ── Init ──
-window.reviewAuthReady.then(allowed => { if (allowed) loadDashboard(); });
+window.reviewAuthReady.then(allowed => { if (allowed) showTab('crm'); });
 </script>
 
 <!-- Help popup overlay -->
