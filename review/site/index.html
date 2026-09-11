@@ -190,6 +190,7 @@
   <nav class="tabs primary-nav" aria-label="Navegación principal">
     <button class="active" onclick="showTab('crm')">SELL</button>
     <button onclick="showTab('medinet')">Medinet</button>
+    <button onclick="showTab('contacts')">Contactos</button>
   </nav>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -255,7 +256,9 @@
         <button type="submit">Guardar tarea</button><button type="button" data-close="crm-task-dialog">Cancelar</button>
       </form>
     </dialog>
-    <h3>Contactos</h3>
+  </div>
+  <div id="tab-contacts" class="tab-content">
+    <h2>Contactos</h2>
     <p>Abre el contacto, sus conversaciones o su ficha Medinet.</p>
     <label for="crm-month">Mes de actividad</label>
     <input id="crm-month" type="month" value="2026-09" style="max-width:220px">
@@ -1815,7 +1818,8 @@ window.mnHideDetail = function() {
 
 // ── Tabs ──
 function showTab(name) {
-  if (name === "crm") window.loadCrm();
+  if (name === "crm") window.loadCrmWorkspace?.();
+  if (name === "contacts") window.loadCrm();
   document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
