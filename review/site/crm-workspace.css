@@ -55,3 +55,42 @@ body{background:#f6f7f8}
   #tab-crm input:not([type="checkbox"]):not([type="radio"]),#tab-crm select,#tab-crm textarea{font-size:16px;min-height:40px}
   #tab-crm button:not(.crm-deal-name),#review-login button,#review-signout{min-height:40px}
 }
+
+/* Sell-style application shell: dark navigation, white workspace. */
+html:not(.review-locked) body{padding-left:168px}
+html:not(.review-locked) main.container{width:100%;max-width:none;padding:0 24px}
+.header-bar{min-height:58px;margin-bottom:0;box-shadow:0 1px 3px #23334208}
+.tabs.primary-nav{position:fixed;inset:0 auto 0 0;width:168px;z-index:20;display:flex;flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:4px;padding:82px 10px 20px;margin:0;background:#23313f;border:0;box-shadow:inset -1px 0 #17232e;overflow-y:auto}
+.tabs.primary-nav::before{content:'CLINYCO';position:absolute;top:21px;left:22px;color:#fff;font-size:13px;font-weight:700;letter-spacing:2px}
+.tabs.primary-nav button{display:flex;align-items:center;gap:12px;flex:none;width:100%;min-height:44px;padding:12px;color:#c5d0da;text-align:left;border:0;border-left:3px solid transparent;border-radius:3px;font-size:13px;font-weight:500}
+.tabs.primary-nav button::before{content:'';display:block;flex:0 0 17px;width:17px;height:17px;border:1.5px solid currentColor;border-radius:2px;background:linear-gradient(currentColor,currentColor) 0 5px/100% 1px no-repeat,linear-gradient(currentColor,currentColor) 5px 0/1px 100% no-repeat}
+.tabs.primary-nav button:nth-child(2)::before{border:0;background:linear-gradient(currentColor,currentColor) center/3px 15px no-repeat,linear-gradient(currentColor,currentColor) center/15px 3px no-repeat}
+.tabs.primary-nav button.active{background:#31485b;color:#fff;border-left-color:#4ba3e3}
+.tabs.primary-nav button:hover{background:#2c4052;color:#fff}
+.tabs.primary-nav button:focus-visible{outline:2px solid #87caff;outline-offset:2px}
+#tab-crm{padding-top:22px}
+#tab-crm>h2{font-size:20px;font-weight:500;padding-bottom:18px;margin-bottom:16px;border-bottom:1px solid #dce1e5}
+#tab-medinet{padding-top:22px}
+#crm-workspace>.crm-toolbar:first-child{background:#f0f2f4;border:1px solid #e0e5e9;padding:12px;margin:0 0 14px;border-radius:3px}
+#tab-crm .crm-toolbar button,#tab-crm #crm-columns-reset,#tab-crm #crm-board-more,#tab-crm #crm-tasks-more{background:#fff;border:1px solid #8aafd2;color:#2878bd}
+#tab-crm .crm-toolbar button:hover,#tab-crm #crm-columns-reset:hover{background:#e8f1f9;border-color:#2878bd}
+#crm-deals-table th{background:#e8ebef;color:#617180}
+#crm-deals-table th:first-child{background:#e8ebef}
+#crm-deals-table td{height:40px}
+#crm-deals-table tbody tr:focus-within td{background:#e8f2fb}
+#crm-column-picker>summary{color:#2878bd}
+.secondary-footer{margin-top:28px;padding:12px 0}
+@media(max-width:760px){
+  html:not(.review-locked) body{padding-left:76px}
+  html:not(.review-locked) main.container{padding:0 12px}
+  .tabs.primary-nav{width:76px;padding:70px 6px 12px}
+  .tabs.primary-nav::before{font-size:9px;letter-spacing:1px;left:10px;top:24px}
+  .tabs.primary-nav button{flex-direction:column;justify-content:center;gap:6px;padding:10px 3px;font-size:11px;min-height:64px}
+  .header-bar{padding:12px}
+  #sync-status{display:none}
+  #review-user{flex-wrap:wrap;gap:6px;min-width:0}
+  #review-user-email{font-size:11px}
+  #tab-crm>h2{font-size:18px}
+  .crm-toolbar label{min-width:0;max-width:100%}
+  .crm-toolbar input,.crm-toolbar select{max-width:100%}
+}
