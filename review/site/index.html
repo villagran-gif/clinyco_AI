@@ -231,16 +231,16 @@
     </div>
     <dialog id="crm-op-dialog">
       <form id="crm-op-form">
-        <h3 id="crm-op-heading">Ficha del DEAL</h3><p id="crm-op-contact"></p>
+        <header class="deal-detail-header"><div><small>SELL / DEALS</small><h3 id="crm-op-heading">Ficha del DEAL</h3></div><button type="button" data-close="crm-op-dialog" aria-label="Cerrar ficha">Cerrar ×</button></header>
+        <div class="deal-detail-layout"><aside class="deal-detail-properties"><h4>Resumen del DEAL</h4><p id="crm-op-contact"></p>
         <label>Embudo <select name="pipeline" required></select></label>
         <label>Etapa <select name="stage" required></select></label>
         <label>Sede <select name="branch"></select></label>
         <label>Responsable <select name="owner"></select></label>
         <fieldset id="crm-op-labels"><legend>Etiquetas</legend></fieldset>
-        <div id="crm-deal-fields"></div>
-        <details><summary>Datos automáticos y seguimiento</summary><dl id="crm-deal-computed"></dl></details>
-        <p id="crm-op-state" role="status"></p>
-        <button type="submit">Guardar</button><button type="button" data-close="crm-op-dialog">Cancelar</button>
+        </aside><section class="deal-detail-fields" aria-label="Datos del DEAL"><h4>Detalles</h4><div id="crm-deal-fields"></div></section>
+        <aside class="deal-detail-tracking"><h4>Seguimiento y próxima tarea</h4><dl id="crm-deal-computed"></dl></aside></div>
+        <footer class="deal-detail-footer"><p id="crm-op-state" role="status"></p><button type="button" data-close="crm-op-dialog" class="secondary">Cancelar</button><button type="submit">Guardar cambios</button></footer>
       </form>
     </dialog>
     <dialog id="crm-task-dialog">
