@@ -3,7 +3,7 @@
   const base = location.hostname === 'localhost' ? 'http://localhost:10000/api/review' : '/api';
   let config = null, loading = null, boardOffset = 0, taskOffset = 0, boardBusy = false, tasksBusy = false;
   let activeOpportunity = null, activeTask = null, activeContact = null;
-  const errors = { crm_not_enabled:'El CRM todavía no está activado en el servidor.', crm_unavailable:'No se pudo conectar con la base de datos.', already_in_pipeline:'Este contacto ya está en ese embudo.', changed_by_another_operator:'Otra persona modificó este registro. Cierra el formulario, actualiza y vuelve a abrirlo.', invalid_fields:'Revisa los campos y selecciona valores del catálogo.', origin_not_allowed:'Este sitio no está habilitado para guardar cambios.', contact_not_imported:'El contacto todavía no está importado.' };
+  const errors = { conversation_not_imported:'Esta conversación aún no está sincronizada. Intenta nuevamente en unos minutos.', conversation_contact_mismatch:'La conversación no corresponde al contacto seleccionado.', crm_not_enabled:'El CRM todavía no está activado en el servidor.', crm_unavailable:'No se pudo conectar con la base de datos.', already_in_pipeline:'Este contacto ya está en ese embudo.', changed_by_another_operator:'Otra persona modificó este registro. Cierra el formulario, actualiza y vuelve a abrirlo.', invalid_fields:'Revisa los campos y selecciona valores del catálogo.', origin_not_allowed:'Este sitio no está habilitado para guardar cambios.', contact_not_imported:'El contacto todavía no está importado.' };
   async function api(path, body, method = 'POST') {
     const response = await fetch(`${base}/crm/workspace${path}`, body === undefined ? {cache:'no-store'} : {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data = await response.json();
@@ -100,7 +100,7 @@
   function openOpportunity(item=null,contact=null){
     activeOpportunity=item;activeContact=contact;
     const form=$('crm-op-form');form.reset();
-    $('crm-op-heading').textContent=item?'Editar oportunidad':'Agregar a un embudo';$('crm-op-state').textContent='';
+    $('crm-op-heading').textContent=item?'Editar DEAL':'Crear DEAL';$('crm-op-state').textContent='';
     selectOptions(form.elements.pipeline,config.pipelines,null,item?.pipeline||$('crm-pipeline').value);form.elements.pipeline.disabled=!!item;
     selectOptions(form.elements.owner,config.owners,'Sin responsable',item?.owner||'');opportunityFields(item);
     $('crm-op-dialog').showModal();
@@ -112,7 +112,7 @@
     try{
       const payload={pipeline:form.elements.pipeline.value,stage:form.elements.stage.value,branch:form.elements.branch.value,owner:form.elements.owner.value,labels:[...form.querySelectorAll('[name=labels]:checked')].map(e=>e.value)};
       if(activeOpportunity)payload.version=activeOpportunity.version;
-      else payload.contactId=new URL(activeContact.contact.url).pathname.split('/').pop();
+      else { payload.contactId=new URL(activeContact.contact.url).pathname.split('/').pop(); if(activeContact.sourceConversationId)payload.sourceConversationId=activeContact.sourceConversationId; }
       await api(activeOpportunity?`/opportunities/${activeOpportunity.id}`:'/opportunities',payload,activeOpportunity?'PUT':'POST');
       $('crm-op-dialog').close();$('crm-pipeline').value=payload.pipeline;populateConfig();await loadBoard();
     }catch(e){$('crm-op-state').textContent=e.message;}finally{b.disabled=false;}
@@ -146,5 +146,20 @@
   $('crm-board-refresh').onclick=()=>loadBoard();$('crm-board-more').onclick=()=>loadBoard(true);
   for(const id of ['crm-task-filter','crm-task-owner-filter'])$(id).onchange=()=>loadTasks();
   $('crm-tasks-refresh').onclick=()=>loadTasks();$('crm-tasks-more').onclick=()=>loadTasks(true);
+  const incomingDeal = new URLSearchParams(location.search).get('dealConversation');
+  if (/^\d+$/.test(incomingDeal || '')) sessionStorage.setItem('crm-pending-conversation',incomingDeal);
+  window.reviewAuthReady?.then(async allowed => {
+    if (!allowed) return;
+    const id = sessionStorage.getItem('crm-pending-conversation');
+    if (!/^\d+$/.test(id || '')) return;
+    window.showTab('crm');
+    try {
+      await ensureConfig();
+      const contact = await api(`/conversations/${id}`);
+      openOpportunity(null,contact);
+      sessionStorage.removeItem('crm-pending-conversation');
+      history.replaceState(null,'',location.pathname);
+    } catch(e) { $('crm-workspace-state').textContent=e.message; }
+  });
   window.loadCrmWorkspace=()=>Promise.all([loadBoard(),loadTasks()]);
 })();

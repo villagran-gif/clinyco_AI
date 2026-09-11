@@ -1,5 +1,5 @@
 import { Router, json } from 'express';
-import { board, tasks, configuration, addOption, saveOpportunity, saveTask, CrmError } from './crm-workspace.js';
+import { board, tasks, configuration, addOption, saveOpportunity, saveTask, conversationContact, CrmError } from './crm-workspace.js';
 export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKSPACE_ENABLED === 'true', allowedOrigins = () => ['https://clinyco-ai.netlify.app', ...(process.env.CRM_ALLOWED_ORIGINS || '').split(',').filter(Boolean)] }) {
   const router = Router();
   router.use((req,res,next) => {
@@ -17,6 +17,7 @@ export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKS
     try { res.json(await fn(req)); }
     catch(e) { res.status(e instanceof CrmError ? e.status : 503).json({error:e instanceof CrmError ? e.message : 'crm_unavailable'}); }
   };
+  router.get('/conversations/:id',route(req=>conversationContact(getPool(),req.params.id)));
   router.get('/config',route(()=>configuration(getPool())));
   router.post('/options',route(async req=>{ await addOption(getPool(),req.body); return {saved:true}; }));
   router.get('/opportunities',route(req=>board(getPool(),req.query)));
