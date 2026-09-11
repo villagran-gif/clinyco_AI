@@ -185,7 +185,7 @@
 <main class="container">
   <div class="tabs">
     <button class="active" onclick="showTab('dashboard')">Dashboard</button>
-    <button onclick="showTab('crm')">CRM</button>
+    <button onclick="showTab('crm')">Contactos</button>
     <button onclick="showTab('eugenia')">EugenIA</button>
     <button onclick="showTab('waha')">WhatsApp WAHA</button>
     <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
@@ -205,7 +205,7 @@
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
   <div id="tab-crm" class="tab-content">
-    <h2>CRM</h2>
+    <h2>DEALS</h2>
     <div id="crm-workspace">
       <div class="crm-toolbar">
         <label>Embudo <select id="crm-pipeline"></select></label>
@@ -259,13 +259,13 @@
       </form>
     </dialog>
     <h3>Contactos</h3>
-    <p>Abre la conversación, el contacto o la ficha desde sus iniciales.</p>
+    <p>Abre el contacto, sus conversaciones o su ficha Medinet.</p>
     <label for="crm-month">Mes de actividad</label>
     <input id="crm-month" type="month" value="2026-09" style="max-width:220px">
     <button id="crm-refresh" type="button">Actualizar</button>
     <p id="crm-state" role="status" aria-live="polite"></p>
     <div style="overflow-x:auto"><table>
-      <thead><tr><th>Contacto ChWt</th><th>Conversación ChWt</th><th>Ficha Medinet</th><th>CRM</th></tr></thead>
+      <thead><tr><th>Contacto ChWt</th><th>Conversación ChWt</th><th>Ficha Medinet</th><th>DEALS</th></tr></thead>
       <tbody id="crm-rows"></tbody>
     </table></div>
     <button id="crm-more" type="button" hidden>Cargar más</button>

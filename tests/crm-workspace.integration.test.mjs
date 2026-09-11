@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import { ensureWorkspace, configuration, addOption, saveOpportunity, board, saveTask, tasks } from '../review/crm-workspace.js';
+import { ensureWorkspace, configuration, addOption, saveOpportunity, board, saveTask, tasks, conversationContact } from '../review/crm-workspace.js';
 import express from 'express';
 import { workspaceRouter } from '../review/crm-workspace-router.js';
 import { publicLinks, recordContactEvent } from '../review/crm-links.js';
@@ -28,7 +28,13 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
     await addOption(pool,{kind:'task_type',value:'Seguimiento'});
     const cfg=await configuration(pool); assert.equal(cfg.pipelines.length,3);
     const input={contactId:'123',pipeline:'bariatrica',stage:'bariatrica_1',branch:'Santiago',labels:['Conversión'],owner:'Ejecutiva de prueba'};
-    const op=await saveOpportunity(pool,input);
+    const context=await conversationContact(pool,'456');
+    assert.equal(context.sourceConversationId,'456');
+    assert.equal(context.contact.text,'Nombre reciente');
+    await assert.rejects(conversationContact(pool,'999'),e=>e.status===404);
+    await assert.rejects(saveOpportunity(pool,{...input,sourceConversationId:'999'}),e=>e.message==='conversation_contact_mismatch');
+    const op=await saveOpportunity(pool,{...input,sourceConversationId:'456'});
+    assert.equal(op.sourceConversationId,'456');
     await assert.rejects(saveOpportunity(pool,input),e=>e.status===409);
     await assert.rejects(saveOpportunity(pool,{...input,stage:'balon_1'}),e=>e.status===400);
     await assert.rejects(saveOpportunity(pool,{...input,branch:'Inventada'}),e=>e.status===400);

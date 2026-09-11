@@ -33,7 +33,7 @@
         for (const link of item.conversations) cellLink({...link, text: "Conversación"}, conversations);
         cellLink(item.record && {...item.record, text: "Ficha Medinet"}, record);
         const actions = tr.insertCell(), add = document.createElement("button");
-        add.type = "button"; add.textContent = "Agregar al embudo";
+        add.type = "button"; add.textContent = "Crear DEAL";
         add.onclick = () => window.crmAddContact(item); actions.append(add); fragment.append(tr);
       }
       byId("crm-rows").append(fragment);

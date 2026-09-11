@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS crm_opportunities (
  version integer NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  FOREIGN KEY(pipeline_id,stage_id) REFERENCES crm_stages(pipeline_id,id), UNIQUE(contact_id,pipeline_id)
 );
+ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS source_conversation_id text REFERENCES crm_link_conversations(conversation_id);
 CREATE TABLE IF NOT EXISTS crm_tasks (
  id uuid PRIMARY KEY, opportunity_id uuid NOT NULL REFERENCES crm_opportunities(id), title text NOT NULL,
  owner text NOT NULL DEFAULT '', task_type text NOT NULL DEFAULT '', due_at timestamptz,
@@ -89,7 +90,7 @@ async function optionsExist(c, fields) {
     if (!r.rows.length) bad();
   }
 }
-const opportunity = row => ({ id: row.id, pipeline: row.pipeline_id, stage: row.stage_id, branch: row.branch, labels: row.labels, owner: row.owner, version: row.version });
+const opportunity = row => ({ id: row.id, pipeline: row.pipeline_id, stage: row.stage_id, branch: row.branch, labels: row.labels, owner: row.owner, version: row.version, sourceConversationId: row.source_conversation_id || null });
 const task = row => ({ id: row.id, opportunityId: row.opportunity_id, title: row.title, owner: row.owner, type: row.task_type, due: row.due_at ? new Date(row.due_at).toISOString() : null, status: row.completed_at ? 'done' : 'pending', completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, version: row.version });
 export async function configuration(pool) {
   await ensureWorkspace(pool);
@@ -116,8 +117,13 @@ export async function saveOpportunity(pool, input, id = null) {
       result = await c.query(`UPDATE crm_opportunities SET stage_id=$2,branch=$3,labels=$4::jsonb,owner=$5,version=version+1,updated_at=now() WHERE id=$1 RETURNING *`,[id,values.stage,values.branch,JSON.stringify(values.labels),values.owner]);
     } else {
       if (!(await c.query('SELECT 1 FROM crm_link_contacts WHERE contact_id=$1',[String(input.contactId)])).rows.length) throw new CrmError(404,'contact_not_imported');
+      if (input.sourceConversationId != null) {
+        if (!/^\d+$/.test(String(input.sourceConversationId))) bad();
+        const linked = await c.query('SELECT 1 FROM crm_link_conversations WHERE conversation_id=$1 AND contact_id=$2 FOR SHARE',[String(input.sourceConversationId),String(input.contactId)]);
+        if (!linked.rows.length) throw new CrmError(400,'conversation_contact_mismatch');
+      }
       id = randomUUID();
-      result = await c.query(`INSERT INTO crm_opportunities(id,contact_id,pipeline_id,stage_id,branch,labels,owner) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) ON CONFLICT(contact_id,pipeline_id) DO NOTHING RETURNING *`,[id,String(input.contactId),values.pipeline,values.stage,values.branch,JSON.stringify(values.labels),values.owner]);
+      result = await c.query(`INSERT INTO crm_opportunities(id,contact_id,pipeline_id,stage_id,branch,labels,owner,source_conversation_id) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8) ON CONFLICT(contact_id,pipeline_id) DO NOTHING RETURNING *`,[id,String(input.contactId),values.pipeline,values.stage,values.branch,JSON.stringify(values.labels),values.owner,input.sourceConversationId == null ? null : String(input.sourceConversationId)]);
       if (!result.rows.length) throw new CrmError(409,'already_in_pipeline');
     }
     await audit(c,'opportunity',id,before,result.rows[0]); return opportunity(result.rows[0]);
@@ -170,4 +176,13 @@ export async function tasks(pool, query) {
       OR ($3='overdue' AND t.completed_at IS NULL AND t.due_at<now()))
     ORDER BY t.due_at ASC NULLS LAST,t.created_at,t.id LIMIT 101 OFFSET $4`,[id,owner,status,pageOffset]);
   return {items:rows.slice(0,100).map(r=>({...task(r),links:publicLinks(r)})),more:rows.length>100};
+}
+
+export async function conversationContact(pool, id) {
+  if (!/^\d+$/.test(String(id || ''))) bad();
+  await ensureWorkspace(pool);
+  const {rows} = await pool.query(`SELECT c.display_name,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
+    ARRAY[$1::text] AS conversation_ids FROM crm_link_conversations v JOIN crm_link_contacts c ON c.contact_id=v.contact_id WHERE v.conversation_id=$1`,[String(id)]);
+  if (!rows.length) throw new CrmError(404,'conversation_not_imported');
+  return {...publicLinks(rows[0]),sourceConversationId:String(id)};
 }
