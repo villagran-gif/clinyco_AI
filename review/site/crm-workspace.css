@@ -94,3 +94,12 @@ html:not(.review-locked) main.container{width:100%;max-width:none;padding:0 24px
   .crm-toolbar label{min-width:0;max-width:100%}
   .crm-toolbar input,.crm-toolbar select{max-width:100%}
 }
+
+/* Contact directory is a separate, secondary workspace. */
+#tab-contacts{padding-top:22px;font-size:13px;color:#39444d}
+#tab-contacts h2{font-size:20px;font-weight:500;color:#39444d}
+#tab-contacts table{font-size:12px}
+#tab-contacts th{background:#e8ebef;color:#617180}
+#tab-contacts td{background:#fff;padding:8px 10px}
+#tab-contacts label,#tab-contacts input,#tab-contacts button{font-size:13px}
+#tab-contacts button{padding:7px 12px;border-radius:3px}

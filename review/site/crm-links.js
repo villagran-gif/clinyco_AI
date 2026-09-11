@@ -15,7 +15,6 @@
   window.loadCrm = async (more = false) => {
     if (busy) return;
     busy = true;
-    window.loadCrmWorkspace?.();
     for (const id of ["crm-refresh","crm-more","crm-month"]) byId(id).disabled = true;
     if (!more) { offset = 0; byId("crm-rows").replaceChildren(); }
     byId("crm-state").textContent = "Cargando contactos…";
@@ -34,7 +33,7 @@
         cellLink(item.record && {...item.record, text: "Ficha Medinet"}, record);
         const actions = tr.insertCell(), add = document.createElement("button");
         add.type = "button"; add.textContent = "Crear DEAL";
-        add.onclick = () => window.crmAddContact(item); actions.append(add); fragment.append(tr);
+        add.onclick = () => { window.showTab("crm"); window.crmAddContact(item); }; actions.append(add); fragment.append(tr);
       }
       byId("crm-rows").append(fragment);
       offset += data.links.length;
