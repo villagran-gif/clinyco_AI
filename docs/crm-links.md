@@ -107,3 +107,7 @@ CRM_TEST_PGLITE_PATH=/tmp/crm-validation/node_modules/@electric-sql/pglite/dist/
 La integración usa PostgreSQL WASM aislado con datos sintéticos; el adaptador omite el advisory lock multi-proceso. No acredita conectividad, permisos ni capacidad de la DB de producción. Verifica persistencia, etapas por embudo, duplicados, conflicto de versiones, tarea vencida/completada/reabierta, filtros y restricciones HTTP de origen.
 
 Prueba de formularios (DOM simulado, sin verificación visual): instalar `jsdom` en la misma carpeta temporal y añadir `CRM_TEST_JSDOM_PATH=/tmp/crm-validation/node_modules/jsdom/lib/api.js` al comando de integración. Comprueba cargar tablero, editar etapa y guardar una tarea desde los formularios.
+
+### Sincronización automática desde el archivo existente
+
+`CRM_LINKS_SYNC_FROM=2026-09-01` junto con `CRM_LINKS_SYNC_ENABLED=true` activa un proceso incremental dentro del servicio actual. Proyecta campos mínimos de eventos archivados, en lotes de 100, con checkpoint persistente en `crm_sync_progress` y exclusión entre instancias. Reintenta al minuto si falla. No llama a Chatwoot ni a modelos, ni importa textos clínicos. La primera ejecución carga el archivo desde septiembre; después sigue los nuevos eventos. No reemplaza la verificación de cobertura total de Chatwoot.
