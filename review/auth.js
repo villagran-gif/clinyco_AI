@@ -42,10 +42,12 @@ export function reviewAuth({ fetchImpl = globalThis.fetch, allowedEmails = () =>
       user = await response.json();
     } catch { return fail(503, 'identity_unavailable'); }
     // These are fields returned by the trusted Identity service, not the browser.
+    // app_metadata.provider describes account creation, not the current login.
+    // Invited users can authenticate through Google while retaining provider=email.
+    // Authorize only the Identity-validated, confirmed, explicitly allowed account.
     const denialReason = !user?.id || typeof user.email !== 'string' ? 'invalid_identity'
       : !emails.has(user.email.toLowerCase()) ? 'email_not_allowed'
-      : !user.confirmed_at ? 'email_not_confirmed'
-      : user.app_metadata?.provider !== 'google' ? 'google_required' : null;
+      : !user.confirmed_at ? 'email_not_confirmed' : null;
     if (denialReason) {
       return res.status(403).json({ error: 'account_not_authorized', reason: denialReason });
     }
