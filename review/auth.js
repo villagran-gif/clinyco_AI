@@ -42,9 +42,12 @@ export function reviewAuth({ fetchImpl = globalThis.fetch, allowedEmails = () =>
       user = await response.json();
     } catch { return fail(503, 'identity_unavailable'); }
     // These are fields returned by the trusted Identity service, not the browser.
-    if (!user?.id || !user.confirmed_at || user.app_metadata?.provider !== 'google'
-      || typeof user.email !== 'string' || !emails.has(user.email.toLowerCase())) {
-      return fail(403, 'account_not_authorized');
+    const denialReason = !user?.id || typeof user.email !== 'string' ? 'invalid_identity'
+      : !emails.has(user.email.toLowerCase()) ? 'email_not_allowed'
+      : !user.confirmed_at ? 'email_not_confirmed'
+      : user.app_metadata?.provider !== 'google' ? 'google_required' : null;
+    if (denialReason) {
+      return res.status(403).json({ error: 'account_not_authorized', reason: denialReason });
     }
     // Deliberately no authorization cache: removing a user or allowed email
     // takes effect on the next request once the server config is updated.

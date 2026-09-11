@@ -110,3 +110,16 @@ test('a removed account is checked again on its next request', async () => {
   await middleware(req, res, () => count++);
   assert.equal(count, 1); assert.equal(res.code, 403);
 });
+
+ test('denial details distinguish email, confirmation and provider without granting access', async () => {
+  for (const [user, reason] of [
+    [{ ...validUser, email: 'other@example.test' }, 'email_not_allowed'],
+    [{ ...validUser, confirmed_at: null }, 'email_not_confirmed'],
+    [{ ...validUser, app_metadata: { provider: 'email' } }, 'google_required'],
+  ]) {
+    const { res } = await request({ user });
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.nextCalled, false);
+    assert.deepEqual(res.body, { error: 'account_not_authorized', reason });
+  }
+});
