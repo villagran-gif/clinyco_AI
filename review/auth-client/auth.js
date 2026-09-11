@@ -5,7 +5,12 @@ const nativeFetch = window.fetch.bind(window);
 let authorized = false;
 let initialized = false;
 let checking = false;
+let sessionEmail = '';
 const messages = {
+  google_required: 'Esta sesión no está identificada como Google. Pulsa Continuar con Google y elige tu correo autorizado.',
+  email_not_confirmed: 'Identity todavía no confirma esta cuenta. Completa el ingreso con Google usando el mismo correo invitado.',
+  email_not_allowed: 'La cuenta seleccionada no está en la lista de acceso. Cambia a tu correo autorizado.',
+  invalid_identity: 'Identity devolvió una cuenta incompleta. Cierra sesión y vuelve a ingresar.',
   authentication_required: 'Inicia sesión con tu cuenta de Google autorizada.',
   invalid_session: 'Tu sesión venció. Vuelve a ingresar con Google.',
   account_not_authorized: 'Este correo no tiene acceso. Solicita su autorización al administrador.',
@@ -16,7 +21,7 @@ const messages = {
 function lock(message) {
   authorized = false;
   document.documentElement.classList.add('review-locked');
-  $('review-auth-message').textContent = message;
+  $('review-auth-message').textContent = sessionEmail ? `${message} Cuenta seleccionada: ${sessionEmail}` : message;
   // Clear the loaded workspace and any open dialogs after loss of access.
   // A new successful login reloads the clean document.
   if (initialized) {
@@ -29,7 +34,7 @@ function lock(message) {
 async function checkAccess() {
   const response = await nativeFetch('/api/auth/me', { credentials: 'same-origin', cache: 'no-store' });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(messages[data.error] || 'No se pudo verificar el acceso. Intenta nuevamente.');
+  if (!response.ok) throw new Error(messages[data.reason] || messages[data.error] || 'No se pudo verificar el acceso. Intenta nuevamente.');
   if (typeof data.user?.email !== 'string') throw new Error('No se pudo verificar el acceso.');
   return data.user;
 }
@@ -82,6 +87,7 @@ async function start() {
     $('review-google-login').disabled = false;
     const user = await getUser();
     if (!user) { lock(messages.authentication_required); return false; }
+    sessionEmail = user.email || '';
     $('review-switch-account').hidden = false;
     const verified = await checkAccess();
     authorized = true;
