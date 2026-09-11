@@ -154,3 +154,13 @@ html:not(.review-locked) main.container{width:100%;max-width:none;padding:0 24px
 #crm-deals-table .crm-inline-edit{display:inline-block;min-height:24px;padding:2px 5px;margin-left:8px;background:transparent;color:#2878bd;border:0}
 #crm-column-options label[hidden]{display:none}
 #crm-saved-views{border-top:1px solid #e0e5e9;padding-top:10px}
+/* Record properties follow the supplied Sell layout. */
+.deal-detail-layout{grid-template-columns:300px minmax(0,1fr) 280px}
+#crm-deal-side-fields{border-top:1px solid #e0e5e9;margin-top:16px;padding-top:8px}
+#tab-crm #crm-deal-side-fields label,#tab-crm #crm-deal-team-fields label{font-size:12px;margin:14px 0;gap:5px}
+#crm-deal-side-fields a{overflow-wrap:anywhere;font-size:12px}
+#tab-crm .deal-small-value{max-width:150px}
+#tab-crm .deal-small-value input{font-size:13px;padding:5px 8px;min-height:30px}
+#crm-deal-team-fields{border-top:1px solid #e0e5e9;margin-top:20px;padding-top:16px}
+@media(max-width:1100px){.deal-detail-layout{grid-template-columns:240px minmax(0,1fr)}}
+@media(max-width:640px){.deal-detail-layout{display:block}}

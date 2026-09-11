@@ -216,6 +216,7 @@
   }
   function renderDealFields(item,contact){
     const root=$('crm-deal-fields');root.replaceChildren();
+    $('crm-deal-side-fields')?.replaceChildren();$('crm-deal-team-fields')?.replaceChildren();
     const data=item?.details || {};
     let group=null, grid=null;
     for(const field of config.dealFields || []){
@@ -235,6 +236,19 @@
         }
       }
     }
+    // Move existing controls, preserving IDs and the single save payload.
+    let side=$('crm-deal-side-fields');if(!side){side=element('div');side.id='crm-deal-side-fields';document.querySelector('.deal-detail-properties').append(side);}side.replaceChildren();
+    let team=$('crm-deal-team-fields');if(!team){team=element('section');team.id='crm-deal-team-fields';document.querySelector('.deal-detail-tracking').append(team);}team.replaceChildren();team.append(element('h4','Equipo y colaboradores'));
+    const sideOrder=['medinetUrl','examsUrl','idDocument','bariatricSurgeon','phone','email','city','coverage','birthDate','value','weight','height','interest','origin'];
+    const identification=['dealName','idDocument','birthDate','email','phone','city'];
+    for(const field of config.dealFields || []){
+      const label=$('deal-field-'+field.key)?.closest('label');if(!label)continue;
+      if(field.key==='value')label.classList.add('deal-small-value');
+      if(['Equipo médico','Colaboradores por procedimiento'].includes(field.group))team.append(label);
+      else if(!identification.includes(field.key))side.append(label);
+    }
+    for(const key of sideOrder){const label=$('deal-field-'+key)?.closest('label');if(label?.parentElement===side)side.append(label);}
+    for(const section of [...root.querySelectorAll('details')])if(!section.querySelector('label'))section.remove();
     const dl=$('crm-deal-computed');dl.replaceChildren();
     const add=(label,value)=>{dl.append(element('dt',label),element('dd',value==null || value===''?'—':String(value)));};
     add('ID del trato',item?.id || 'Se asigna al guardar');
