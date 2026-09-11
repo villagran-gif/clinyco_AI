@@ -29,7 +29,7 @@ test('empty allowlist fails closed even for valid sessions', async () => {
   const { res, calls } = await request({ emails: ' , ' });
   assert.equal(res.statusCode, 503); assert.equal(calls.length, 0);
 });
-test('accepts only a Google account verified by the pinned Identity endpoint and exact allowlist', async () => {
+test('accepts an account verified by the pinned Identity endpoint and exact allowlist', async () => {
   const { req, res, calls } = await request({ emails: 'other@example.test, OPERATOR@example.test ' });
   assert.equal(res.nextCalled, true);
   assert.deepEqual(req.reviewUser, { id: validUser.id, email: validUser.email });
@@ -43,11 +43,10 @@ test('a valid Google session is insufficient without explicit authorization', as
     assert.equal(res.statusCode, 403); assert.equal(res.nextCalled, false);
   }
 });
-test('rejects email/password, unconfirmed users and spoofed user-controlled provider metadata', async () => {
+test('rejects unconfirmed, incomplete and spoofed unapproved identities', async () => {
   for (const user of [
     { ...validUser, confirmed_at: null },
-    { ...validUser, app_metadata: { provider: 'email' }, user_metadata: { provider: 'google' } },
-    { ...validUser, app_metadata: undefined },
+    { ...validUser, email: 'outsider@example.test', user_metadata: { provider: 'google', email: validUser.email } },
     { ...validUser, id: null },
     null,
   ]) {
@@ -111,15 +110,25 @@ test('a removed account is checked again on its next request', async () => {
   assert.equal(count, 1); assert.equal(res.code, 403);
 });
 
- test('denial details distinguish email, confirmation and provider without granting access', async () => {
+ test('denial details distinguish email and confirmation without granting access', async () => {
   for (const [user, reason] of [
     [{ ...validUser, email: 'other@example.test' }, 'email_not_allowed'],
     [{ ...validUser, confirmed_at: null }, 'email_not_confirmed'],
-    [{ ...validUser, app_metadata: { provider: 'email' } }, 'google_required'],
   ]) {
     const { res } = await request({ user });
     assert.equal(res.statusCode, 403);
     assert.equal(res.nextCalled, false);
     assert.deepEqual(res.body, { error: 'account_not_authorized', reason });
+  }
+});
+
+test('invited accounts remain authorized regardless of historical creation-provider metadata', async () => {
+  for (const app_metadata of [{ provider: 'email' }, {}, undefined]) {
+    const { res, req } = await request({ user: { ...validUser, app_metadata } });
+    assert.equal(res.nextCalled, true);
+    assert.equal(req.reviewUser.email, validUser.email);
+    const denied = await request({ user: { ...validUser, app_metadata }, emails: 'other@example.test' });
+    assert.equal(denied.res.statusCode, 403);
+    assert.equal(denied.res.nextCalled, false);
   }
 });
