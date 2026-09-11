@@ -26,7 +26,7 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
     await pool.query("INSERT INTO crm_link_activity(contact_id,activity_day) VALUES ('123','2026-09-10') ON CONFLICT DO NOTHING");
     await addOption(pool,{kind:'owner',value:'Ejecutiva de prueba'});
     await addOption(pool,{kind:'task_type',value:'Seguimiento'});
-    const cfg=await configuration(pool); assert.equal(cfg.pipelines.length,3);
+    const cfg=await configuration(pool); assert.equal(cfg.pipelines.length,4);
     const input={contactId:'123',pipeline:'bariatrica',stage:'bariatrica_1',branch:'Santiago',labels:['Conversión'],owner:'Ejecutiva de prueba'};
     const context=await conversationContact(pool,'456');
     assert.equal(context.sourceConversationId,'456');

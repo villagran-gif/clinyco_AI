@@ -1,5 +1,6 @@
 import {readFile} from 'node:fs/promises';
 import {normalizeRut} from '../extraction/identity-normalizers.js';
+import {normalizeDealUrl, normalizePhone} from './deal-link-normalizers.js';
 export const dealFields = JSON.parse(await readFile(new URL('./site/deal-fields.json',import.meta.url),'utf8'));
 export class DealFieldError extends Error {}
 const fail = field => { throw new DealFieldError(`Revisa el campo «${field}».`); };
@@ -29,7 +30,7 @@ export function validateDealDetails(input) {
       let u; try {u=new URL(v);} catch {fail(f.label);}
       if (u.protocol!=='https:' || u.username || u.password || u.port) fail(f.label);
       if (f.key==='medinetUrl' && (u.hostname!=='clinyco.medinetapp.com' || !/^\/pacientes\/ficha\/(?:\d+\/\d+|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}(?:\/\d+)?)\/?$/i.test(u.pathname) || u.search || u.hash)) fail(f.label);
-      if (f.key==='examsUrl' && u.hostname!=='drive.google.com') fail(f.label);
+      if (f.key==='examsUrl' && !normalizeDealUrl('examsUrl',v)) fail(f.label);
     }
     result[f.key]=v;
   }
@@ -41,8 +42,7 @@ export function computedDealDetails(details={}, date=today()) {
     const [y,m,d]=details.birthDate.split('-').map(Number), [ty,tm,td]=date.split('-').map(Number);
     age=ty-y-(tm<m || (tm===m && td<d) ? 1 : 0);
   }
-  let phone=String(details.phone || '').replace(/\D/g,'');
-  if (/^9\d{8}$/.test(phone)) phone=`56${phone}`;
+  const phone=normalizePhone(details.phone)?.slice(1);
   return { age, bmi:details.weight && details.height ? Math.round(details.weight / ((details.height/100)**2)*10)/10 : null,
     normalizedRut:/^[\d.kK-]+$/.test(details.idDocument || '') ? normalizeRut(details.idDocument)?.replace('-','') || null : null,
     whatsappUrl:/^[1-9]\d{7,14}$/.test(phone) ? `https://wa.me/${phone}` : null };
