@@ -84,7 +84,16 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
         await w.loadCrmWorkspace();
         assert.equal(w.document.querySelectorAll('.crm-column').length,8);
         assert.equal(w.document.querySelectorAll('.crm-card').length,1);
-        const edit=[...w.document.querySelectorAll('.crm-card button')].find(b=>b.textContent==='Abrir ficha');edit.click();
+        assert.equal(w.document.getElementById('crm-board').hidden,true);
+        assert.equal(w.document.getElementById('crm-table-wrap').hidden,false);
+        assert.equal(w.document.querySelectorAll('#crm-deals-table tbody tr').length,1);
+        assert.match(w.document.getElementById('crm-deals-table').textContent,/Trato de prueba/);
+        const ageBox=[...w.document.querySelectorAll('#crm-column-options label')].find(l=>l.textContent==='Edad').querySelector('input');
+        ageBox.click();assert.match(w.document.querySelector('#crm-deals-table thead').textContent,/Edad/);
+        assert.ok(JSON.parse(w.localStorage.getItem('crm-deal-columns')).includes('age'));
+        w.document.getElementById('crm-view-board').click();assert.equal(w.document.getElementById('crm-board').hidden,false);
+        w.document.getElementById('crm-view-table').click();assert.equal(w.document.getElementById('crm-board').hidden,true);
+        w.document.querySelector('.crm-deal-name').click();
         const form=w.document.getElementById('crm-op-form');
         assert.ok(w.document.getElementById('crm-op-dialog').open);
         assert.equal(w.document.getElementById('deal-field-weight').value,'90');

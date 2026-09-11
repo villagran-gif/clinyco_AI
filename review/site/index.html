@@ -213,11 +213,17 @@
         <label>Responsable <select id="crm-owner-filter"></select></label>
         <label>Actividad <input id="crm-board-month" type="month" value="2026-09"></label>
         <button id="crm-board-all" type="button">Todos los meses</button>
-        <button id="crm-board-refresh" type="button">Actualizar tablero</button>
+        <button id="crm-board-refresh" type="button">Actualizar DEALS</button>
       </div>
       <p id="crm-workspace-state" role="status" aria-live="polite"></p>
-      <div id="crm-board" class="crm-board"></div>
-      <button id="crm-board-more" type="button" hidden>Cargar más oportunidades</button>
+      <div class="crm-view-controls" role="group" aria-label="Vista de DEALS">
+        <button id="crm-view-table" type="button" aria-pressed="true">Tabla</button>
+        <button id="crm-view-board" type="button" aria-pressed="false">Tablero por etapas</button>
+      </div>
+      <details id="crm-column-picker"><summary>Columnas visibles</summary><div id="crm-column-options"></div><button id="crm-columns-reset" type="button">Restablecer columnas</button></details>
+      <div id="crm-table-wrap" class="crm-table-wrap" role="region" aria-label="Tabla de DEALS" tabindex="0"><table id="crm-deals-table"><thead></thead><tbody></tbody></table></div>
+      <div id="crm-board" class="crm-board" hidden></div>
+      <button id="crm-board-more" type="button" hidden>Cargar más DEALS</button>
       <h3>Tareas</h3>
       <div class="crm-toolbar">
         <label>Estado <select id="crm-task-filter"><option value="pending">Pendientes</option><option value="overdue">Vencidas</option><option value="done">Realizadas</option><option value="all">Todas</option></select></label>

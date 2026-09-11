@@ -2,6 +2,9 @@
   const $ = id => document.getElementById(id);
   const base = location.hostname === 'localhost' ? 'http://localhost:10000/api/review' : '/api';
   let config = null, loading = null, boardOffset = 0, taskOffset = 0, boardBusy = false, tasksBusy = false;
+  let dealRows=[], tableColumns=[], visibleColumns=[], dealView='table';
+  const defaultColumns=['dealName','stage','owner','branch','surgery','surgeryDate','coverage','nextTask','nextTaskDue','overdueTasks','medinetUrl'];
+  let columnsReady=false;
   let activeOpportunity = null, activeTask = null, activeContact = null;
   const errors = { conversation_not_imported:'Esta conversación aún no está sincronizada. Intenta nuevamente en unos minutos.', conversation_contact_mismatch:'La conversación no corresponde al contacto seleccionado.', crm_not_enabled:'El CRM todavía no está activado en el servidor.', crm_unavailable:'No se pudo conectar con la base de datos.', already_in_pipeline:'Este contacto ya está en ese embudo.', changed_by_another_operator:'Otra persona modificó este registro. Cierra el formulario, actualiza y vuelve a abrirlo.', invalid_fields:'Revisa los campos y selecciona valores del catálogo.', origin_not_allowed:'Este sitio no está habilitado para guardar cambios.', contact_not_imported:'El contacto todavía no está importado.' };
   async function api(path, body, method = 'POST') {
@@ -38,6 +41,65 @@
     if(!loading)loading=api('/config').then(data=>{config=data;populateConfig();}).finally(()=>{loading=null;});
     await loading;
   }
+  function setupTableColumns(){
+    if(columnsReady || !config)return;
+    const name=item=>item.details?.dealName || item.links?.contact?.text || 'Sin nombre';
+    tableColumns=[{key:'dealName',label:'Nombre del trato',get:name},
+      {key:'id',label:'ID del trato',get:i=>i.id},
+      {key:'stage',label:'Fase del pipeline',get:i=>config.pipelines.find(p=>p.id===i.pipeline)?.stages.find(s=>s.id===i.stage)?.name},
+      {key:'owner',label:'Propiedad / Responsable',get:i=>i.owner},
+      {key:'branch',label:'Sucursal',get:i=>i.branch},
+      {key:'createdAt',label:'Agregado el',get:i=>i.createdAt?localDate(i.createdAt):null},
+      ...(config.dealFields || []).filter(f=>f.key!=='dealName').map(f=>({key:f.key,label:f.label,get:i=>i.details?.[f.key] ?? (f.key==='medinetUrl'?i.links?.record?.url:null),type:f.type})),
+      {key:'labels',label:'Etiquetas',get:i=>i.labels.join(', ')},
+      {key:'stageChangedAt',label:'Fecha de cambio de fase',get:i=>i.stageChangedAt?localDate(i.stageChangedAt):null},
+      {key:'closedAt',label:'Fecha de cierre',get:i=>i.closedAt?localDate(i.closedAt):null},
+      {key:'age',label:'Edad',get:i=>i.computed?.age},
+      {key:'bmi',label:'IMC',get:i=>i.computed?.bmi},
+      {key:'whatsappUrl',label:'WhatsApp',get:i=>i.computed?.whatsappUrl,type:'url'},
+      {key:'nextTask',label:'Próxima tarea',get:i=>i.nextTask?.title},
+      {key:'nextTaskDue',label:'Vencimiento próxima tarea',get:i=>i.nextTask?.due?localDate(i.nextTask.due):null},
+      {key:'overdueTasks',label:'Tareas vencidas',get:i=>i.overdueTasks}];
+    let stored;try{stored=JSON.parse(localStorage.getItem('crm-deal-columns'));}catch{}
+    visibleColumns=Array.isArray(stored)?stored.filter(k=>tableColumns.some(c=>c.key===k)):defaultColumns.slice();
+    if(!visibleColumns.includes('dealName'))visibleColumns.unshift('dealName');
+    columnsReady=true;renderColumnPicker();
+  }
+  function renderColumnPicker(){
+    const root=$('crm-column-options');root.replaceChildren();
+    for(const column of tableColumns){
+      const label=element('label'),box=element('input');box.type='checkbox';box.checked=visibleColumns.includes(column.key);box.disabled=column.key==='dealName';
+      box.onchange=()=>{visibleColumns=box.checked?[...visibleColumns,column.key]:visibleColumns.filter(k=>k!==column.key);try{localStorage.setItem('crm-deal-columns',JSON.stringify(visibleColumns));}catch{}renderDealTable();};
+      label.append(box,document.createTextNode(column.label));root.append(label);
+    }
+  }
+  function renderDealTable(){
+    setupTableColumns();if(!columnsReady)return;
+    const table=$('crm-deals-table'),head=table.querySelector('thead'),body=table.querySelector('tbody');head.replaceChildren();body.replaceChildren();
+    const columns=visibleColumns.map(key=>tableColumns.find(c=>c.key===key)).filter(Boolean),tr=element('tr');
+    for(const column of columns){const th=element('th',column.label);th.scope='col';tr.append(th);}head.append(tr);
+    for(const item of dealRows){
+      const row=element('tr');
+      for(const column of columns){
+        const cell=element('td'),value=column.get(item);
+        if(column.key==='dealName'){const open=button(value,()=>openOpportunity(item));open.className='crm-deal-name';cell.append(open);}
+        else if(column.type==='url' && value){
+          let url;try{url=new URL(value);}catch{}
+          const valid=url && url.protocol==='https:' && !url.username && !url.password && !url.port && (column.key==='medinetUrl'?url.hostname==='clinyco.medinetapp.com' && /^\/pacientes\/ficha\/\d+\/\d+\/?$/.test(url.pathname):column.key==='whatsappUrl'?url.hostname==='wa.me' && /^\/\d+$/.test(url.pathname):url.hostname==='drive.google.com');
+          if(valid){const a=element('a',column.key==='medinetUrl'?'Ficha Medinet':column.key==='whatsappUrl'?'WhatsApp':'Exámenes');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';cell.append(a);}else cell.textContent='—';
+        }else cell.textContent=value===null || value===undefined || value===''?'—':column.key==='value'?new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(value):String(value);
+        if(column.key==='overdueTasks' && Number(value)>0)cell.className='crm-overdue';row.append(cell);
+      }
+      body.append(row);
+    }
+    if(!dealRows.length){const row=element('tr'),cell=element('td','No hay DEALS con los filtros seleccionados.');cell.colSpan=columns.length;row.append(cell);body.append(row);}
+  }
+  function changeDealView(view){
+    dealView=view;$('crm-table-wrap').hidden=view!=='table';$('crm-column-picker').hidden=view!=='table';$('crm-board').hidden=view!=='board';
+    $('crm-view-table').setAttribute('aria-pressed',String(view==='table'));$('crm-view-board').setAttribute('aria-pressed',String(view==='board'));
+  }
+  $('crm-view-table').onclick=()=>changeDealView('table');$('crm-view-board').onclick=()=>changeDealView('board');
+  $('crm-columns-reset').onclick=()=>{visibleColumns=defaultColumns.slice();try{localStorage.removeItem('crm-deal-columns');}catch{}renderColumnPicker();renderDealTable();};
   function boardColumns(){
     const pipeline=config.pipelines.find(p=>p.id===$('crm-pipeline').value);
     $('crm-board').replaceChildren();
@@ -50,10 +112,11 @@
     controls.forEach(id=>$(id).disabled=true);
     try{
       await ensureConfig();
-      if(!more){boardOffset=0;boardColumns();}
-      $('crm-workspace-state').textContent='Cargando tablero…';
+      if(!more){boardOffset=0;dealRows=[];boardColumns();renderDealTable();}
+      $('crm-workspace-state').textContent='Cargando DEALS…';
       const q=new URLSearchParams({pipeline:$('crm-pipeline').value,branch:$('crm-branch').value,owner:$('crm-owner-filter').value,month:$('crm-board-month').value,offset:boardOffset});
       const data=await api(`/opportunities?${q}`);
+      dealRows.push(...data.items);renderDealTable();
       for(const item of data.items){
         const card=element('article',undefined,'crm-card');
         if(item.details?.dealName)card.append(element('strong',item.details.dealName));
@@ -67,7 +130,7 @@
         const column=[...$('crm-board').children].find(c=>c.dataset.stage===item.stage);column?.append(card);
       }
       boardOffset+=data.items.length;$('crm-board-more').hidden=!data.more;
-      $('crm-workspace-state').textContent=boardOffset ? `${boardOffset} oportunidades cargadas${data.more?' · Hay más resultados':''}.` : 'No hay oportunidades con estos filtros. Agrega contactos desde el directorio inferior.';
+      $('crm-workspace-state').textContent=boardOffset ? `${boardOffset} DEALS cargados${data.more?' · Hay más resultados':''}.` : 'No hay DEALS con estos filtros. Agrega contactos desde el directorio inferior.';
     }catch(e){$('crm-workspace-state').textContent=e.message;}
     finally{boardBusy=false;controls.forEach(id=>$(id).disabled=false);}
   }
