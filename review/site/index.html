@@ -191,7 +191,17 @@
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
   <div id="tab-crm" class="tab-content">
-    <h2>Contactos</h2>
+    <h2>CRM</h2>
+    <details open>
+      <summary>Embudos y etapas</summary>
+      <p>Selecciona un embudo para consultar sus etapas.</p>
+      <label for="crm-pipeline">Embudo</label>
+      <select id="crm-pipeline"></select>
+      <p id="crm-structure-info"></p>
+      <div id="crm-stages" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      <p id="crm-structure-state" role="status"></p>
+    </details>
+    <h3>Contactos</h3>
     <p>Abre la conversación, el contacto o la ficha desde sus iniciales.</p>
     <label for="crm-month">Mes de actividad</label>
     <input id="crm-month" type="month" value="2026-09" style="max-width:220px">

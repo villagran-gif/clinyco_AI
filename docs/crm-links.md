@@ -56,3 +56,21 @@ No activar consultas de datos clínicos ni servicios restringidos por costos.
 
 Revisar la pestaña con DB vacía, con 101 contactos y con error de conexión.
 Las pruebas unitarias no sustituyen validación sobre PostgreSQL y un deploy.
+
+## Estructura recuperada de Sell
+
+`review/site/crm-structure.json` conserva tres embudos y 23 etapas con los nombres recuperados. La pestaña CRM permite consultar la estructura. Bariátrica incluye Santiago, Calama y Antofagasta, y etiquetas Bariátrica simple / Conversión, según las decisiones actuales del usuario.
+
+Fuente histórica: https://github.com/villagran-gif/sell-medinet-backend/blob/b78919b/docs/migration-chatwoot-frappe.md (sección 13). El nombre completo EXAMENES PRE-PAD ENVIADOS se contrastó con las exportaciones de Sell del repositorio.
+
+El orden es el documentado, no las posiciones originales verificadas en la API. El catálogo no impone transiciones; Allurion y Orbera son alternativas. CERRADO AGENDADO nunca se marca como procedimiento completado. General queda excluido.
+
+Persistir únicamente la estructura en la DB existente:
+
+```sh
+node scripts/seed-crm-structure.mjs
+```
+
+La operación es transaccional e idempotente y almacena una versión inmutable en `crm_structure_versions`. La vista utiliza el catálogo estático del mismo commit; todavía no hay editor de configuración ni asignación de oportunidades a etapas. No modifica la respuesta de `/crm/links`. No importa pacientes ni reactiva Zendesk o Frappe.
+
+Tareas: se recuperaron título, vencimiento, responsable, realización y relación con contacto/lead/trato. Catálogo original de tipos, recordatorios y recurrencias pendiente; no se inventan valores ni se habilita aún gestión de tareas.
