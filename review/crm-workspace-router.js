@@ -5,7 +5,7 @@ export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKS
   router.use((req,res,next) => {
     res.set('Cache-Control','no-store'); res.set('X-Robots-Tag','noindex, nofollow');
     if (!enabled()) return res.status(503).json({error:'crm_not_enabled'});
-    // Anonymous pilot, deliberately same-origin JSON writes. No credential proxy.
+    // The parent review router authenticates users. Keep same-origin JSON writes as an additional check.
     if (!['GET','HEAD'].includes(req.method)) {
       if (!allowedOrigins().includes(req.get('origin'))) return res.status(403).json({error:'origin_not_allowed'});
       if (!req.is('application/json')) return res.status(415).json({error:'json_required'});
