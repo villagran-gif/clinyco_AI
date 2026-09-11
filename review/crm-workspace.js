@@ -129,7 +129,7 @@ export async function board(pool, query) {
   if (typeof month !== 'string' || (month && !/^20\d{2}-(0[1-9]|1[0-2])$/.test(month))) bad();
   const branch = text(query.branch || '',80), owner = text(query.owner || '',80), pageOffset = offset(query.offset);
   await ensureWorkspace(pool);
-  const {rows} = await pool.query(`SELECT o.*,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
+  const {rows} = await pool.query(`SELECT o.*,c.display_name,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
     ARRAY(SELECT conversation_id FROM crm_link_conversations v WHERE v.contact_id=c.contact_id ORDER BY last_seen DESC) conversation_ids
     FROM crm_opportunities o JOIN crm_link_contacts c ON c.contact_id=o.contact_id
     WHERE o.pipeline_id=$1 AND ($2='' OR o.branch=$2) AND ($3='' OR o.owner=$3)
@@ -162,7 +162,7 @@ export async function tasks(pool, query) {
   const owner = text(query.owner || '',80), status = query.status || 'pending';
   if (!['pending','done','overdue','all'].includes(status)) bad();
   const pageOffset = offset(query.offset); await ensureWorkspace(pool);
-  const {rows} = await pool.query(`SELECT t.*,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
+  const {rows} = await pool.query(`SELECT t.*,c.display_name,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
     ARRAY(SELECT conversation_id FROM crm_link_conversations v WHERE v.contact_id=c.contact_id ORDER BY last_seen DESC) conversation_ids
     FROM crm_tasks t JOIN crm_opportunities o ON o.id=t.opportunity_id JOIN crm_link_contacts c ON c.contact_id=o.contact_id
     WHERE ($1='' OR t.opportunity_id=NULLIF($1,'')::uuid) AND ($2='' OR t.owner=$2)

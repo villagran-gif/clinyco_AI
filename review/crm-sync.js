@@ -13,7 +13,8 @@ export async function syncCrmBatch(pool, from, batchSize = 100, project = record
       source text PRIMARY KEY, last_id bigint NOT NULL DEFAULT 0, last_received timestamptz NOT NULL, imported bigint NOT NULL DEFAULT 0,
       updated_at timestamptz NOT NULL DEFAULT now()
     )`);
-    const source=`chatwoot:${from}`;
+    // Replay archived names once; retain the previous cursor for rollback.
+    const source=`chatwoot:names-v2:${from}`;
     await c.query("INSERT INTO crm_sync_progress(source,last_received) VALUES ($1,$2::date::timestamp AT TIME ZONE 'America/Santiago') ON CONFLICT DO NOTHING",[source,from]);
     const progress=(await c.query('SELECT last_id,last_received FROM crm_sync_progress WHERE source=$1 FOR UPDATE',[source])).rows[0];
     // Select only fields needed for the links projection. Message content never leaves the DB here.

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { ensureWorkspace, configuration, addOption, saveOpportunity, board, saveTask, tasks } from '../review/crm-workspace.js';
 import express from 'express';
 import { workspaceRouter } from '../review/crm-workspace-router.js';
-import { publicLinks } from '../review/crm-links.js';
+import { publicLinks, recordContactEvent } from '../review/crm-links.js';
 const enabled = !!process.env.CRM_TEST_PGLITE_PATH;
 test('CRM persists opportunities, assignments, stages and task lifecycle without exposing source identity', {skip:!enabled}, async () => {
   const { PGlite } = await import(process.env.CRM_TEST_PGLITE_PATH);
@@ -18,7 +18,12 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
   try {
     await ensureWorkspace(pool); await ensureWorkspace(pool);
     await pool.query("INSERT INTO crm_link_contacts(contact_id,initials,last_seen,rut_normalized) VALUES ('123','A. B.',now(),'PRIVATE_RUT')");
-    await pool.query("INSERT INTO crm_link_activity(contact_id,activity_day) VALUES ('123','2026-09-10')");
+    const event = (name, stamp) => ({event:'message_created',account:{id:162472},message_type:'incoming',created_at:stamp,sender:{id:123,name},conversation:{id:456}});
+    await recordContactEvent(pool,event('Nombre reciente','2026-09-10T12:00:00Z'));
+    await recordContactEvent(pool,event('Nombre antiguo','2026-09-09T12:00:00Z'));
+    await recordContactEvent(pool,event('','2026-09-11T12:00:00Z'));
+    assert.equal((await pool.query("SELECT display_name FROM crm_link_contacts WHERE contact_id='123'")).rows[0].display_name,'Nombre reciente');
+    await pool.query("INSERT INTO crm_link_activity(contact_id,activity_day) VALUES ('123','2026-09-10') ON CONFLICT DO NOTHING");
     await addOption(pool,{kind:'owner',value:'Ejecutiva de prueba'});
     await addOption(pool,{kind:'task_type',value:'Seguimiento'});
     const cfg=await configuration(pool); assert.equal(cfg.pipelines.length,3);
@@ -31,7 +36,7 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
     assert.equal(moved.version,2);
     await assert.rejects(saveOpportunity(pool,{...input,version:op.version},op.id),e=>e.status===409);
     let b=await board(pool,{pipeline:'bariatrica',month:'2026-09',branch:'Santiago'});
-    assert.equal(b.items.length,1);assert.equal(b.items[0].stage,'bariatrica_5');
+    assert.equal(b.items[0].links.contact.text,"Nombre reciente");assert.equal(b.items.length,1);assert.equal(b.items[0].stage,'bariatrica_5');
     assert.doesNotMatch(JSON.stringify(b),/PRIVATE_RUT|rut_normalized/);
     assert.equal((await board(pool,{pipeline:'bariatrica',month:'2026-08'})).items.length,0);
     assert.equal((await board(pool,{pipeline:'bariatrica',branch:'Calama'})).items.length,0);

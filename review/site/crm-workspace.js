@@ -22,7 +22,7 @@
       const url=new URL(link.url);
       const valid=url.origin==='https://app.chatwoot.com' ? /^\/app\/accounts\/162472\/(contacts|conversations)\/\d+$/.test(url.pathname) : url.origin==='https://clinyco.medinetapp.com' && /^\/pacientes\/ficha\/\d+\/\d+\/$/.test(url.pathname);
       if(!valid || url.search || url.hash)continue;
-      const a=element('a',link.text);a.href=url.href;a.title=name;a.target='_blank';a.rel='noopener noreferrer';parent.append(a);
+      const a=element('a',name === 'Contacto' ? link.text : name);a.href=url.href;a.title=name;a.target='_blank';a.rel='noopener noreferrer';parent.append(a);
     }
   }
   function button(text, handler){const b=element('button',text);b.type='button';b.onclick=handler;return b;}
