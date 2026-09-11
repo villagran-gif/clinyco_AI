@@ -1,0 +1,254 @@
+[
+  {
+    "group": "Identificación",
+    "key": "dealName",
+    "label": "Nombre del trato",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Identificación",
+    "key": "idDocument",
+    "label": "RUT o ID",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Identificación",
+    "key": "birthDate",
+    "label": "Fecha de nacimiento",
+    "type": "date",
+    "maxLength": 250
+  },
+  {
+    "group": "Identificación",
+    "key": "email",
+    "label": "Correo electrónico",
+    "type": "email",
+    "maxLength": 250
+  },
+  {
+    "group": "Identificación",
+    "key": "phone",
+    "label": "Teléfono (con código de país)",
+    "type": "tel",
+    "maxLength": 250
+  },
+  {
+    "group": "Identificación",
+    "key": "city",
+    "label": "Ciudad",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "coverage",
+    "label": "Previsión",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "coveragePlan",
+    "label": "Tramo/Modalidad",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "interest",
+    "label": "Interés",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "surgery",
+    "label": "Cirugía",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "bariatricSurgery",
+    "label": "Cirugía bariátrica",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "surgeryDate",
+    "label": "Fecha de cirugía",
+    "type": "date",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "orRequestDate",
+    "label": "Fecha solicitud de pabellón",
+    "type": "date",
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "gallstones",
+    "label": "Colelitiasis",
+    "type": "select",
+    "options": [
+      "Sí",
+      "No",
+      "Operada / resuelta"
+    ],
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "previousSurgeries",
+    "label": "Cirugías previas",
+    "type": "textarea",
+    "maxLength": 2000
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "weight",
+    "label": "Peso (kg)",
+    "type": "number",
+    "min": 1,
+    "max": 700,
+    "step": 0.1,
+    "maxLength": 250
+  },
+  {
+    "group": "Cobertura y procedimiento",
+    "key": "height",
+    "label": "Estatura (cm)",
+    "type": "number",
+    "min": 1,
+    "max": 300,
+    "step": 0.1,
+    "maxLength": 250
+  },
+  {
+    "group": "Documentos",
+    "key": "medinetUrl",
+    "label": "Ficha médica Medinet",
+    "type": "url",
+    "maxLength": 2048
+  },
+  {
+    "group": "Documentos",
+    "key": "examsUrl",
+    "label": "Exámenes · Google Drive",
+    "type": "url",
+    "maxLength": 2048
+  },
+  {
+    "group": "Gestión comercial",
+    "key": "value",
+    "label": "Valor (CLP)",
+    "type": "number",
+    "min": 0,
+    "max": 100000000000,
+    "step": 1,
+    "maxLength": 250
+  },
+  {
+    "group": "Gestión comercial",
+    "key": "source",
+    "label": "Origen",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Gestión comercial",
+    "key": "lossReason",
+    "label": "Motivo de pérdida",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Gestión comercial",
+    "key": "unqualifiedReason",
+    "label": "Motivo de no cualificación",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Gestión comercial",
+    "key": "collaborators",
+    "label": "Colaboradores",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Equipo médico",
+    "key": "bariatricSurgeon",
+    "label": "Cirujano bariátrico",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Equipo médico",
+    "key": "balloonSurgeon",
+    "label": "Cirujano de balón",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Equipo médico",
+    "key": "generalSurgeon",
+    "label": "Cirujano general",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Equipo médico",
+    "key": "plasticSurgeon",
+    "label": "Cirujano plástico",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Equipo médico",
+    "key": "secondSurgeon",
+    "label": "Segundo cirujano",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Colaboradores por procedimiento",
+    "key": "barCollaborator1",
+    "label": "Colaborador 1 (BAR)",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Colaboradores por procedimiento",
+    "key": "barCollaborator2",
+    "label": "Colaborador 2 (BAR)",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Colaboradores por procedimiento",
+    "key": "barCollaborator3",
+    "label": "Colaborador 3 (BAR)",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Colaboradores por procedimiento",
+    "key": "plasticCollaborator1",
+    "label": "Colaborador 1 (PLÁSTICA)",
+    "type": "text",
+    "maxLength": 250
+  },
+  {
+    "group": "Colaboradores por procedimiento",
+    "key": "plasticCollaborator2",
+    "label": "Colaborador 2 (PLÁSTICA)",
+    "type": "text",
+    "maxLength": 250
+  }
+]

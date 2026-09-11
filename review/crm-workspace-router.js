@@ -12,7 +12,7 @@ export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKS
     }
     next();
   });
-  router.use(json({ limit:'8kb' }));
+  router.use(json({ limit:'24kb' }));
   const route = fn => async (req,res) => {
     try { res.json(await fn(req)); }
     catch(e) { res.status(e instanceof CrmError ? e.status : 503).json({error:e instanceof CrmError ? e.message : 'crm_unavailable'}); }

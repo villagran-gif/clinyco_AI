@@ -7,7 +7,7 @@
   async function api(path, body, method = 'POST') {
     const response = await fetch(`${base}/crm/workspace${path}`, body === undefined ? {cache:'no-store'} : {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data = await response.json();
-    if (!response.ok) throw new Error(errors[data.error] || 'No se pudo guardar o cargar la información.');
+    if (!response.ok) throw new Error(errors[data.error] || (response.status===400 && String(data.error).startsWith('Revisa el campo') ? data.error : 'No se pudo guardar o cargar la información.'));
     return data;
   }
   function element(tag, content, className) { const e=document.createElement(tag); if(content!==undefined)e.textContent=content; if(className)e.className=className; return e; }
@@ -55,9 +55,15 @@
       const q=new URLSearchParams({pipeline:$('crm-pipeline').value,branch:$('crm-branch').value,owner:$('crm-owner-filter').value,month:$('crm-board-month').value,offset:boardOffset});
       const data=await api(`/opportunities?${q}`);
       for(const item of data.items){
-        const card=element('article',undefined,'crm-card');links(card,item.links);
+        const card=element('article',undefined,'crm-card');
+        if(item.details?.dealName)card.append(element('strong',item.details.dealName));
+        links(card,item.links);
         card.append(element('p',[item.branch,item.owner || 'Sin responsable',...item.labels].filter(Boolean).join(' · ')));
-        card.append(button('Editar etapa',()=>openOpportunity(item)),button('Nueva tarea',()=>openTask(null,item)));
+        if(item.details?.surgery)card.append(element('p',item.details.surgery));
+        if(item.details?.surgeryDate)card.append(element('p',`Cirugía: ${item.details.surgeryDate}`));
+        if(item.nextTask)card.append(element('p',`Próxima tarea: ${item.nextTask.title} · ${localDate(item.nextTask.due)}`));
+        if(item.overdueTasks)card.append(element('p',`${item.overdueTasks} tareas vencidas`,'crm-overdue'));
+        card.append(button('Abrir ficha',()=>openOpportunity(item)),button('Nueva tarea',()=>openTask(null,item)));
         const column=[...$('crm-board').children].find(c=>c.dataset.stage===item.stage);column?.append(card);
       }
       boardOffset+=data.items.length;$('crm-board-more').hidden=!data.more;
@@ -82,7 +88,7 @@
         row.append(element('span',[item.owner||'Sin responsable',item.type,item.status==='done'?'Realizada':'Pendiente'].filter(Boolean).join(' · ')));
         row.append(button('Editar',()=>openTask(item)),button(item.status==='done'?'Reabrir':'Completar',async event=>{
           const btn=event.currentTarget;btn.disabled=true;
-          try{await api(`/tasks/${item.id}`,{...item,status:item.status==='done'?'pending':'done'},'PUT');await loadTasks();}
+          try{await api(`/tasks/${item.id}`,{...item,status:item.status==='done'?'pending':'done'},'PUT');await loadTasks();await loadBoard();}
           catch(e){$('crm-tasks-state').textContent=e.message;}finally{btn.disabled=false;}
         }));$('crm-tasks').append(row);
       }
@@ -97,10 +103,62 @@
     const field=$('crm-op-labels');field.replaceChildren(element('legend','Etiquetas'));field.hidden=!p.labels.length;
     for(const value of p.labels){const label=element('label'),input=document.createElement('input');input.type='checkbox';input.name='labels';input.value=value;input.checked=saved?.labels.includes(value)||false;label.append(input,document.createTextNode(value));field.append(label);}
   }
+  function readDealFields(){
+    const result={};
+    for(const field of config.dealFields || []){
+      const value=$('deal-field-'+field.key).value;
+      result[field.key]=value===''?null:field.type==='number'?Number(value):value;
+    }
+    return result;
+  }
+  function renderDealFields(item,contact){
+    const root=$('crm-deal-fields');root.replaceChildren();
+    const data=item?.details || {};
+    let group=null, grid=null;
+    for(const field of config.dealFields || []){
+      if(group!==field.group){group=field.group;const section=element('details');section.open=group==='Identificación';section.append(element('summary',group));grid=element('div',undefined,'crm-field-grid');section.append(grid);root.append(section);}
+      const label=element('label',field.label),control=element(field.type==='select'?'select':field.type==='textarea'?'textarea':'input');
+      control.id='deal-field-'+field.key;
+      if(field.type==='select')selectOptions(control,field.options,'Sin dato');
+      else if(field.type!=='textarea')control.type=field.type;
+      if(field.maxLength)control.maxLength=field.maxLength;
+      if(field.type==='number'){control.min=field.min;control.max=field.max;control.step=field.step;}
+      control.value=data[field.key] ?? (field.key==='dealName'?(item?.links?.contact?.text || contact?.contact?.text || ''):field.key==='medinetUrl'?(item?.links?.record?.url || contact?.record?.url || ''):'');
+      label.append(control);grid.append(label);
+      if(field.type==='url' && control.value){
+        const url=new URL(control.value);
+        if(url.protocol==='https:' && ['drive.google.com','clinyco.medinetapp.com'].includes(url.hostname)){
+          const a=element('a','Abrir enlace');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';label.append(a);
+        }
+      }
+    }
+    const dl=$('crm-deal-computed');dl.replaceChildren();
+    const add=(label,value)=>{dl.append(element('dt',label),element('dd',value==null || value===''?'—':String(value)));};
+    add('ID del trato',item?.id || 'Se asigna al guardar');
+    add('Agregado el',item?.createdAt?localDate(item.createdAt):null);
+    add('Fecha de cambio de la última fase',item?.stageChangedAt?localDate(item.stageChangedAt):null);
+    add('Fecha de cierre',item?.closedAt?localDate(item.closedAt):null);
+    add('Próxima tarea',item?.nextTask?.title);add('Vencimiento de la próxima tarea',item?.nextTask?localDate(item.nextTask.due):null);
+    add('Tareas vencidas',item?.overdueTasks ?? 0);
+    add('Edad',item?.computed?.age);add('IMC',item?.computed?.bmi);
+    if(item?.computed?.whatsappUrl){const a=element('a','Abrir WhatsApp');a.href=item.computed.whatsappUrl;a.target='_blank';a.rel='noopener noreferrer';dl.append(element('dt','WhatsApp'),a);}
+    const calculated=element('p',undefined,'crm-calculated');root.append(calculated);
+    const update=()=>{
+      const weight=Number($('deal-field-weight')?.value),height=Number($('deal-field-height')?.value),birth=$('deal-field-birthDate')?.value;
+      const bmi=weight>0 && height>0?(weight/((height/100)**2)).toFixed(1):'—';
+      const today=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      let age='—';if(birth && birth<=today){age=Number(today.slice(0,4))-Number(birth.slice(0,4))-(today.slice(5)<birth.slice(5)?1:0);}
+      calculated.textContent=`Edad: ${age} · IMC: ${bmi}`;
+    };
+    for(const key of ['weight','height','birthDate'])if($('deal-field-'+key))$('deal-field-'+key).addEventListener('input',update);
+    update();
+  }
   function openOpportunity(item=null,contact=null){
     activeOpportunity=item;activeContact=contact;
     const form=$('crm-op-form');form.reset();
-    $('crm-op-heading').textContent=item?'Editar DEAL':'Crear DEAL';$('crm-op-state').textContent='';
+    $('crm-op-heading').textContent=item?'Ficha del DEAL':'Crear DEAL';$('crm-op-state').textContent='';
+    $('crm-op-contact').replaceChildren();links($('crm-op-contact'),item?.links || contact);
+    renderDealFields(item,contact);
     selectOptions(form.elements.pipeline,config.pipelines,null,item?.pipeline||$('crm-pipeline').value);form.elements.pipeline.disabled=!!item;
     selectOptions(form.elements.owner,config.owners,'Sin responsable',item?.owner||'');opportunityFields(item);
     $('crm-op-dialog').showModal();
@@ -110,7 +168,7 @@
   $('crm-op-form').onsubmit=async event=>{
     event.preventDefault();const form=event.currentTarget,b=form.querySelector('[type=submit]');b.disabled=true;
     try{
-      const payload={pipeline:form.elements.pipeline.value,stage:form.elements.stage.value,branch:form.elements.branch.value,owner:form.elements.owner.value,labels:[...form.querySelectorAll('[name=labels]:checked')].map(e=>e.value)};
+      const payload={details:readDealFields(),pipeline:form.elements.pipeline.value,stage:form.elements.stage.value,branch:form.elements.branch.value,owner:form.elements.owner.value,labels:[...form.querySelectorAll('[name=labels]:checked')].map(e=>e.value)};
       if(activeOpportunity)payload.version=activeOpportunity.version;
       else { payload.contactId=new URL(activeContact.contact.url).pathname.split('/').pop(); if(activeContact.sourceConversationId)payload.sourceConversationId=activeContact.sourceConversationId; }
       await api(activeOpportunity?`/opportunities/${activeOpportunity.id}`:'/opportunities',payload,activeOpportunity?'PUT':'POST');
@@ -131,7 +189,7 @@
     try{
       const payload={title:form.elements.title.value,owner:form.elements.owner.value,type:form.elements.type.value,status:form.elements.status.value,due:form.elements.due.value?new Date(form.elements.due.value).toISOString():null};
       if(activeTask)payload.version=activeTask.version;else payload.opportunityId=activeOpportunity.id;
-      await api(activeTask?`/tasks/${activeTask.id}`:'/tasks',payload,activeTask?'PUT':'POST');$('crm-task-dialog').close();await loadTasks();
+      await api(activeTask?`/tasks/${activeTask.id}`:'/tasks',payload,activeTask?'PUT':'POST');$('crm-task-dialog').close();await loadTasks();await loadBoard();
     }catch(e){$('crm-task-state').textContent=e.message;}finally{b.disabled=false;}
   };
   $('crm-options-form').onsubmit=async event=>{

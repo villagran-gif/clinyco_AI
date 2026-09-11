@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import {dealFields, validateDealDetails, computedDealDetails, DealFieldError} from './deal-fields.js';
 import { ensureLinks, publicLinks } from './crm-links.js';
 export const catalog = JSON.parse(await readFile(new URL('./site/crm-structure.json', import.meta.url), 'utf8'));
 export class CrmError extends Error {
@@ -21,7 +22,9 @@ export function opportunityInput(input) {
   if (branch && !pipeline.branches.includes(branch)) bad();
   const labels = input.labels ?? [];
   if (!Array.isArray(labels) || labels.some(l => !pipeline.labels.includes(l))) bad();
-  return { pipeline: pipeline.id, stage: input.stage, branch, labels: [...new Set(labels)], owner: text(input.owner ?? '', 80) };
+  let details;
+  try { details = input.details === undefined ? undefined : validateDealDetails(input.details); } catch(e) { if(e instanceof DealFieldError) throw new CrmError(400,e.message); throw e; }
+  return { details, closed: /^(CERRADO|DESCALIFICADO)/.test(pipeline.stages.find(s=>s.id===input.stage).name), pipeline: pipeline.id, stage: input.stage, branch, labels: [...new Set(labels)], owner: text(input.owner ?? '', 80) };
 }
 export function taskInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) bad();
@@ -44,6 +47,9 @@ CREATE TABLE IF NOT EXISTS crm_opportunities (
  FOREIGN KEY(pipeline_id,stage_id) REFERENCES crm_stages(pipeline_id,id), UNIQUE(contact_id,pipeline_id)
 );
 ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS source_conversation_id text REFERENCES crm_link_conversations(conversation_id);
+ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS stage_changed_at timestamptz;
+ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS closed_at timestamptz;
 CREATE TABLE IF NOT EXISTS crm_tasks (
  id uuid PRIMARY KEY, opportunity_id uuid NOT NULL REFERENCES crm_opportunities(id), title text NOT NULL,
  owner text NOT NULL DEFAULT '', task_type text NOT NULL DEFAULT '', due_at timestamptz,
@@ -90,12 +96,15 @@ async function optionsExist(c, fields) {
     if (!r.rows.length) bad();
   }
 }
-const opportunity = row => ({ id: row.id, pipeline: row.pipeline_id, stage: row.stage_id, branch: row.branch, labels: row.labels, owner: row.owner, version: row.version, sourceConversationId: row.source_conversation_id || null });
+const opportunity = row => ({ id: row.id, pipeline: row.pipeline_id, stage: row.stage_id, branch: row.branch, labels: row.labels, owner: row.owner, version: row.version, sourceConversationId: row.source_conversation_id || null,
+  details: row.details || {}, computed: computedDealDetails(row.details || {}), createdAt: row.created_at,
+  stageChangedAt: row.stage_changed_at || null, closedAt: row.closed_at || null,
+  nextTask:row.next_task || null, overdueTasks:Number(row.overdue_tasks || 0) });
 const task = row => ({ id: row.id, opportunityId: row.opportunity_id, title: row.title, owner: row.owner, type: row.task_type, due: row.due_at ? new Date(row.due_at).toISOString() : null, status: row.completed_at ? 'done' : 'pending', completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, version: row.version });
 export async function configuration(pool) {
   await ensureWorkspace(pool);
   const {rows} = await pool.query('SELECT kind,value FROM crm_options ORDER BY value');
-  return { pipelines: catalog.pipelines, owners: rows.filter(r=>r.kind==='owner').map(r=>r.value), taskTypes: rows.filter(r=>r.kind==='task_type').map(r=>r.value) };
+  return { dealFields, pipelines: catalog.pipelines, owners: rows.filter(r=>r.kind==='owner').map(r=>r.value), taskTypes: rows.filter(r=>r.kind==='task_type').map(r=>r.value) };
 }
 export async function addOption(pool, input) {
   if (!['owner','task_type'].includes(input.kind)) bad();
@@ -114,7 +123,10 @@ export async function saveOpportunity(pool, input, id = null) {
       if (!before) throw new CrmError(404,'not_found');
       if (before.version !== input.version) throw new CrmError(409,'changed_by_another_operator');
       if (before.pipeline_id !== values.pipeline) bad();
-      result = await c.query(`UPDATE crm_opportunities SET stage_id=$2,branch=$3,labels=$4::jsonb,owner=$5,version=version+1,updated_at=now() WHERE id=$1 RETURNING *`,[id,values.stage,values.branch,JSON.stringify(values.labels),values.owner]);
+      result = await c.query(`UPDATE crm_opportunities SET stage_id=$2,branch=$3,labels=$4::jsonb,owner=$5,details=details || $6::jsonb,
+        stage_changed_at=CASE WHEN stage_id<>$2 THEN now() ELSE stage_changed_at END,
+        closed_at=CASE WHEN $7 THEN CASE WHEN stage_id<>$2 THEN COALESCE(closed_at,now()) ELSE closed_at END ELSE NULL END,
+        version=version+1,updated_at=now() WHERE id=$1 RETURNING *`,[id,values.stage,values.branch,JSON.stringify(values.labels),values.owner,JSON.stringify(values.details || {}),values.closed]);
     } else {
       if (!(await c.query('SELECT 1 FROM crm_link_contacts WHERE contact_id=$1',[String(input.contactId)])).rows.length) throw new CrmError(404,'contact_not_imported');
       if (input.sourceConversationId != null) {
@@ -123,7 +135,7 @@ export async function saveOpportunity(pool, input, id = null) {
         if (!linked.rows.length) throw new CrmError(400,'conversation_contact_mismatch');
       }
       id = randomUUID();
-      result = await c.query(`INSERT INTO crm_opportunities(id,contact_id,pipeline_id,stage_id,branch,labels,owner,source_conversation_id) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8) ON CONFLICT(contact_id,pipeline_id) DO NOTHING RETURNING *`,[id,String(input.contactId),values.pipeline,values.stage,values.branch,JSON.stringify(values.labels),values.owner,input.sourceConversationId == null ? null : String(input.sourceConversationId)]);
+      result = await c.query(`INSERT INTO crm_opportunities(id,contact_id,pipeline_id,stage_id,branch,labels,owner,source_conversation_id,details,stage_changed_at,closed_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,now(),CASE WHEN $10 THEN now() END) ON CONFLICT(contact_id,pipeline_id) DO NOTHING RETURNING *`,[id,String(input.contactId),values.pipeline,values.stage,values.branch,JSON.stringify(values.labels),values.owner,input.sourceConversationId == null ? null : String(input.sourceConversationId),JSON.stringify(values.details || {}),values.closed]);
       if (!result.rows.length) throw new CrmError(409,'already_in_pipeline');
     }
     await audit(c,'opportunity',id,before,result.rows[0]); return opportunity(result.rows[0]);
@@ -135,7 +147,10 @@ export async function board(pool, query) {
   if (typeof month !== 'string' || (month && !/^20\d{2}-(0[1-9]|1[0-2])$/.test(month))) bad();
   const branch = text(query.branch || '',80), owner = text(query.owner || '',80), pageOffset = offset(query.offset);
   await ensureWorkspace(pool);
-  const {rows} = await pool.query(`SELECT o.*,c.display_name,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
+  const {rows} = await pool.query(`SELECT o.*,
+    (SELECT jsonb_build_object('title',t.title,'due',t.due_at) FROM crm_tasks t WHERE t.opportunity_id=o.id AND t.completed_at IS NULL ORDER BY t.due_at ASC NULLS LAST,t.created_at,t.id LIMIT 1) AS next_task,
+    (SELECT count(*) FROM crm_tasks t WHERE t.opportunity_id=o.id AND t.completed_at IS NULL AND t.due_at<now()) AS overdue_tasks,
+    c.display_name,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
     ARRAY(SELECT conversation_id FROM crm_link_conversations v WHERE v.contact_id=c.contact_id ORDER BY last_seen DESC) conversation_ids
     FROM crm_opportunities o JOIN crm_link_contacts c ON c.contact_id=o.contact_id
     WHERE o.pipeline_id=$1 AND ($2='' OR o.branch=$2) AND ($3='' OR o.owner=$3)

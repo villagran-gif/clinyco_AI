@@ -235,12 +235,14 @@
     </div>
     <dialog id="crm-op-dialog">
       <form id="crm-op-form">
-        <h3 id="crm-op-heading">Agregar a un embudo</h3>
+        <h3 id="crm-op-heading">Ficha del DEAL</h3><p id="crm-op-contact"></p>
         <label>Embudo <select name="pipeline" required></select></label>
         <label>Etapa <select name="stage" required></select></label>
         <label>Sede <select name="branch"></select></label>
         <label>Responsable <select name="owner"></select></label>
         <fieldset id="crm-op-labels"><legend>Etiquetas</legend></fieldset>
+        <div id="crm-deal-fields"></div>
+        <details><summary>Datos automáticos y seguimiento</summary><dl id="crm-deal-computed"></dl></details>
         <p id="crm-op-state" role="status"></p>
         <button type="submit">Guardar</button><button type="button" data-close="crm-op-dialog">Cancelar</button>
       </form>
