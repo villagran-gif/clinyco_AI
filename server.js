@@ -68,6 +68,7 @@ import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/pars
 import { recordContactEvent } from "./review/crm-links.js";
 import { startCrmSync } from "./review/crm-sync.js";
 import { getPool as getCrmPool } from "./review/db.js";
+import { runConfiguredSellRestore } from "./review/sell-restore.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import { maybeSyncPrivateLeadNote } from "./chatwoot-adapter/private-lead-note.js";
 import reviewRouter from "./review/router.js";
@@ -5599,6 +5600,7 @@ app.listen(PORT, () => {
     console.log(`Medinet: local execution (no MEDINET_WORKER_URL configured)`);
   }
   startCrmSync(getCrmPool());
+  void runConfiguredSellRestore(getCrmPool());
   startFonasapadCron();
   startMonthlyCron();
 });

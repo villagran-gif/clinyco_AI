@@ -49,7 +49,8 @@
     for(const item of items){const o=element('option',typeof item==='string'?item:item.name);o.value=typeof item==='string'?item:item.id;select.append(o);}
     if([...select.options].some(o=>o.value===selected))select.value=selected;
   }
-  function links(parent, value) {
+  function links(parent, value = {}) {
+    value ||= {};
     for(const [name,items] of [['Contacto',[value.contact]],['Conversación',value.conversations||[]],['Ficha',[value.record]]]) for(const link of items.filter(Boolean)) {
       let url;try{url=new URL(link.url);}catch{continue;}
       const valid=url.origin==='https://app.chatwoot.com' ? /^\/app\/accounts\/162472\/(contacts|conversations)\/\d+$/.test(url.pathname) : url.origin==='https://clinyco.medinetapp.com' && /^\/pacientes\/ficha\/\d+\/\d+\/$/.test(url.pathname);
@@ -63,7 +64,7 @@
     selectOptions($('crm-owner-filter'),config.owners,'Todos',$('crm-owner-filter').value);
     selectOptions($('crm-task-owner-filter'),config.owners,'Todos',$('crm-task-owner-filter').value);
     const p=config.pipelines.find(p=>p.id===$('crm-pipeline').value);
-    selectOptions($('crm-branch'),p.branches,'Todas',$('crm-branch').value);
+    selectOptions($('crm-branch'),[...new Set([...p.branches,...(config.usedBranches||[]).filter(r=>r.pipeline_id===p.id).map(r=>r.branch)])],'Todas',$('crm-branch').value);
   }
   async function ensureConfig(){
     if(config)return;
@@ -74,7 +75,7 @@
     if(columnsReady || !config)return;
     const name=item=>item.details?.dealName || item.links?.contact?.text || 'Sin nombre';
     tableColumns=[{key:'dealName',label:'Nombre del trato',get:name},
-      {key:'id',label:'ID del trato',get:i=>i.id},
+      {key:'id',label:'ID del trato',get:i=>i.sourceId || i.id},
       {key:'stage',label:'Fase del pipeline',get:i=>config.pipelines.find(p=>p.id===i.pipeline)?.stages.find(s=>s.id===i.stage)?.name},
       {key:'owner',label:'Propiedad / Responsable',get:i=>i.owner},
       {key:'branch',label:'Sucursal',get:i=>i.branch},
@@ -171,7 +172,7 @@
         const column=[...$('crm-board').children].find(c=>c.dataset.stage===item.stage);column?.append(card);
       }
       boardOffset+=data.items.length;$('crm-board-more').hidden=!data.more;
-      $('crm-workspace-state').textContent=boardOffset ? `${boardOffset} DEALS cargados${data.more?' · Hay más resultados':''}.` : 'No hay DEALS con estos filtros. Agrega contactos desde la pestaña Contactos.';
+      $('crm-workspace-state').textContent=boardOffset ? `${boardOffset} DEALS cargados${data.more?' · Hay más resultados':''}.` : 'No hay DEALS con estos filtros.';
     }catch(e){$('crm-workspace-state').textContent=e.message;}
     finally{boardBusy=false;controls.forEach(id=>$(id).disabled=false);}
   }
@@ -203,9 +204,10 @@
   function opportunityFields(saved=null){
     const form=$('crm-op-form'),p=config.pipelines.find(p=>p.id===form.elements.pipeline.value);
     selectOptions(form.elements.stage,p.stages,null,saved?.stage||p.stages[0].id);
-    selectOptions(form.elements.branch,p.branches,'Sin sede',saved?.branch||'');
-    const field=$('crm-op-labels');field.replaceChildren(element('legend','Etiquetas'));field.hidden=!p.labels.length;
-    for(const value of p.labels){const label=element('label'),input=document.createElement('input');input.type='checkbox';input.name='labels';input.value=value;input.checked=saved?.labels.includes(value)||false;label.append(input,document.createTextNode(value));field.append(label);}
+    selectOptions(form.elements.branch,[...new Set([...p.branches,...(saved?.branch?[saved.branch]:[])])],'Sin sede',saved?.branch||'');
+    const choices=[...new Set([...p.labels,...(saved?.labels||[])])];
+    const field=$('crm-op-labels');field.replaceChildren(element('legend','Etiquetas'));field.hidden=!choices.length;
+    for(const value of choices){const label=element('label'),input=document.createElement('input');input.type='checkbox';input.name='labels';input.value=value;input.checked=saved?.labels.includes(value)||false;label.append(input,document.createTextNode(value));field.append(label);}
   }
   function readDealFields(){
     const result={};
@@ -247,7 +249,7 @@
     if(!team.querySelector('.record-property:not(.record-empty)'))team.append(element('p','Sin colaboradores','record-value'));
     $('crm-record-identification').hidden=!!item;$('crm-record-activity').hidden=!item;$('crm-record-new-task').disabled=!item;
     const dl=$('crm-deal-computed');dl.replaceChildren();const add=(label,value)=>dl.append(element('dt',label),element('dd',value||'Sin dato'));
-    add('Agregado el',item?.createdAt?localDate(item.createdAt):'Se asigna al guardar');add('Fecha de cambio de fase',item?.stageChangedAt?localDate(item.stageChangedAt):null);add('Fecha de cierre',item?.closedAt?localDate(item.closedAt):null);add('ID del trato',item?.id);
+    add('Agregado el',item?.createdAt?localDate(item.createdAt):'Se asigna al guardar');add('Fecha de cambio de fase',item?.stageChangedAt?localDate(item.stageChangedAt):null);add('Fecha de cierre',item?.closedAt?localDate(item.closedAt):null);add('ID del trato',item?.sourceId || item?.id);
     const calculated=element('p',undefined,'crm-calculated');side.append(calculated);const update=()=>{const weight=Number($('deal-field-weight')?.value),height=Number($('deal-field-height')?.value);calculated.textContent=`Edad: ${item?.computed?.age??'Sin dato'} · IMC: ${weight>0&&height>0?(weight/((height/100)**2)).toFixed(1):'Sin dato'}`;};for(const key of ['weight','height'])$('deal-field-'+key)?.addEventListener('input',update);update();
   }
   function renderRecordMeta(item){
