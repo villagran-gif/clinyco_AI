@@ -111,9 +111,9 @@
       const th=element('th');th.scope='col';th.draggable=true;th.dataset.key=column.key;th.setAttribute('aria-sort',sortKey===column.key?(sortDirection===1?'ascending':'descending'):'none');
       th.ondragstart=e=>{draggedColumn=column.key;e.dataTransfer.setData('text/plain',column.key);};th.ondragover=e=>e.preventDefault();th.ondrop=e=>{e.preventDefault();if(visibleColumns.includes(draggedColumn))moveColumn(draggedColumn,column.key);};
       const sort=button(column.label+(sortKey===column.key?(sortDirection===1?' ↑':' ↓'):' ↕'),()=>{sortDirection=sortKey===column.key?-sortDirection:1;sortKey=column.key;savePreferences();renderDealTable();});sort.title='Ordenar ascendente / descendente';th.append(sort);
-      const menu=element('details'),summary=element('summary','Opciones');menu.append(summary);
-      const filter=element('input');filter.type='search';filter.placeholder='Contiene…';filter.setAttribute('aria-label',`Filtrar ${column.label}`);filter.value=columnFilters[column.key]||'';filter.onchange=()=>{columnFilters[column.key]=filter.value;savePreferences();renderDealTable();};menu.append(filter);
-      const index=visibleColumns.indexOf(column.key);if(index>0)menu.append(button('Mover a la izquierda',()=>moveColumn(column.key,visibleColumns[index-1])));if(index<visibleColumns.length-1)menu.append(button('Mover a la derecha',()=>moveColumn(visibleColumns[index+1],column.key)));th.append(menu);tr.append(th);
+      sort.title='Clic para ordenar · Arrastra para mover · Alt + flechas para mover con teclado';
+      sort.onkeydown=e=>{if(!e.altKey||!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const index=visibleColumns.indexOf(column.key);if(e.key==='ArrowLeft'&&index>0)moveColumn(column.key,visibleColumns[index-1]);if(e.key==='ArrowRight'&&index<visibleColumns.length-1)moveColumn(visibleColumns[index+1],column.key);table.querySelector(`th[data-key="${column.key}"] button`)?.focus();};
+      tr.append(th);
     }head.append(tr);
     for(const item of viewRows()){
       const row=element('tr');
