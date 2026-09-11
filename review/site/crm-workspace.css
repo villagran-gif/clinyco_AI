@@ -164,3 +164,47 @@ html:not(.review-locked) main.container{width:100%;max-width:none;padding:0 24px
 #crm-deal-team-fields{border-top:1px solid #e0e5e9;margin-top:20px;padding-top:16px}
 @media(max-width:1100px){.deal-detail-layout{grid-template-columns:240px minmax(0,1fr)}}
 @media(max-width:640px){.deal-detail-layout{display:block}}
+/* Familiar Sell record: properties, activity and related cards. */
+#crm-op-form .deal-detail-header{justify-content:flex-start;gap:16px}
+#crm-op-form .deal-detail-header [data-close]{margin-left:auto}
+#crm-op-form .deal-detail-header #crm-record-edit{color:#2878bd;border-color:#92b7d5}
+#crm-op-form .deal-detail-layout{grid-template-columns:300px minmax(0,1fr) 290px}
+#crm-op-form .deal-detail-properties{padding:20px;background:white}
+#crm-op-form .deal-detail-fields{padding:16px;background:white}
+#crm-op-form .deal-detail-tracking{padding:12px;background:#fafbfc}
+#crm-record-meta:empty{display:none}
+#crm-deal-side-fields{border:0;margin:0;padding:0}
+#crm-op-form .record-property{display:block;font-weight:600;margin:0 0 17px;line-height:1.4;font-size:12px}
+#crm-op-form .record-value{font-weight:400;font-size:13px;color:#39444d;margin-top:5px;overflow-wrap:anywhere;white-space:pre-wrap}
+#crm-op-form .record-control{font-weight:400;margin-top:5px}
+#crm-op-form[data-editing="false"] .record-control,#crm-op-form[data-editing="false"] #crm-op-labels label{display:none}
+#crm-op-form[data-editing="true"] .record-value{display:none}
+#crm-op-form #crm-op-labels legend{font-size:12px;font-weight:600;margin:0}
+#crm-op-form .deal-small-value{max-width:100%;font-size:12px}
+#crm-op-form .deal-small-value .record-value,#crm-op-form .deal-small-value input{font-size:13px;font-weight:400}
+#crm-op-form .deal-small-value input{max-width:165px}
+#crm-record-identification #crm-deal-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+#crm-op-form .record-card{border:1px solid #e2e7eb;background:#fff;border-radius:3px;margin:0 0 12px;padding:14px}
+#crm-op-form .record-card h4{font-size:12px;letter-spacing:0;text-transform:none;color:#39444d;margin:0 0 12px}
+#crm-op-form .record-card a{display:block;margin:7px 0;font-size:12px;overflow-wrap:anywhere}
+#crm-op-form .record-card p{font-size:12px;color:#778690;margin-bottom:6px}
+#crm-deal-team-fields{padding:0;margin:0;border:0}
+#crm-op-form .record-card h4 button{float:right;min-height:24px;padding:0 5px;background:white;color:#2878bd;border:0}
+.record-note-box{background:#fff8ef;border:1px solid #e5ddd1;padding:12px;border-radius:3px;margin-bottom:20px}
+#crm-op-form .record-note-box label{font-size:13px;margin:0 0 8px}
+#crm-op-form .record-note-box textarea{background:transparent;border-color:#e5ddd1;resize:vertical}
+#crm-note-save{margin-top:8px}
+#crm-note-state{font-size:12px;margin:7px 0 0}
+.record-activity-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #e1e7ec;padding-bottom:12px}
+#crm-op-form .record-activity-toolbar h4{margin:0;text-transform:none;letter-spacing:0}
+#crm-op-form .record-event{border:0;border-bottom:1px solid #e7ebef;box-shadow:none;border-radius:0;margin:0;padding:16px 6px;font-size:13px;background:#fff}
+.record-event small{color:#73838f;font-size:11px}
+#crm-op-form .record-event h5{font-size:13px;margin:7px 0}
+.record-note-content{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55}
+.record-task{border-top:1px solid #edf0f2;padding:8px 0}
+#crm-op-form .record-task>button:first-child{display:block;background:none;color:#2878bd;border:0;text-align:left;padding:0;font-size:12px}
+.record-task small{display:block;font-size:11px;color:#73838f;margin:4px 0}
+@media(max-width:1100px){#crm-op-form .deal-detail-layout{grid-template-columns:240px minmax(0,1fr)}}
+@media(max-width:640px){#crm-op-form .deal-detail-layout{display:block}#crm-record-identification #crm-deal-fields{grid-template-columns:1fr}}
+
+#crm-op-form[data-editing="false"] #crm-deal-team-fields .record-empty{display:none}

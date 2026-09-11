@@ -50,11 +50,11 @@
     if([...select.options].some(o=>o.value===selected))select.value=selected;
   }
   function links(parent, value) {
-    for(const [name,items] of [['Contacto',[value.contact]],['Conversación',value.conversations],['Ficha',[value.record]]]) for(const link of items.filter(Boolean)) {
-      const url=new URL(link.url);
+    for(const [name,items] of [['Contacto',[value.contact]],['Conversación',value.conversations||[]],['Ficha',[value.record]]]) for(const link of items.filter(Boolean)) {
+      let url;try{url=new URL(link.url);}catch{continue;}
       const valid=url.origin==='https://app.chatwoot.com' ? /^\/app\/accounts\/162472\/(contacts|conversations)\/\d+$/.test(url.pathname) : url.origin==='https://clinyco.medinetapp.com' && /^\/pacientes\/ficha\/\d+\/\d+\/$/.test(url.pathname);
-      if(!valid || url.search || url.hash)continue;
-      const a=element('a',name === 'Contacto' ? link.text : name);a.href=url.href;a.title=name;a.target='_blank';a.rel='noopener noreferrer';parent.append(a);
+      if(!valid || url.username || url.password || url.search || url.hash)continue;
+      const a=element('a',name === 'Contacto' ? link.text : name === 'Conversación' ? `Conversación #${url.pathname.split('/').pop()}` : name);a.href=url.href;a.title=name;a.target='_blank';a.rel='noopener noreferrer';parent.append(a);
     }
   }
   function button(text, handler){const b=element('button',text);b.type='button';b.onclick=handler;return b;}
@@ -120,9 +120,10 @@
       for(const column of columns){
         const cell=element('td'),value=column.get(item);
         if(column.key==='dealName'){const open=button(value,()=>openOpportunity(item));open.className='crm-deal-name';cell.append(open);}
+        else if(['phone','email'].includes(column.key) && fieldLink(column.key,value)){cell.append(fieldLink(column.key,value));}
         else if(column.type==='url' && value){
           let url;try{url=new URL(value);}catch{}
-          const valid=url && url.protocol==='https:' && !url.username && !url.password && !url.port && (column.key==='medinetUrl'?url.hostname==='clinyco.medinetapp.com' && /^\/pacientes\/ficha\/\d+\/\d+\/?$/.test(url.pathname):column.key==='whatsappUrl'?url.hostname==='wa.me' && /^\/\d+$/.test(url.pathname):url.hostname==='drive.google.com');
+          const valid=url && url.protocol==='https:' && !url.username && !url.password && !url.port && (column.key==='medinetUrl'?url.hostname==='clinyco.medinetapp.com' && /^\/pacientes\/ficha\/(?:\d+\/\d+|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}(?:\/\d+)?)\/?$/i.test(url.pathname):column.key==='whatsappUrl'?url.hostname==='wa.me' && /^\/\d+$/.test(url.pathname):url.hostname==='drive.google.com');
           if(valid){const a=element('a',column.key==='medinetUrl'?'Ficha Medinet':column.key==='whatsappUrl'?'WhatsApp':'Exámenes');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';cell.append(a);}else cell.textContent='—';
         }else cell.textContent=value===null || value===undefined || value===''?'—':column.key==='value'?new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(value):String(value);
         if(config.dealFields.some(f=>f.key===column.key)){const edit=button('✎',()=>editCell(cell,column,item));edit.setAttribute('aria-label',`Editar ${column.label}`);edit.className='crm-inline-edit';cell.append(edit);}
@@ -214,71 +215,77 @@
     }
     return result;
   }
-  function renderDealFields(item,contact){
-    const root=$('crm-deal-fields');root.replaceChildren();
-    $('crm-deal-side-fields')?.replaceChildren();$('crm-deal-team-fields')?.replaceChildren();
-    const data=item?.details || {};
-    let group=null, grid=null;
-    for(const field of config.dealFields || []){
-      if(group!==field.group){group=field.group;const section=element('details');section.open=group==='Identificación';section.append(element('summary',group));grid=element('div',undefined,'crm-field-grid');section.append(grid);root.append(section);}
-      const label=element('label',field.label),control=element(field.type==='select'?'select':field.type==='textarea'?'textarea':'input');
-      control.id='deal-field-'+field.key;
-      if(field.type==='select')selectOptions(control,field.options,'Sin dato');
-      else if(field.type!=='textarea')control.type=field.type;
-      if(field.maxLength)control.maxLength=field.maxLength;
-      if(field.type==='number'){control.min=field.min;control.max=field.max;control.step=field.step;}
-      control.value=data[field.key] ?? (field.key==='dealName'?(item?.links?.contact?.text || contact?.contact?.text || ''):field.key==='medinetUrl'?(item?.links?.record?.url || contact?.record?.url || ''):'');
-      label.append(control);grid.append(label);
-      if(field.type==='url' && control.value){
-        const url=new URL(control.value);
-        if(url.protocol==='https:' && ['drive.google.com','clinyco.medinetapp.com'].includes(url.hostname)){
-          const a=element('a','Abrir enlace');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';label.append(a);
-        }
-      }
-    }
-    // Move existing controls, preserving IDs and the single save payload.
-    let side=$('crm-deal-side-fields');if(!side){side=element('div');side.id='crm-deal-side-fields';document.querySelector('.deal-detail-properties').append(side);}side.replaceChildren();
-    let team=$('crm-deal-team-fields');if(!team){team=element('section');team.id='crm-deal-team-fields';document.querySelector('.deal-detail-tracking').append(team);}team.replaceChildren();team.append(element('h4','Equipo y colaboradores'));
-    const sideOrder=['medinetUrl','examsUrl','idDocument','bariatricSurgeon','phone','email','city','coverage','birthDate','value','weight','height','interest','origin'];
-    const identification=['dealName','idDocument','birthDate','email','phone','city'];
-    for(const field of config.dealFields || []){
-      const label=$('deal-field-'+field.key)?.closest('label');if(!label)continue;
-      if(field.key==='value')label.classList.add('deal-small-value');
-      if(['Equipo médico','Colaboradores por procedimiento'].includes(field.group))team.append(label);
-      else if(!identification.includes(field.key))side.append(label);
-    }
-    for(const key of sideOrder){const label=$('deal-field-'+key)?.closest('label');if(label?.parentElement===side)side.append(label);}
-    for(const section of [...root.querySelectorAll('details')])if(!section.querySelector('label'))section.remove();
-    const dl=$('crm-deal-computed');dl.replaceChildren();
-    const add=(label,value)=>{dl.append(element('dt',label),element('dd',value==null || value===''?'—':String(value)));};
-    add('ID del trato',item?.id || 'Se asigna al guardar');
-    add('Agregado el',item?.createdAt?localDate(item.createdAt):null);
-    add('Fecha de cambio de la última fase',item?.stageChangedAt?localDate(item.stageChangedAt):null);
-    add('Fecha de cierre',item?.closedAt?localDate(item.closedAt):null);
-    add('Próxima tarea',item?.nextTask?.title);add('Vencimiento de la próxima tarea',item?.nextTask?localDate(item.nextTask.due):null);
-    add('Tareas vencidas',item?.overdueTasks ?? 0);
-    add('Edad',item?.computed?.age);add('IMC',item?.computed?.bmi);
-    if(item?.computed?.whatsappUrl){const a=element('a','Abrir WhatsApp');a.href=item.computed.whatsappUrl;a.target='_blank';a.rel='noopener noreferrer';dl.append(element('dt','WhatsApp'),a);}
-    const calculated=element('p',undefined,'crm-calculated');root.append(calculated);
-    const update=()=>{
-      const weight=Number($('deal-field-weight')?.value),height=Number($('deal-field-height')?.value),birth=$('deal-field-birthDate')?.value;
-      const bmi=weight>0 && height>0?(weight/((height/100)**2)).toFixed(1):'—';
-      const today=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-      let age='—';if(birth && birth<=today){age=Number(today.slice(0,4))-Number(birth.slice(0,4))-(today.slice(5)<birth.slice(5)?1:0);}
-      calculated.textContent=`Edad: ${age} · IMC: ${bmi}`;
-    };
-    for(const key of ['weight','height','birthDate'])if($('deal-field-'+key))$('deal-field-'+key).addEventListener('input',update);
-    update();
+  let recordItem=null, activityOffset=0, recordTaskOffset=0, activityBusy=false, recordTasksBusy=false, recordGeneration=0;
+  function safeLink(label,href){
+    const a=element('a',label);a.href=href;if(/^https:/.test(href)){a.target='_blank';a.rel='noopener noreferrer';}return a;
   }
+  function phoneNumber(value){let n=String(value||'').replace(/\D/g,'');if(/^9\d{8}$/.test(n))n='56'+n;return /^[1-9]\d{7,14}$/.test(n)?n:null;}
+  function fieldLink(key,value){
+    if(key==='phone'){const n=phoneNumber(value);return n?safeLink(value,`tel:+${n}`):null;}
+    if(key==='email')return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value||'')?safeLink(value,`mailto:${encodeURIComponent(value)}`):null;
+    if(['medinetUrl','examsUrl'].includes(key)&&value){let u;try{u=new URL(value);}catch{return null;}
+      if(u.protocol!=='https:'||u.username||u.password||u.port)return null;
+      const ok=key==='medinetUrl'?u.hostname==='clinyco.medinetapp.com'&&/^\/pacientes\/ficha\/(?:\d+\/\d+|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}(?:\/\d+)?)\/?$/i.test(u.pathname)&&!u.search&&!u.hash:u.hostname==='drive.google.com';
+      return ok?safeLink(key==='medinetUrl'?'Abrir ficha Medinet':'Abrir exámenes en Google Drive',u.href):null;
+    }return null;
+  }
+  function propertyValue(field,value){const out=element('div',undefined,'record-value');const a=fieldLink(field.key,value);if(a)out.append(a);else out.textContent=value===null||value===undefined||value===''?'Sin dato':field.key==='value'?new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(value):field.type==='date'?String(value).split('-').reverse().join('/'):String(value);return out;}
+  function setRecordEditing(edit){const form=$('crm-op-form');form.dataset.editing=String(edit);$('crm-record-edit').textContent=edit?'Ver ficha':'Editar';form.querySelector('[type=submit]').hidden=!edit;}
+  function renderDealFields(item,contact){
+    const root=$('crm-deal-fields'),side=$('crm-deal-side-fields'),team=$('crm-deal-team-fields');root.replaceChildren();side.replaceChildren();team.replaceChildren();
+    const data=item?.details||{},identity=['dealName','idDocument','birthDate','email','phone','city'];
+    const order=['dealName','medinetUrl','examsUrl','idDocument','bariatricSurgeon','phone','email','city','coverage','coveragePlan','birthDate','value','weight','height','interest','source'];
+    const sorted=[...(config.dealFields||[])].sort((a,b)=>{const x=order.indexOf(a.key),y=order.indexOf(b.key);return (x<0?999:x)-(y<0?999:y);});
+    for(const field of sorted){
+      const label=element('label',field.label,'record-property'),control=element(field.type==='select'?'select':field.type==='textarea'?'textarea':'input');control.className='record-control';control.id='deal-field-'+field.key;
+      if(field.type==='select')selectOptions(control,field.options,'Sin dato');else if(field.type!=='textarea')control.type=field.type;
+      if(field.maxLength)control.maxLength=field.maxLength;if(field.type==='number'){control.min=field.min;control.max=field.max;control.step=field.step;}
+      control.value=data[field.key]??(field.key==='dealName'?(item?.links?.contact?.text||contact?.contact?.text||''):field.key==='medinetUrl'?(item?.links?.record?.url||contact?.record?.url||''):'');
+      label.append(control,propertyValue(field,control.value));if(!control.value)label.classList.add('record-empty');if(field.key==='value')label.classList.add('deal-small-value');
+      if(!item&&identity.includes(field.key))root.append(label);else if(field.key==='collaborators'||field.group==='Colaboradores por procedimiento')team.append(label);else side.append(label);
+    }
+    if(!team.querySelector('.record-property:not(.record-empty)'))team.append(element('p','Sin colaboradores','record-value'));
+    $('crm-record-identification').hidden=!!item;$('crm-record-activity').hidden=!item;$('crm-record-new-task').disabled=!item;
+    const dl=$('crm-deal-computed');dl.replaceChildren();const add=(label,value)=>dl.append(element('dt',label),element('dd',value||'Sin dato'));
+    add('Agregado el',item?.createdAt?localDate(item.createdAt):'Se asigna al guardar');add('Fecha de cambio de fase',item?.stageChangedAt?localDate(item.stageChangedAt):null);add('Fecha de cierre',item?.closedAt?localDate(item.closedAt):null);add('ID del trato',item?.id);
+    const calculated=element('p',undefined,'crm-calculated');side.append(calculated);const update=()=>{const weight=Number($('deal-field-weight')?.value),height=Number($('deal-field-height')?.value);calculated.textContent=`Edad: ${item?.computed?.age??'Sin dato'} · IMC: ${weight>0&&height>0?(weight/((height/100)**2)).toFixed(1):'Sin dato'}`;};for(const key of ['weight','height'])$('deal-field-'+key)?.addEventListener('input',update);update();
+  }
+  function renderRecordMeta(item){
+    const form=$('crm-op-form'),side=$('crm-deal-side-fields');
+    for(const name of ['owner','pipeline','stage','branch']){const select=form.elements[name],label=select.closest('label');label.classList.add('record-property');select.classList.add('record-control');label.querySelector('.record-value')?.remove();label.append(element('div',select.selectedOptions[0]?.textContent||'Sin dato','record-value'));}
+    // Keep the same left-hand reading order as the team's former Sell view.
+    side.prepend(form.elements.owner.closest('label'));
+    const surgeon=$('deal-field-bariatricSurgeon')?.closest('label');let anchor=surgeon||$('deal-field-idDocument')?.closest('label');
+    for(const name of ['pipeline','stage','branch']){const label=form.elements[name].closest('label');if(anchor)anchor.after(label);else side.append(label);anchor=label;}
+    const tags=$('crm-op-labels');tags.classList.add('record-property');tags.querySelector('.record-value')?.remove();tags.append(element('div',item?.labels?.join(' · ')||'Sin etiquetas','record-value'));$('deal-field-email')?.closest('label')?.after(tags);
+  }
+  function renderRecordLinks(item,contact){
+    const data=item?.details||{},l=item?.links||contact||{};
+    $('crm-op-contact').replaceChildren();if(l.contact)links($('crm-op-contact'),{contact:l.contact});
+    const conversations=$('crm-record-conversations');conversations.replaceChildren();for(const link of l.conversations||[])links(conversations,{conversations:[link]});if(!conversations.childElementCount)conversations.textContent='Sin conversaciones vinculadas';
+    const quick=$('crm-record-contact-links');quick.replaceChildren();for(const key of ['phone','email']){const a=fieldLink(key,data[key]);if(a)quick.append(a);}
+    const phone=phoneNumber(data.phone);if(phone)quick.append(safeLink('WhatsApp',`https://wa.me/${phone}`));if(!quick.childElementCount)quick.textContent='Sin teléfono ni correo registrados';
+    const docs=$('crm-record-documents');docs.replaceChildren();const medinet=fieldLink('medinetUrl',data.medinetUrl||l.record?.url);const exams=fieldLink('examsUrl',data.examsUrl);if(medinet)docs.append(medinet);if(exams)docs.append(exams);if(!docs.childElementCount)docs.textContent='Sin documentos vinculados';
+    const appointments=$('crm-record-appointments');appointments.replaceChildren();const record=fieldLink('medinetUrl',data.medinetUrl||l.record?.url);if(record)appointments.append(record);
+  }
+  async function loadRecordActivity(more=false){if(!recordItem||activityBusy)return;const id=recordItem.id,generation=recordGeneration;activityBusy=true;$('crm-activity-refresh').disabled=true;const root=$('crm-activity-items');if(!more){activityOffset=0;root.replaceChildren();}try{const data=await api(`/opportunities/${id}/activity?offset=${activityOffset}`);if(generation!==recordGeneration)return;for(const item of data.items){const card=element('article',undefined,'record-event');card.append(element('small',[item.actor||'Equipo Clinyco',localDate(item.at)].join(' · ')),element('h5',item.title));if(item.stage&&item.title==='Cambio de fase')card.append(element('p',config.pipelines.flatMap(p=>p.stages).find(s=>s.id===item.stage)?.name||item.stage));if(item.task)card.append(element('p',item.task));if(item.body){const body=element('div',item.body,'record-note-content');card.append(body);}root.append(card);}activityOffset+=data.items.length;$('crm-activity-more').hidden=!data.more;if(!activityOffset)root.textContent='Sin actividad registrada.';}catch(e){if(generation===recordGeneration)root.textContent='No se pudo cargar la actividad. Intenta actualizar.';}finally{if(generation===recordGeneration){activityBusy=false;$('crm-activity-refresh').disabled=false;}}}
+  async function loadRecordTasks(more=false){if(!recordItem||recordTasksBusy)return;const id=recordItem.id,generation=recordGeneration;recordTasksBusy=true;const root=$('crm-record-tasks');if(!more){recordTaskOffset=0;root.replaceChildren();}try{const data=await api(`/tasks?opportunityId=${id}&status=pending&offset=${recordTaskOffset}`);if(generation!==recordGeneration)return;for(const t of data.items){const row=element('div',undefined,'record-task');row.append(button(t.title,()=>openTask(t,recordItem)),element('small',`${localDate(t.due)} · ${t.owner||'Sin responsable'}`),button('Completar',async e=>{e.currentTarget.disabled=true;try{await api(`/tasks/${t.id}`,{...t,status:'done'},'PUT');await loadTasks();await loadBoard();await loadRecordTasks();await loadRecordActivity();}catch(err){$('crm-op-state').textContent=err.message;e.currentTarget.disabled=false;}}));root.append(row);}recordTaskOffset+=data.items.length;$('crm-record-tasks-more').hidden=!data.more;if(!recordTaskOffset)root.textContent='Sin tareas activas';}catch(e){if(generation===recordGeneration)root.textContent='No se pudieron cargar las tareas.';}finally{if(generation===recordGeneration)recordTasksBusy=false;}}
+  $('crm-record-edit').onclick=()=>setRecordEditing($('crm-op-form').dataset.editing!=='true');
+  $('crm-activity-refresh').onclick=()=>loadRecordActivity();$('crm-activity-more').onclick=()=>loadRecordActivity(true);$('crm-record-tasks-more').onclick=()=>loadRecordTasks(true);
+  $('crm-record-new-task').onclick=()=>openTask(null,recordItem);
+  $('crm-note-save').onclick=async e=>{const text=$('crm-note-body').value.trim(),id=recordItem?.id,generation=recordGeneration;if(!text){$('crm-note-body').focus();return;}if(!id)return;e.currentTarget.disabled=true;try{await api(`/opportunities/${id}/notes`,{body:text});if(generation===recordGeneration){$('crm-note-body').value='';$('crm-note-state').textContent='Nota guardada';await loadRecordActivity();}}catch(err){if(generation===recordGeneration)$('crm-note-state').textContent=err.message;}finally{e.currentTarget.disabled=false;}};
   function openOpportunity(item=null,contact=null){
-    activeOpportunity=item;activeContact=contact;
+    // Restore metadata controls before replacing moved field containers.
+    const meta=$('crm-record-meta');for(const name of ['owner','pipeline','stage','branch'])meta.append($('crm-op-form').elements[name].closest('label'));meta.append($('crm-op-labels'));
+    activeOpportunity=item;activeContact=contact;recordItem=item;recordGeneration++;activityBusy=false;recordTasksBusy=false;
     const form=$('crm-op-form');form.reset();
     $('crm-op-heading').textContent=item?(item.details?.dealName || item.links?.contact?.text || 'Ficha del DEAL'):'Crear DEAL';$('crm-op-state').textContent='';
     $('crm-op-contact').replaceChildren();links($('crm-op-contact'),item?.links || contact);
     renderDealFields(item,contact);
     selectOptions(form.elements.pipeline,config.pipelines,null,item?.pipeline||$('crm-pipeline').value);form.elements.pipeline.disabled=!!item;
     selectOptions(form.elements.owner,config.owners,'Sin responsable',item?.owner||'');opportunityFields(item);
-    $('crm-op-dialog').showModal();
+    renderRecordMeta(item);renderRecordLinks(item,contact);setRecordEditing(!item);$('crm-note-state').textContent='';$('crm-note-body').value='';$('crm-record-tasks').replaceChildren();$('crm-activity-items').replaceChildren();
+    $('crm-op-dialog').showModal();if(item){loadRecordActivity();loadRecordTasks();}
   }
   window.crmAddContact=async contact=>{try{await ensureConfig();openOpportunity(null,contact);}catch(e){$('crm-workspace-state').textContent=e.message;}};
   $('crm-op-form').elements.pipeline.onchange=()=>opportunityFields();
@@ -306,7 +313,7 @@
     try{
       const payload={title:form.elements.title.value,owner:form.elements.owner.value,type:form.elements.type.value,status:form.elements.status.value,due:form.elements.due.value?new Date(form.elements.due.value).toISOString():null};
       if(activeTask)payload.version=activeTask.version;else payload.opportunityId=activeOpportunity.id;
-      await api(activeTask?`/tasks/${activeTask.id}`:'/tasks',payload,activeTask?'PUT':'POST');$('crm-task-dialog').close();await loadTasks();await loadBoard();
+      await api(activeTask?`/tasks/${activeTask.id}`:'/tasks',payload,activeTask?'PUT':'POST');$('crm-task-dialog').close();await loadTasks();await loadBoard();if($('crm-op-dialog').open){await loadRecordTasks();await loadRecordActivity();}
     }catch(e){$('crm-task-state').textContent=e.message;}finally{b.disabled=false;}
   };
   $('crm-options-form').onsubmit=async event=>{

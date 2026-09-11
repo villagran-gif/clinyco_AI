@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import { ensureWorkspace, configuration, addOption, saveOpportunity, board, saveTask, tasks, conversationContact } from '../review/crm-workspace.js';
+import { ensureWorkspace, configuration, addOption, saveOpportunity, board, saveTask, tasks, conversationContact, dealActivity, addDealNote } from '../review/crm-workspace.js';
 import express from 'express';
 import { workspaceRouter } from '../review/crm-workspace-router.js';
 import { publicLinks, recordContactEvent } from '../review/crm-links.js';
@@ -33,7 +33,7 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
     assert.equal(context.contact.text,'Nombre reciente');
     await assert.rejects(conversationContact(pool,'999'),e=>e.status===404);
     await assert.rejects(saveOpportunity(pool,{...input,sourceConversationId:'999'}),e=>e.message==='conversation_contact_mismatch');
-    const op=await saveOpportunity(pool,{...input,sourceConversationId:'456',details:{dealName:'Trato de prueba',weight:90,height:180,birthDate:'1990-09-12',value:2000000,examsUrl:'https://drive.google.com/drive/folders/example'}});
+    const op=await saveOpportunity(pool,{...input,sourceConversationId:'456',details:{dealName:'Trato de prueba',weight:90,height:180,birthDate:'1990-09-12',value:2000000,email:'patient@example.test',phone:'+56912345678',medinetUrl:'https://clinyco.medinetapp.com/pacientes/ficha/123/1/',examsUrl:'https://drive.google.com/drive/folders/example'}});
     assert.equal(op.computed.bmi,27.8);assert.equal(op.details.value,2000000);assert.ok(op.createdAt);assert.ok(op.stageChangedAt);assert.equal(op.closedAt,null);
     assert.equal(op.sourceConversationId,'456');
     await assert.rejects(saveOpportunity(pool,input),e=>e.status===409);
@@ -57,7 +57,14 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
     assert.equal(reopened.completedAt,null); assert.equal((await tasks(pool,{status:'pending'})).items.length,1);
     const audit=await pool.query('SELECT * FROM crm_changes');assert.equal(audit.rows.length,5);
     assert.ok(audit.rows.every(r=>r.actor==='anonymous'));
+    await assert.rejects(addDealNote(pool,op.id,{body:'Nota'},null),e=>e.status===401);
+    await assert.rejects(addDealNote(pool,op.id,{body:' '},'operator@example.test'),e=>e.status===400);
+    await addDealNote(pool,op.id,{body:'Nota de prueba\nSegunda línea'},'operator@example.test');
+    const activity=await dealActivity(pool,op.id);assert.ok(activity.items.some(i=>i.body==='Nota de prueba\nSegunda línea'&&i.actor==='operator@example.test'));
+    assert.ok(activity.items.some(i=>i.title==='Cambio de fase'));assert.ok(activity.items.some(i=>i.kind==='task'));
+    assert.doesNotMatch(JSON.stringify(activity),/PRIVATE_RUT|previous_value|contact_id/);
     const app=express();
+    app.use((req,res,next)=>{req.reviewUser={email:'operator@example.test'};next();});
     app.use('/crm',workspaceRouter({getPool:()=>pool,enabled:()=>true,allowedOrigins:()=>['https://clinyco-ai.netlify.app']}));
     const server=app.listen(0,'127.0.0.1');
     await new Promise(resolve=>server.once('listening',resolve));
@@ -68,6 +75,12 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
       assert.equal((await read.json()).items.length,1);
       const denied=await fetch(`${root}/options`,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({kind:'owner',value:'No'})});
       assert.equal(denied.status,403);
+      const deniedNote=await fetch(`${root}/opportunities/${op.id}/notes`,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({body:'Must not save'})});
+      assert.equal(deniedNote.status,403);
+      const note=await fetch(`${root}/opportunities/${op.id}/notes`,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://clinyco-ai.netlify.app'},body:JSON.stringify({body:'<script>NOT_EXECUTED</script>',actor:'forged@example.test'})});
+      assert.equal(note.status,200);
+      const noteActivity=await fetch(`${root}/opportunities/${op.id}/activity`);
+      assert.equal((await noteActivity.json()).items.find(i=>i.body==='<script>NOT_EXECUTED</script>').actor,'operator@example.test');
       const accepted=await fetch(`${root}/options`,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://clinyco-ai.netlify.app'},body:JSON.stringify({kind:'owner',value:'Otra ejecutiva'})});
       assert.equal(accepted.status,200);
       const invalid=await fetch(`${root}/tasks/not-a-uuid`,{method:'PUT',headers:{'Content-Type':'application/json',Origin:'https://clinyco-ai.netlify.app'},body:JSON.stringify({...t,version:1})});
@@ -108,6 +121,17 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
         w.document.querySelector('.crm-deal-name').click();
         const form=w.document.getElementById('crm-op-form');
         assert.ok(w.document.getElementById('crm-op-dialog').open);
+        assert.equal(form.dataset.editing,'false');w.document.getElementById('crm-record-edit').click();assert.equal(form.dataset.editing,'true');
+        assert.ok(w.document.querySelector('.deal-detail-properties #deal-field-value'));
+        assert.ok(w.document.querySelector('.deal-detail-properties #deal-field-bariatricSurgeon'));
+        assert.ok(w.document.querySelector('.deal-detail-properties #deal-field-idDocument'));
+        assert.ok(w.document.querySelector('.deal-detail-tracking #deal-field-collaborators'));
+        assert.equal(w.document.querySelector('a[href="tel:+56912345678"]')!==null,true);
+        assert.equal(w.document.querySelector('a[href="https://wa.me/56912345678"]')!==null,true);
+        assert.equal(w.document.querySelector('a[href="mailto:patient%40example.test"]')!==null,true);
+        assert.equal(w.document.querySelector('#crm-record-documents a[href="https://clinyco.medinetapp.com/pacientes/ficha/123/1/"]')!==null,true);
+        assert.equal(w.document.querySelector('#crm-record-documents a[href="https://drive.google.com/drive/folders/example"]')!==null,true);
+        assert.equal(w.document.querySelector('#crm-record-conversations a[href="https://app.chatwoot.com/app/accounts/162472/conversations/456"]')!==null,true);
         assert.equal(w.document.getElementById('deal-field-weight').value,'90');
         w.document.getElementById('deal-field-city').value='Ciudad de prueba';
         form.elements.stage.value='bariatrica_6';
@@ -121,6 +145,14 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
         await taskForm.onsubmit({preventDefault(){},currentTarget:taskForm});
         assert.equal((await tasks(pool,{status:'pending'})).items.length,2);
         assert.match(w.document.getElementById('crm-tasks').textContent,/Seguimiento de prueba/);
+        w.document.querySelector('.crm-deal-name').click();
+        assert.equal(w.document.querySelectorAll('#deal-field-value').length,1);
+        assert.equal(w.document.querySelectorAll('#crm-op-form [name=owner]').length,1);
+        w.document.getElementById('crm-note-body').value='Nota desde la ficha';
+        await w.document.getElementById('crm-note-save').onclick({currentTarget:w.document.getElementById('crm-note-save'),target:w.document.getElementById('crm-note-save')});
+        assert.ok((await dealActivity(pool,op.id)).items.some(i=>i.body==='Nota desde la ficha'));
+        assert.equal(w.document.querySelectorAll('#crm-activity-items script').length,0);
+        assert.match(w.document.querySelector('#crm-activity-items').textContent,/NOT_EXECUTED/);
         dom.window.close();
       }
     } finally { await new Promise(resolve=>server.close(resolve)); }
