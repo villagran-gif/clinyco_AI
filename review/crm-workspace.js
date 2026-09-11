@@ -50,6 +50,8 @@ ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS source_conversation_id te
 ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS stage_changed_at timestamptz;
 ALTER TABLE crm_opportunities ADD COLUMN IF NOT EXISTS closed_at timestamptz;
+CREATE TABLE IF NOT EXISTS crm_deal_notes (id uuid PRIMARY KEY, opportunity_id uuid NOT NULL REFERENCES crm_opportunities(id), body text NOT NULL, actor text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS crm_deal_notes_record ON crm_deal_notes(opportunity_id,created_at,id);
 CREATE TABLE IF NOT EXISTS crm_tasks (
  id uuid PRIMARY KEY, opportunity_id uuid NOT NULL REFERENCES crm_opportunities(id), title text NOT NULL,
  owner text NOT NULL DEFAULT '', task_type text NOT NULL DEFAULT '', due_at timestamptz,
@@ -87,8 +89,8 @@ async function transaction(pool, fn) {
   try { await c.query('BEGIN'); const result = await fn(c); await c.query('COMMIT'); return result; }
   catch(e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
 }
-async function audit(c, entity, id, before, after) {
-  await c.query('INSERT INTO crm_changes(entity,entity_id,previous_value,new_value) VALUES ($1,$2,$3::jsonb,$4::jsonb)', [entity,id,JSON.stringify(before),JSON.stringify(after)]);
+async function audit(c, entity, id, before, after, actor = 'anonymous') {
+  await c.query('INSERT INTO crm_changes(entity,entity_id,previous_value,new_value,actor) VALUES ($1,$2,$3::jsonb,$4::jsonb,$5)', [entity,id,JSON.stringify(before),JSON.stringify(after),actor]);
 }
 async function optionsExist(c, fields) {
   for (const [kind,value] of fields) if (value) {
@@ -111,7 +113,7 @@ export async function addOption(pool, input) {
   const value = text(input.value,80,true); await ensureWorkspace(pool);
   await pool.query('INSERT INTO crm_options(kind,value) VALUES ($1,$2) ON CONFLICT DO NOTHING',[input.kind,value]);
 }
-export async function saveOpportunity(pool, input, id = null) {
+export async function saveOpportunity(pool, input, id = null, actor = 'anonymous') {
   const values = opportunityInput(input);
   if (id) { uuid(id); version(input.version); }
   else if (!/^\d+$/.test(String(input.contactId || ''))) bad();
@@ -138,7 +140,7 @@ export async function saveOpportunity(pool, input, id = null) {
       result = await c.query(`INSERT INTO crm_opportunities(id,contact_id,pipeline_id,stage_id,branch,labels,owner,source_conversation_id,details,stage_changed_at,closed_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,now(),CASE WHEN $10 THEN now() END) ON CONFLICT(contact_id,pipeline_id) DO NOTHING RETURNING *`,[id,String(input.contactId),values.pipeline,values.stage,values.branch,JSON.stringify(values.labels),values.owner,input.sourceConversationId == null ? null : String(input.sourceConversationId),JSON.stringify(values.details || {}),values.closed]);
       if (!result.rows.length) throw new CrmError(409,'already_in_pipeline');
     }
-    await audit(c,'opportunity',id,before,result.rows[0]); return opportunity(result.rows[0]);
+    await audit(c,'opportunity',id,before,result.rows[0],actor); return opportunity(result.rows[0]);
   });
 }
 export async function board(pool, query) {
@@ -158,7 +160,7 @@ export async function board(pool, query) {
     ORDER BY o.created_at,o.id LIMIT 101 OFFSET $5`,[query.pipeline,branch,owner,month ? `${month}-01` : '',pageOffset]);
   return { items: rows.slice(0,100).map(r=>({...opportunity(r),links:publicLinks(r)})), more: rows.length>100 };
 }
-export async function saveTask(pool, input, id = null) {
+export async function saveTask(pool, input, id = null, actor = 'anonymous') {
   const values = taskInput(input);
   if (id) { uuid(id); version(input.version); } else uuid(input.opportunityId);
   return transaction(pool, async c => {
@@ -175,7 +177,7 @@ export async function saveTask(pool, input, id = null) {
       id = randomUUID();
       result = await c.query(`INSERT INTO crm_tasks(id,opportunity_id,title,owner,task_type,due_at,completed_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $7='done' THEN now() ELSE NULL END) RETURNING *`,[id,input.opportunityId,values.title,values.owner,values.type,values.due,values.status]);
     }
-    await audit(c,'task',id,before,result.rows[0]); return task(result.rows[0]);
+    await audit(c,'task',id,before,result.rows[0],actor); return task(result.rows[0]);
   });
 }
 export async function tasks(pool, query) {
@@ -200,4 +202,23 @@ export async function conversationContact(pool, id) {
     ARRAY[$1::text] AS conversation_ids FROM crm_link_conversations v JOIN crm_link_contacts c ON c.contact_id=v.contact_id WHERE v.conversation_id=$1`,[String(id)]);
   if (!rows.length) throw new CrmError(404,'conversation_not_imported');
   return {...publicLinks(rows[0]),sourceConversationId:String(id)};
+}
+
+export async function dealActivity(pool,id,query={}) {
+  uuid(id);await ensureWorkspace(pool);
+  if(!(await pool.query('SELECT 1 FROM crm_opportunities WHERE id=$1',[id])).rows.length)throw new CrmError(404,'not_found');
+  const {rows}=await pool.query(`SELECT id::text,changed_at AS at,actor,entity AS kind,previous_value AS before,new_value AS after,NULL::text AS body
+    FROM crm_changes WHERE (entity='opportunity' AND entity_id=$1) OR (entity='task' AND new_value->>'opportunity_id'=$1::text)
+    UNION ALL SELECT id::text,created_at AS at,actor,'note' AS kind,NULL::jsonb,NULL::jsonb,body FROM crm_deal_notes WHERE opportunity_id=$1
+    ORDER BY at DESC,id DESC LIMIT 101 OFFSET $2`,[id,offset(query.offset)]);
+  return {items:rows.slice(0,100).map(r=>({id:r.id,at:r.at,actor:r.actor==='anonymous'?null:r.actor,kind:r.kind,body:r.body,
+    title:r.kind==='note'?'Nota interna':r.kind==='task'?(r.after.completed_at?'Tarea completada':r.before?'Tarea actualizada':'Tarea creada'):
+      !r.before?'DEAL creado':r.before.stage_id!==r.after.stage_id?'Cambio de fase':'Datos actualizados',
+    stage:r.kind==='opportunity'?r.after.stage_id:null,task:r.kind==='task'?r.after.title:null})),more:rows.length>100};
+}
+export async function addDealNote(pool,id,input,actor) {
+  uuid(id);if(typeof input?.body!=='string'||!input.body.trim()||input.body.length>10000||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(input.body))bad();
+  if(!actor)throw new CrmError(401,'authentication_required');
+  return transaction(pool,async c=>{if(!(await c.query('SELECT 1 FROM crm_opportunities WHERE id=$1 FOR SHARE',[id])).rows.length)throw new CrmError(404,'not_found');
+    const noteId=randomUUID();await c.query('INSERT INTO crm_deal_notes(id,opportunity_id,body,actor) VALUES($1,$2,$3,$4)',[noteId,id,input.body.trim(),actor]);return {id:noteId,saved:true};});
 }

@@ -231,15 +231,27 @@
     </div>
     <dialog id="crm-op-dialog">
       <form id="crm-op-form">
-        <header class="deal-detail-header"><div><small>SELL / DEALS</small><h3 id="crm-op-heading">Ficha del DEAL</h3></div><button type="button" data-close="crm-op-dialog" aria-label="Cerrar ficha">Cerrar ×</button></header>
-        <div class="deal-detail-layout"><aside class="deal-detail-properties"><h4>Resumen del DEAL</h4><p id="crm-op-contact"></p>
-        <label>Embudo <select name="pipeline" required></select></label>
-        <label>Etapa <select name="stage" required></select></label>
-        <label>Sede <select name="branch"></select></label>
-        <label>Responsable <select name="owner"></select></label>
-        <fieldset id="crm-op-labels"><legend>Etiquetas</legend></fieldset>
-        </aside><section class="deal-detail-fields" aria-label="Datos del DEAL"><h4>Detalles</h4><div id="crm-deal-fields"></div></section>
-        <aside class="deal-detail-tracking"><h4>Seguimiento y próxima tarea</h4><dl id="crm-deal-computed"></dl></aside></div>
+        <header class="deal-detail-header"><div><small>SELL / TRATOS</small><h3 id="crm-op-heading">Ficha del DEAL</h3></div><button type="button" id="crm-record-edit">Editar</button><button type="button" data-close="crm-op-dialog" aria-label="Cerrar ficha">Cerrar ×</button></header>
+        <div class="deal-detail-layout">
+          <aside class="deal-detail-properties" aria-label="Datos del trato">
+            <div id="crm-record-meta"><label>Dueño <select name="owner"></select></label><label>Pipeline de ventas <select name="pipeline" required></select></label><label>Fase <select name="stage" required></select></label><label>Sucursal <select name="branch"></select></label><fieldset id="crm-op-labels"><legend>Etiquetas</legend></fieldset></div>
+            <div id="crm-deal-side-fields"></div><dl id="crm-deal-computed"></dl>
+          </aside>
+          <section class="deal-detail-fields" aria-label="Actividad del trato">
+            <section id="crm-record-identification"><h4>Detalles · Identificación</h4><div id="crm-deal-fields"></div></section>
+            <section id="crm-record-activity"><div class="record-note-box"><label for="crm-note-body">Nota interna</label><textarea id="crm-note-body" maxlength="10000" rows="3" placeholder="Agregar una nota acerca de este trato"></textarea><button type="button" id="crm-note-save">Agregar nota</button><p id="crm-note-state" role="status"></p></div>
+              <div class="record-activity-toolbar"><h4>Actividad</h4><button type="button" id="crm-activity-refresh">Actualizar actividad</button></div><div id="crm-activity-items" role="feed" aria-label="Historial del trato"></div><button type="button" id="crm-activity-more" hidden>Ver más actividad</button>
+            </section>
+          </section>
+          <aside class="deal-detail-tracking" aria-label="Panel de seguimiento">
+            <section class="record-card"><h4>Conversaciones de Chatwoot</h4><div id="crm-record-conversations"></div></section>
+            <section class="record-card"><h4>Datos de contacto</h4><div id="crm-op-contact"></div><div id="crm-record-contact-links"></div></section>
+            <section class="record-card"><h4>Colaboradores</h4><div id="crm-deal-team-fields"></div></section>
+            <section class="record-card"><h4>Próximas citas</h4><p>Citas disponibles en Medinet.</p><div id="crm-record-appointments"></div></section>
+            <section class="record-card"><h4>Tareas activas <button type="button" id="crm-record-new-task" aria-label="Agregar tarea">+</button></h4><div id="crm-record-tasks"></div><button type="button" id="crm-record-tasks-more" hidden>Ver más tareas</button></section>
+            <section class="record-card"><h4>Documentos</h4><div id="crm-record-documents"></div></section>
+          </aside>
+        </div>
         <footer class="deal-detail-footer"><p id="crm-op-state" role="status"></p><button type="button" data-close="crm-op-dialog" class="secondary">Cancelar</button><button type="submit">Guardar cambios</button></footer>
       </form>
     </dialog>

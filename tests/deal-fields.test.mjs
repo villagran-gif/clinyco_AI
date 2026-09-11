@@ -10,6 +10,9 @@ test('validates only selected editable fields and preserves explicit clearing',(
 test('medical record and exams links require exact approved HTTPS destinations',()=>{
   const good={medinetUrl:'https://clinyco.medinetapp.com/pacientes/ficha/123/1/',examsUrl:'https://drive.google.com/drive/folders/example?usp=sharing'};
   assert.deepEqual(validateDealDetails(good),good);
+  const uuidUrl='https://clinyco.medinetapp.com/pacientes/ficha/00000000-0000-4000-8000-000000000123';
+  assert.equal(validateDealDetails({medinetUrl:uuidUrl}).medinetUrl,uuidUrl);
+  for(const suffix of ['---','123','123/1/?token=x','00000000-0000-4000-8000-000000000123#x'])assert.throws(()=>validateDealDetails({medinetUrl:'https://clinyco.medinetapp.com/pacientes/ficha/'+suffix}));
   for(const url of ['javascript:alert(1)','https://drive.google.com.evil.example/file','https://user:pass@drive.google.com/file','http://drive.google.com/file'])assert.throws(()=>validateDealDetails({examsUrl:url}));
   assert.throws(()=>validateDealDetails({medinetUrl:'https://clinyco.medinetapp.com/other/123'}));
 });

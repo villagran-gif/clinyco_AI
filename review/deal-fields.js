@@ -28,7 +28,7 @@ export function validateDealDetails(input) {
     if (f.type==='url') {
       let u; try {u=new URL(v);} catch {fail(f.label);}
       if (u.protocol!=='https:' || u.username || u.password || u.port) fail(f.label);
-      if (f.key==='medinetUrl' && (u.hostname!=='clinyco.medinetapp.com' || !/^\/pacientes\/ficha\/\d+\/\d+\/?$/.test(u.pathname) || u.search || u.hash)) fail(f.label);
+      if (f.key==='medinetUrl' && (u.hostname!=='clinyco.medinetapp.com' || !/^\/pacientes\/ficha\/(?:\d+\/\d+|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}(?:\/\d+)?)\/?$/i.test(u.pathname) || u.search || u.hash)) fail(f.label);
       if (f.key==='examsUrl' && u.hostname!=='drive.google.com') fail(f.label);
     }
     result[f.key]=v;
