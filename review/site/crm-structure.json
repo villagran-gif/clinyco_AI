@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "source": "https://github.com/villagran-gif/sell-medinet-backend/blob/b78919b/docs/migration-chatwoot-frappe.md",
+  "orderVerified": false,
+  "pipelines": [
+    {
+      "id": "bariatrica",
+      "name": "Bariátrica",
+      "zendeskId": "1290779",
+      "branches": [
+        "Santiago",
+        "Calama",
+        "Antofagasta"
+      ],
+      "labels": [
+        "Bariátrica simple",
+        "Conversión"
+      ],
+      "stages": [
+        {
+          "id": "bariatrica_1",
+          "name": "CANDIDATO",
+          "displayOrder": 1,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "bariatrica_2",
+          "name": "EXAMENES PRE-PAD ENVIADOS",
+          "displayOrder": 2,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "bariatrica_3",
+          "name": "EXAMENES ENVIADOS",
+          "displayOrder": 3,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "bariatrica_4",
+          "name": "PROCESO PREOP",
+          "displayOrder": 4,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "bariatrica_5",
+          "name": "CERRADO AGENDADO",
+          "displayOrder": 5,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "bariatrica_6",
+          "name": "CERRADO OPERADO",
+          "displayOrder": 6,
+          "group": "flow",
+          "completed": true
+        },
+        {
+          "id": "bariatrica_7",
+          "name": "SUSPENDIDO",
+          "displayOrder": 7,
+          "group": "other",
+          "completed": false
+        },
+        {
+          "id": "bariatrica_8",
+          "name": "SIN RESPUESTA",
+          "displayOrder": 8,
+          "group": "other",
+          "completed": false
+        }
+      ]
+    },
+    {
+      "id": "balon",
+      "name": "Balón",
+      "zendeskId": "4823817",
+      "branches": [],
+      "labels": [],
+      "stages": [
+        {
+          "id": "balon_1",
+          "name": "CANDIDATOS",
+          "displayOrder": 1,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "balon_2",
+          "name": "EXAMENES ALLURION",
+          "displayOrder": 2,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "balon_3",
+          "name": "EXAMENES ORBERA",
+          "displayOrder": 3,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "balon_4",
+          "name": "CONTROLES PRE-INSTALACIÓN",
+          "displayOrder": 4,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "balon_5",
+          "name": "CERRADO AGENDADO",
+          "displayOrder": 5,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "balon_6",
+          "name": "CERRADO INSTALADO",
+          "displayOrder": 6,
+          "group": "flow",
+          "completed": true
+        },
+        {
+          "id": "balon_7",
+          "name": "DESCALIFICADO",
+          "displayOrder": 7,
+          "group": "other",
+          "completed": false
+        },
+        {
+          "id": "balon_8",
+          "name": "SIN RESPUESTA",
+          "displayOrder": 8,
+          "group": "other",
+          "completed": false
+        }
+      ]
+    },
+    {
+      "id": "plastica",
+      "name": "Plástica",
+      "zendeskId": "4959507",
+      "branches": [],
+      "labels": [],
+      "stages": [
+        {
+          "id": "plastica_1",
+          "name": "CANDIDATO",
+          "displayOrder": 1,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "plastica_2",
+          "name": "ORDEN DE EXAMENES",
+          "displayOrder": 2,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "plastica_3",
+          "name": "PROCESO PRE-OPERATORIO",
+          "displayOrder": 3,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "plastica_4",
+          "name": "CERRADO AGENDADO",
+          "displayOrder": 4,
+          "group": "flow",
+          "completed": false
+        },
+        {
+          "id": "plastica_5",
+          "name": "CERRADO OPERADO",
+          "displayOrder": 5,
+          "group": "flow",
+          "completed": true
+        },
+        {
+          "id": "plastica_6",
+          "name": "DESCALIFICADO",
+          "displayOrder": 6,
+          "group": "other",
+          "completed": false
+        },
+        {
+          "id": "plastica_7",
+          "name": "SIN RESPUESTA",
+          "displayOrder": 7,
+          "group": "other",
+          "completed": false
+        }
+      ]
+    }
+  ]
+}

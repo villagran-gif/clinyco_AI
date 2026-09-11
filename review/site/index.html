@@ -156,6 +156,7 @@
     }
     .table-search:focus { border-color: #2563eb; outline: none; background: #fff; }
   </style>
+<link rel="stylesheet" href="crm-workspace.css">
 </head>
 <body>
 
@@ -171,6 +172,7 @@
 <main class="container">
   <div class="tabs">
     <button class="active" onclick="showTab('dashboard')">Dashboard</button>
+    <button onclick="showTab('crm')">CRM</button>
     <button onclick="showTab('eugenia')">EugenIA</button>
     <button onclick="showTab('waha')">WhatsApp WAHA</button>
     <button onclick="showTab('zendesk')">WhatsApp Zendesk</button>
@@ -189,6 +191,72 @@
   </div>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
+  <div id="tab-crm" class="tab-content">
+    <h2>CRM</h2>
+    <div id="crm-workspace">
+      <div class="crm-toolbar">
+        <label>Embudo <select id="crm-pipeline"></select></label>
+        <label>Sede <select id="crm-branch"></select></label>
+        <label>Responsable <select id="crm-owner-filter"></select></label>
+        <label>Actividad <input id="crm-board-month" type="month" value="2026-09"></label>
+        <button id="crm-board-all" type="button">Todos los meses</button>
+        <button id="crm-board-refresh" type="button">Actualizar tablero</button>
+      </div>
+      <p id="crm-workspace-state" role="status" aria-live="polite"></p>
+      <div id="crm-board" class="crm-board"></div>
+      <button id="crm-board-more" type="button" hidden>Cargar más oportunidades</button>
+      <h3>Tareas</h3>
+      <div class="crm-toolbar">
+        <label>Estado <select id="crm-task-filter"><option value="pending">Pendientes</option><option value="overdue">Vencidas</option><option value="done">Realizadas</option><option value="all">Todas</option></select></label>
+        <label>Responsable <select id="crm-task-owner-filter"></select></label>
+        <button id="crm-tasks-refresh" type="button">Actualizar tareas</button>
+      </div>
+      <p id="crm-tasks-state" role="status"></p><div id="crm-tasks"></div>
+      <button id="crm-tasks-more" type="button" hidden>Cargar más tareas</button>
+      <details><summary>Configurar responsables y tipos de tarea</summary>
+        <form id="crm-options-form" class="crm-toolbar">
+          <label>Catálogo <select name="kind"><option value="owner">Responsable</option><option value="task_type">Tipo de tarea</option></select></label>
+          <label>Nombre <input name="value" maxlength="80" required></label><button>Agregar</button>
+        </form><p id="crm-options-state" role="status"></p>
+      </details>
+    </div>
+    <dialog id="crm-op-dialog">
+      <form id="crm-op-form">
+        <h3 id="crm-op-heading">Agregar a un embudo</h3>
+        <label>Embudo <select name="pipeline" required></select></label>
+        <label>Etapa <select name="stage" required></select></label>
+        <label>Sede <select name="branch"></select></label>
+        <label>Responsable <select name="owner"></select></label>
+        <fieldset id="crm-op-labels"><legend>Etiquetas</legend></fieldset>
+        <p id="crm-op-state" role="status"></p>
+        <button type="submit">Guardar</button><button type="button" data-close="crm-op-dialog">Cancelar</button>
+      </form>
+    </dialog>
+    <dialog id="crm-task-dialog">
+      <form id="crm-task-form">
+        <h3 id="crm-task-heading">Nueva tarea</h3>
+        <label>Título operativo <input name="title" maxlength="160" required placeholder="Ej.: confirmar recepción de documentos"></label>
+        <small>Usa las iniciales y los enlaces para identificar al contacto. Registra información clínica en Medinet.</small>
+        <label>Responsable <select name="owner"></select></label>
+        <label>Tipo <select name="type"></select></label>
+        <label>Vencimiento (hora de este navegador) <input name="due" type="datetime-local"></label>
+        <label>Estado <select name="status"><option value="pending">Pendiente</option><option value="done">Realizada</option></select></label>
+        <p id="crm-task-state" role="status"></p>
+        <button type="submit">Guardar tarea</button><button type="button" data-close="crm-task-dialog">Cancelar</button>
+      </form>
+    </dialog>
+    <h3>Contactos</h3>
+    <p>Abre la conversación, el contacto o la ficha desde sus iniciales.</p>
+    <label for="crm-month">Mes de actividad</label>
+    <input id="crm-month" type="month" value="2026-09" style="max-width:220px">
+    <button id="crm-refresh" type="button">Actualizar</button>
+    <p id="crm-state" role="status" aria-live="polite"></p>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Contacto ChWt</th><th>Conversación ChWt</th><th>Ficha Medinet</th><th>CRM</th></tr></thead>
+      <tbody id="crm-rows"></tbody>
+    </table></div>
+    <button id="crm-more" type="button" hidden>Cargar más</button>
+  </div>
   <div id="tab-dashboard" class="tab-content active">
     <div id="dash-loading" class="loading">Cargando dashboard...</div>
     <div id="dash-content" style="display:none">
@@ -1478,6 +1546,8 @@
     <div id="cola-history" style="font-size:12px"></div>
   </div>
 </main>
+<script src="crm-workspace.js"></script>
+<script src="crm-links.js"></script>
 
 <script>
 
@@ -1717,6 +1787,7 @@ window.mnHideDetail = function() {
 
 // ── Tabs ──
 function showTab(name) {
+  if (name === "crm") window.loadCrm();
   document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
