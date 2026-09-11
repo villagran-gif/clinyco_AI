@@ -130,3 +130,16 @@ html:not(.review-locked) main.container{width:100%;max-width:none;padding:0 24px
 #crm-op-state{margin:0 auto 0 0;color:#b42318;font-size:12px}
 @media(max-width:1100px){.deal-detail-layout{grid-template-columns:220px minmax(0,1fr)}.deal-detail-tracking{grid-column:1/-1;border-left:0;border-top:1px solid #dce1e5}#crm-deal-computed{display:grid;grid-template-columns:1fr 1fr;gap:8px}}
 @media(max-width:640px){#tab-crm #crm-op-dialog{width:100%;height:100dvh;max-height:100dvh;border-radius:0}.deal-detail-layout{display:block}.deal-detail-properties{border-right:0;border-bottom:1px solid #dce1e5}.deal-detail-header,.deal-detail-fields,.deal-detail-properties,.deal-detail-tracking{padding:16px}#tab-crm .deal-detail-header h3{font-size:18px}.deal-detail-footer{padding:12px;flex-wrap:wrap}#crm-op-state{flex-basis:100%}}
+
+/* Isolate native dialogs from Pico's centered flex overlay defaults. */
+#tab-crm #crm-op-dialog[open]{display:block;position:fixed;inset:24px;margin:0;width:calc(100% - 48px);height:calc(100dvh - 48px);max-width:none;max-height:none;overflow:hidden;padding:0}
+#tab-crm #crm-op-form{display:grid;grid-template-rows:auto minmax(0,1fr) auto;width:100%;max-width:none;height:100%;min-height:0;margin:0;padding:0}
+#crm-op-form .deal-detail-layout{min-height:0;overflow:auto;align-items:start;scrollbar-gutter:stable}
+#crm-op-form .deal-detail-header,#crm-op-form .deal-detail-footer{position:relative;flex-shrink:0;margin:0;width:100%;min-width:0}
+#crm-op-form .deal-detail-header>div{min-width:0}
+#crm-op-form .deal-detail-header button,#crm-op-form .deal-detail-footer button{width:auto;flex:0 0 auto}
+#crm-op-form .crm-field-grid>label{min-width:0}
+#crm-op-form input,#crm-op-form select,#crm-op-form textarea{min-width:0;max-width:100%}
+#tab-crm #crm-op-labels label{display:flex;align-items:center;gap:8px}
+#tab-crm #crm-op-labels input[type=checkbox]{width:16px;height:16px;flex:0 0 16px;margin:0}
+@media(max-width:640px){#tab-crm #crm-op-dialog[open]{inset:0;width:100%;height:100dvh}#crm-op-form .deal-detail-footer{flex-wrap:wrap}}
