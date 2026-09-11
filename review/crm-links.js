@@ -1,6 +1,9 @@
 import { normalizeRut } from "../extraction/identity-normalizers.js";
 
 const digits = value => /^\d+$/.test(String(value ?? "")) ? String(value) : null;
+export function displayName(value) {
+  return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200) || null : null;
+}
 export function initials(name) {
   return String(name || "").match(/\p{L}[\p{L}\p{M}]*/gu)?.slice(0, 5)
     .map(word => `${word[0].toLocaleUpperCase("es")}.`).join(" ") || "S. I.";
@@ -18,14 +21,14 @@ export function contactEvent(payload) {
   const stamp = payload.created_at;
   const occurred = new Date(typeof stamp === "number" || /^\d{10}(?:\.\d+)?$/.test(String(stamp)) ? Number(stamp) * 1000 : stamp);
   if (!contactId || !conversationId || !Number.isFinite(occurred.getTime())) return null;
-  return { contactId, conversationId, initials: initials(sender?.name), occurred };
+  return { contactId, conversationId, initials: initials(sender?.name), displayName: displayName(sender?.name), occurred };
 }
 
-// Strict allowlist: raw rows, names, RUTs, and message bodies never reach the client.
+// Authenticated CRM projection: only display names and validated destination links.
 export function publicLinks(row) {
   const contactId = digits(row.contact_id);
   if (!contactId) return null;
-  const label = /^(?:\p{L}\. ?){1,5}$/u.test(row.initials || "") ? row.initials : "S. I.";
+  const label = displayName(row.display_name) || (/^(?:\p{L}\. ?){1,5}$/u.test(row.initials || "") ? row.initials : "S. I.");
   const link = url => ({ text: label, url });
   return {
     contact: link(`https://app.chatwoot.com/app/accounts/162472/contacts/${contactId}`),
@@ -46,6 +49,8 @@ CREATE TABLE IF NOT EXISTS crm_link_contacts (
   medinet_section text,
   verified_at timestamptz
 );
+ALTER TABLE crm_link_contacts ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE crm_link_contacts ADD COLUMN IF NOT EXISTS name_updated_at timestamptz;
 CREATE TABLE IF NOT EXISTS crm_link_conversations (
   conversation_id text PRIMARY KEY CHECK (conversation_id ~ '^[0-9]+$'),
   contact_id text NOT NULL REFERENCES crm_link_contacts(contact_id),
@@ -75,10 +80,12 @@ export async function recordContactEvent(pool, payload) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`INSERT INTO crm_link_contacts(contact_id, initials, last_seen) VALUES ($1,$2,$3)
+    await client.query(`INSERT INTO crm_link_contacts(contact_id, initials, last_seen, display_name, name_updated_at) VALUES ($1,$2,$3,$4,CASE WHEN $4::text IS NOT NULL THEN $3::timestamptz END)
       ON CONFLICT (contact_id) DO UPDATE SET
+      display_name=CASE WHEN EXCLUDED.display_name IS NOT NULL AND (crm_link_contacts.name_updated_at IS NULL OR EXCLUDED.name_updated_at >= crm_link_contacts.name_updated_at) THEN EXCLUDED.display_name ELSE crm_link_contacts.display_name END,
+      name_updated_at=CASE WHEN EXCLUDED.display_name IS NOT NULL THEN GREATEST(crm_link_contacts.name_updated_at,EXCLUDED.name_updated_at) ELSE crm_link_contacts.name_updated_at END,
       initials=CASE WHEN EXCLUDED.last_seen >= crm_link_contacts.last_seen THEN EXCLUDED.initials ELSE crm_link_contacts.initials END,
-      last_seen=GREATEST(crm_link_contacts.last_seen, EXCLUDED.last_seen)`, [event.contactId,event.initials,event.occurred]);
+      last_seen=GREATEST(crm_link_contacts.last_seen, EXCLUDED.last_seen)`, [event.contactId,event.initials,event.occurred,event.displayName]);
     await client.query(`INSERT INTO crm_link_conversations(conversation_id,contact_id,first_seen,last_seen) VALUES ($1,$2,$3,$3)
       ON CONFLICT(conversation_id) DO UPDATE SET contact_id=EXCLUDED.contact_id,
       first_seen=LEAST(crm_link_conversations.first_seen,EXCLUDED.first_seen),last_seen=GREATEST(crm_link_conversations.last_seen,EXCLUDED.last_seen)`,
@@ -94,7 +101,7 @@ export async function recordContactEvent(pool, payload) {
 export async function listLinks(pool, month, offset = 0) {
   if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Invalid month");
   await ensureLinks(pool);
-  const { rows } = await pool.query(`SELECT c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
+  const { rows } = await pool.query(`SELECT c.display_name,c.initials,c.contact_id,c.medinet_id,c.medinet_section,c.verified_at,
     ARRAY(SELECT conversation_id FROM crm_link_conversations v WHERE v.contact_id=c.contact_id ORDER BY last_seen DESC) conversation_ids
     FROM crm_link_contacts c WHERE EXISTS (SELECT 1 FROM crm_link_activity a WHERE a.contact_id=c.contact_id
       AND a.activity_day >= $1::date AND a.activity_day < ($1::date + interval '1 month'))

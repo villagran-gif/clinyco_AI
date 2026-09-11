@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { contactEvent, initials, publicLinks, recordContactEvent, linkVerifiedRecord } from "../review/crm-links.js";
+import { contactEvent, displayName, initials, publicLinks, recordContactEvent, linkVerifiedRecord } from "../review/crm-links.js";
 
 const event = () => ({ event: "message_created", account: { id: 162472 }, id: 99,
   message_type: "incoming", created_at: 1789052400,
@@ -45,3 +45,11 @@ test("verified mapping normalizes valid RUT and refuses invalid check digit befo
   assert.equal(params[1], "123456785");
   await assert.rejects(linkVerifiedRecord(pool, { contactId: "123", rut: "12345678K", medinetId: "789", section: "1" }), /Invalid/);
 });
+
+ test("authenticated links show the supplied name with initials fallback", () => {
+  assert.equal(publicLinks({contact_id:"123",display_name:"María Elena Ejemplo",initials:"M. E. E."}).contact.text,"María Elena Ejemplo");
+  assert.equal(contactEvent(event()).displayName,"María Elena Ejemplo");
+  assert.equal(displayName("  María\n Elena  "),"María Elena");
+  assert.equal(displayName({name:"invalid"}),null);
+  assert.equal(displayName("   "),null);
+ });

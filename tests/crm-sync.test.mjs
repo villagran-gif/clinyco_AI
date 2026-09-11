@@ -17,7 +17,7 @@ test('sync checkpoints only after successful projection; failed batch is retryab
   const result=await syncCrmBatch(pool,'2026-09-01',100,async()=>true);
   assert.equal(result.imported,1);assert.equal(result.more,false);
   const update=pool.statements.find(x=>x.sql.startsWith('UPDATE crm_sync_progress'));
-  assert.deepEqual(update.args,['chatwoot:2026-09-01','123',1,'2026-09-02T12:00:00Z']);
+  assert.deepEqual(update.args,['chatwoot:names-v2:2026-09-01','123',1,'2026-09-02T12:00:00Z']);
   const failed=fakePool();
   await assert.rejects(syncCrmBatch(failed,'2026-09-01',100,async()=>{throw new Error('projection failed');}));
   assert.equal(failed.statements.some(x=>x.sql.startsWith('UPDATE crm_sync_progress')),false);

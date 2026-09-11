@@ -1,8 +1,8 @@
 .review-locked main.container,
 .review-locked #review-user,
 html:not(.review-locked) #review-login { display: none !important; }
-#review-login { max-width: 460px; margin: 8vh auto; padding: 2rem; background: white; border-radius: 16px; box-shadow: 0 8px 30px #1e293b12; }
-#review-login h2 { font-size: 1.5rem; margin-bottom: .7rem; }
+#review-login { max-width: 460px; margin: 8vh auto; padding: 1.5rem; background: white; border-radius: 16px; box-shadow: 0 8px 30px #1e293b12; }
+#review-login h2 { font-size: 1.25rem; margin-bottom: .7rem; }
 #review-login p { font-size: .95rem; color: #475569; }
 #review-google-login { width: 100%; }
 #review-user { display: flex; gap: .8rem; align-items: center; margin-left: auto; }

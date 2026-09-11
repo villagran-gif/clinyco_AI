@@ -98,3 +98,11 @@ y correo autorizado. Una sesión válida de Identity de ese mismo usuario, inclu
 si fue obtenida por contraseña, cumple esos controles; no se promete exclusividad
 de proveedor por sesión. No se confía en user_metadata ni en JWT decodificados.
 Fuente: https://github.com/netlify/gotrue/blob/master/api/external.go
+
+## Authenticated contact names
+
+CRM directory, opportunities and tasks now display the contact name supplied by Chatwoot, with initials as fallback. Responses remain behind the existing Review authentication middleware and omit RUTs and message bodies. Names are rendered with textContent.
+
+The additive display_name/name_updated_at migration preserves existing contacts. The names-v2 sync cursor replays the configured archive range once when CRM_LINKS_SYNC_ENABLED is enabled; each name has its own event timestamp so older events and empty names cannot overwrite newer names. No external records are modified.
+
+The dashboard uses a 16px base font and a smaller login heading/padding.
