@@ -164,6 +164,13 @@
     .tabs.secondary-nav button { flex: none; padding: .25rem 0; margin: 0; font-size: 12px; font-weight: 400; color: #64748b; background: transparent; border: 0; box-shadow: none; border-radius: 0; }
     .tabs.secondary-nav button.active { color: #0079aa; text-decoration: underline; }
     .tabs.secondary-nav button:hover { color: #0079aa; }
+    .ai-budget { margin: 1rem 0 1.5rem; }
+    .ai-budget-track { height: 10px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
+    .ai-budget-fill { height: 100%; width: 0; background: #007f6d; transition: width .2s ease; }
+    .ai-budget-fill.warning { background: #d97706; }
+    .ai-budget-fill.danger { background: #dc2626; }
+    .ai-usage-note { color: #64748b; font-size: .8rem; }
+    #ai-usage-table td, #ai-usage-table th { white-space: nowrap; }
   </style>
 <link rel="stylesheet" href="crm-workspace.css">
 </head>
@@ -281,6 +288,29 @@
       <tbody id="crm-rows"></tbody>
     </table></div>
     <button id="crm-more" type="button" hidden>Cargar más</button>
+  </div>
+  <div id="tab-ai-usage" class="tab-content">
+    <div style="display:flex;align-items:end;gap:1rem;flex-wrap:wrap">
+      <div><h2 style="margin-bottom:.25rem">Gasto de IA</h2><p class="ai-usage-note" style="margin:0">Consumo de Antonia calculado desde las respuestas reales de la API.</p></div>
+      <label style="margin-left:auto;max-width:190px">Mes <input id="ai-usage-month" type="month"></label>
+      <button id="ai-usage-refresh" type="button">Actualizar</button>
+    </div>
+    <p id="ai-usage-state" role="status" aria-live="polite"></p>
+    <div class="kpi-grid">
+      <article class="kpi-card"><div class="value" id="ai-cost-today">US$0,00</div><div class="label">Gasto hoy</div></article>
+      <article class="kpi-card"><div class="value" id="ai-cost-month">US$0,00</div><div class="label">Gasto del mes</div></article>
+      <article class="kpi-card"><div class="value" id="ai-cost-projection">US$0,00</div><div class="label">Proyección mensual</div></article>
+      <article class="kpi-card"><div class="value" id="ai-requests">0</div><div class="label">Solicitudes</div></article>
+    </div>
+    <section class="chart-box ai-budget">
+      <div style="display:flex;justify-content:space-between;gap:1rem"><strong>Presupuesto mensual</strong><span id="ai-budget-label">US$0 de US$100</span></div>
+      <div class="ai-budget-track" role="progressbar" aria-label="Presupuesto mensual utilizado" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="ai-budget-fill" class="ai-budget-fill"></div></div>
+    </section>
+    <div class="chart-box">
+      <h3>Uso por modelo</h3>
+      <div style="overflow-x:auto"><table id="ai-usage-table"><thead><tr><th>Modelo</th><th>Solicitudes</th><th>Entrada</th><th>Entrada cacheada</th><th>Escritura de caché</th><th>Salida</th><th>Costo estimado</th><th>Último uso</th></tr></thead><tbody></tbody></table></div>
+      <p class="ai-usage-note">Los valores son estimados con las tarifas estándar vigentes. La factura del proveedor es la fuente definitiva.</p>
+    </div>
   </div>
   <div id="tab-dashboard" class="tab-content">
     <div id="dash-loading" class="loading">Cargando dashboard...</div>
@@ -1571,6 +1601,7 @@
     <div id="cola-history" style="font-size:12px"></div>
   </div>
   <footer class="secondary-footer"><nav class="tabs secondary-nav" aria-label="Otras herramientas">
+    <button onclick="showTab('ai-usage')">Gasto IA</button>
     <button onclick="showTab('dashboard')">Dashboard</button>
     <button onclick="showTab('eugenia')">EugenIA</button>
     <button onclick="showTab('waha')">WhatsApp WAHA</button>
@@ -1836,9 +1867,37 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach(el => el.classList.remove("active"));
   document.getElementById(`tab-${name}`).classList.add("active");
   document.querySelector(`.tabs button[onclick="showTab('${name}')"]`).classList.add("active");
-  const loaders = { dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones, playbook: loadPlaybook, competidores: loadCompetidores, cola: loadCola };
+  const loaders = { 'ai-usage': loadAiUsage, dashboard: loadDashboard, eugenia: loadEugenia, waha: loadWaha, zendesk: loadZendesk, deals: loadDeals, gold: loadGold, agents: loadAgents, marketing: loadMarketing, kpis: () => {}, medinet: loadMedinet, social: loadSocial, benchmarks: loadBenchmarks, recomendaciones: loadRecomendaciones, playbook: loadPlaybook, competidores: loadCompetidores, cola: loadCola };
   if (!window[`_${name}Loaded`] && loaders[name]) loaders[name]();
 }
+
+async function loadAiUsage() {
+  const state=document.getElementById('ai-usage-state'), month=document.getElementById('ai-usage-month');
+  if(!month.value){const parts=new Intl.DateTimeFormat('en',{timeZone:'America/Santiago',year:'numeric',month:'2-digit'}).formatToParts(new Date()).reduce((r,p)=>({...r,[p.type]:p.value}),{});month.value=`${parts.year}-${parts.month}`;}
+  const money=value=>new Intl.NumberFormat('es-CL',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4}).format(Number(value||0)).replace('USD','US$');
+  const number=value=>new Intl.NumberFormat('es-CL').format(Number(value||0));
+  state.textContent='Cargando consumo…';
+  try {
+    const response=await fetch(`/api/crm/workspace/ai-usage?month=${encodeURIComponent(month.value)}`,{cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok)throw new Error('No fue posible cargar el consumo.');
+    document.getElementById('ai-cost-today').textContent=money(data.today.estimatedCostUsd);
+    document.getElementById('ai-cost-month').textContent=money(data.totals.estimatedCostUsd);
+    document.getElementById('ai-cost-projection').textContent=money(data.totals.projectedCostUsd);
+    document.getElementById('ai-requests').textContent=number(data.totals.requests);
+    const percent=Math.max(0,Number(data.totals.budgetUsedPercent||0)), fill=document.getElementById('ai-budget-fill'), track=fill.parentElement;
+    fill.style.width=`${Math.min(percent,100)}%`;fill.className=`ai-budget-fill${percent>=100?' danger':percent>=80?' warning':''}`;
+    track.setAttribute('aria-valuenow',String(Math.min(Math.round(percent),100)));
+    document.getElementById('ai-budget-label').textContent=`${money(data.totals.estimatedCostUsd)} de ${money(data.budgetUsd)} · ${percent.toFixed(1).replace('.',',')}%`;
+    const body=document.querySelector('#ai-usage-table tbody');body.replaceChildren();
+    for(const item of data.models){const row=document.createElement('tr');for(const value of [item.model,item.requests,item.inputTokens,item.cachedInputTokens,item.cacheWriteTokens,item.outputTokens,item.estimatedCostUsd===null?'Sin tarifa':money(item.estimatedCostUsd),item.lastEventAt?new Date(item.lastEventAt).toLocaleString('es-CL'):'—']){const cell=document.createElement('td');cell.textContent=typeof value==='number'?number(value):String(value);row.append(cell);}body.append(row);}
+    if(!data.models.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=8;cell.textContent='Todavía no hay consumo registrado para este mes.';row.append(cell);body.append(row);}
+    state.textContent=`Modelo activo: ${data.activeModel || 'sin configurar'} · actualizado ${new Date().toLocaleTimeString('es-CL')}`;
+    window._aiUsageLoaded=true;
+  } catch(error) { state.textContent=error.message; }
+}
+document.getElementById('ai-usage-refresh').onclick=()=>loadAiUsage();
+document.getElementById('ai-usage-month').onchange=()=>loadAiUsage();
 
 function loadCompetidores() {
   document.getElementById("competidores-frame").src = `${API_BASE}/social/competitors`;

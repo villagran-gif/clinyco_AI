@@ -1,5 +1,6 @@
 import { Router, json } from 'express';
 import { board, tasks, configuration, addOption, saveOpportunity, saveTask, conversationContact, dealActivity, addDealNote, CrmError } from './crm-workspace.js';
+import { usageDashboard } from './ai-usage.js';
 export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKSPACE_ENABLED === 'true', allowedOrigins = () => ['https://clinyco-ai.netlify.app', ...(process.env.CRM_ALLOWED_ORIGINS || '').split(',').filter(Boolean)] }) {
   const router = Router();
   router.use((req,res,next) => {
@@ -19,6 +20,11 @@ export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKS
   };
   router.get('/conversations/:id',route(req=>conversationContact(getPool(),req.params.id)));
   router.get('/config',route(()=>configuration(getPool())));
+  router.get('/ai-usage',route(req=>usageDashboard(getPool(), {
+    month:req.query.month,
+    budgetUsd:process.env.AI_MONTHLY_BUDGET_USD || 100,
+    activeModel:process.env.OPENAI_MODEL || 'gpt-5.6-terra'
+  })));
   router.post('/options',route(async req=>{ await addOption(getPool(),req.body); return {saved:true}; }));
   router.get('/opportunities/:id/activity',route(req=>dealActivity(getPool(),req.params.id,req.query)));
   router.post('/opportunities/:id/notes',route(req=>addDealNote(getPool(),req.params.id,req.body,req.reviewUser?.email)));
