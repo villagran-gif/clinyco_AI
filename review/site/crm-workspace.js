@@ -3,10 +3,10 @@
   const base = location.hostname === 'localhost' ? 'http://localhost:10000/api/review' : '/api';
   let config = null, loading = null, boardOffset = 0, taskOffset = 0, boardBusy = false, tasksBusy = false;
   let dealRows=[], tableColumns=[], visibleColumns=[], dealView='table';
-  const defaultColumns=['dealName','stage','owner','branch','surgery','surgeryDate','coverage','nextTask','nextTaskDue','overdueTasks','medinetUrl'];
+  const columnPreferenceVersion=2;
   let columnsReady=false, sortKey='dealName', sortDirection=1, columnFilters={}, savedViews=[], draggedColumn=null;
   const preferenceKey=()=>`crm-table:${$('review-user-email').textContent.trim().toLowerCase()}`;
-  function savePreferences(){try{localStorage.setItem(preferenceKey(),JSON.stringify({columns:visibleColumns,sortKey,sortDirection,filters:columnFilters,views:savedViews}));}catch{}}
+  function savePreferences(){try{localStorage.setItem(preferenceKey(),JSON.stringify({version:columnPreferenceVersion,columns:visibleColumns,sortKey,sortDirection,filters:columnFilters,views:savedViews}));}catch{}}
   function moveColumn(key,before){if(key===before)return;const next=visibleColumns.filter(k=>k!==key);next.splice(next.indexOf(before),0,key);visibleColumns=next;savePreferences();renderColumnPicker();renderDealTable();}
   function comparable(column,item){
     const raw={createdAt:item.createdAt,stageChangedAt:item.stageChangedAt,closedAt:item.closedAt,nextTaskDue:item.nextTask?.due};
@@ -92,7 +92,8 @@
       {key:'overdueTasks',label:'Tareas vencidas',get:i=>i.overdueTasks}];
     let prefs={};try{prefs=JSON.parse(localStorage.getItem(preferenceKey()))||{};}catch{}
     let stored=prefs.columns;sortKey=prefs.sortKey||'dealName';sortDirection=prefs.sortDirection===-1?-1:1;columnFilters=prefs.filters||{};savedViews=Array.isArray(prefs.views)?prefs.views:[];
-    visibleColumns=Array.isArray(stored)?stored.filter(k=>tableColumns.some(c=>c.key===k)):defaultColumns.slice();
+    const allColumns=tableColumns.map(column=>column.key);
+    visibleColumns=prefs.version===columnPreferenceVersion&&Array.isArray(stored)?stored.filter(k=>allColumns.includes(k)):allColumns;
     if(!visibleColumns.includes('dealName'))visibleColumns.unshift('dealName');
     columnsReady=true;renderColumnPicker();setupViewTools();
   }
@@ -139,7 +140,7 @@
     $('crm-view-table').setAttribute('aria-pressed',String(view==='table'));$('crm-view-board').setAttribute('aria-pressed',String(view==='board'));
   }
   $('crm-view-table').onclick=()=>changeDealView('table');$('crm-view-board').onclick=()=>changeDealView('board');
-  $('crm-columns-reset').onclick=()=>{visibleColumns=defaultColumns.slice();savePreferences();renderColumnPicker();renderDealTable();};
+  $('crm-columns-reset').onclick=()=>{visibleColumns=tableColumns.map(column=>column.key);savePreferences();renderColumnPicker();renderDealTable();};
   function boardColumns(){
     const pipeline=config.pipelines.find(p=>p.id===$('crm-pipeline').value);
     $('crm-board').replaceChildren();
