@@ -102,14 +102,17 @@ test('CRM persists opportunities, assignments, stages and task lifecycle without
         assert.equal(w.document.getElementById('crm-table-wrap').hidden,false);
         assert.equal(w.document.querySelectorAll('#crm-deals-table tbody tr').length,1);
         assert.match(w.document.getElementById('crm-deals-table').textContent,/Trato de prueba/);
+        assert.ok([...w.document.querySelectorAll('#crm-column-options input')].every(input=>input.checked));
         const ageBox=[...w.document.querySelectorAll('#crm-column-options label')].find(l=>l.textContent==='Edad').querySelector('input');
+        ageBox.click();assert.doesNotMatch(w.document.querySelector('#crm-deals-table thead').textContent,/Edad/);
         ageBox.click();assert.match(w.document.querySelector('#crm-deals-table thead').textContent,/Edad/);
         assert.ok(JSON.parse(w.localStorage.getItem('crm-table:operator@example.test')).columns.includes('age'));
         const nameHeader=()=>w.document.querySelector('#crm-deals-table th[data-key="dealName"]');
         nameHeader().querySelector('button').click();assert.equal(nameHeader().getAttribute('aria-sort'),'descending');
         const ownerHeader=w.document.querySelector('#crm-deals-table th[data-key="owner"]');
         ownerHeader.querySelector('button').dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowLeft',altKey:true,bubbles:true}));
-        assert.equal(w.document.querySelectorAll('#crm-deals-table th')[1].dataset.key,'owner');
+        const headerKeys=[...w.document.querySelectorAll('#crm-deals-table th')].map(th=>th.dataset.key);
+        assert.ok(headerKeys.indexOf('owner')<headerKeys.indexOf('stage'));
         assert.equal(w.document.querySelectorAll('#crm-deals-table th details').length,0);
         w.document.getElementById('crm-view-name').value='Mi vista';
         [...w.document.querySelectorAll('#crm-saved-views button')].find(b=>b.textContent==='Guardar vista').click();
