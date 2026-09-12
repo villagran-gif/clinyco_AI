@@ -68,6 +68,7 @@ import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/pars
 import { recordContactEvent } from "./review/crm-links.js";
 import { startCrmSync } from "./review/crm-sync.js";
 import { getPool as getCrmPool } from "./review/db.js";
+import { recordAIUsage } from "./review/ai-usage.js";
 import { runConfiguredSellRestore } from "./review/sell-restore.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import { maybeSyncPrivateLeadNote } from "./chatwoot-adapter/private-lead-note.js";
@@ -115,7 +116,7 @@ const conversationProcessingLocks = new Map(); // per-conversation mutex to seri
 // =========================
 // Config
 // =========================
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BRAINTRUST_API_KEY = process.env.BRAINTRUST_API_KEY || null;
 const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";
@@ -3565,7 +3566,13 @@ async function askOpenAI({
     if (String(OPENAI_MODEL).startsWith("gpt-5.6")) {
       request.reasoning_effort = process.env.ANTONIA_REASONING_EFFORT || "none";
     }
-    return openai.chat.completions.create(request);
+    const completion = await openai.chat.completions.create(request);
+    try {
+      await recordAIUsage(getCrmPool(), { model: completion.model || OPENAI_MODEL, usage: completion.usage, purpose: 'antonia_chat' });
+    } catch (usageError) {
+      console.warn('[ai-usage] no se pudo registrar el consumo:', usageError.message);
+    }
+    return completion;
   }
 
   let response;
