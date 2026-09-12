@@ -171,6 +171,22 @@ test("de vez en cuando significa tabaco ocasional", () => {
   assert.equal(s.preevaluation.answers.smoking, "fuma_ocasional");
 });
 
+test("el cuestionario comercial nunca pregunta si fuma", () => {
+  const cases = [
+    { track:"bariatric", answers:{weight:90,height:1.7,age:40,prior_surgery:"ninguna",comorbidities:"no"} },
+    { track:"revisional", answers:{prior_surgery:"manga",prior_year:2020,revision_reason:"reflujo",studies:"no",weight:90,height:1.7,age:40,comorbidities:"no"} },
+    { track:"balloon", answers:{weight:90,height:1.7,age:40,prior_surgery:"ninguna",comorbidities:"no"} },
+    { track:"abdomen", answers:{weight:90,height:1.7,age:40,abdomen_fold:"si",postpartum:"no",breastfeeding:"no",oncology:"no",skin_disease:"no"} },
+  ];
+  for (const item of cases) {
+    const s=state("consulta");
+    s.preevaluation.active=true;
+    s.preevaluation.track=item.track;
+    s.preevaluation.answers=item.answers;
+    assert.notEqual(nextFonasaPadPreevaluationStep(s, "")?.key, "smoking");
+  }
+});
+
 test("resumen de preevaluación se muestra al paciente", () => {
   const s = state("Balón gástrico");
   s.measurements.weightKg = 120;

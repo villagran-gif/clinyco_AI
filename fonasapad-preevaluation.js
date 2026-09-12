@@ -460,7 +460,6 @@ function nextRevisional(state, p) {
   if (!hasAnswer(p, "height")) return prompt("height", "y cuánto mides?");
   if (!hasAnswer(p, "age")) return prompt("age", "qué edad tienes?");
   if (!hasAnswer(p, "comorbidities")) return prompt("comorbidities", "tienes alguna enfermedad asociada?[[MSG]]diabetes presión alta apnea etc");
-  if (!hasAnswer(p, "smoking")) return prompt("smoking", "fumas actualmente?");
   if (!hasAnswer(p, "safety")) return prompt("safety", "hay embarazo actual o alguna enfermedad importante descompensada?");
   if (!hasAnswer(p, "insurance")) return prompt("insurance", "tienes fonasa isapre o particular?");
   if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");
@@ -477,7 +476,6 @@ function nextBariatric(state, p) {
     return nextRevisional(state, p);
   }
   if (!hasAnswer(p, "comorbidities")) return prompt("comorbidities", "tienes alguna enfermedad asociada?[[MSG]]diabetes presión alta apnea etc");
-  if (!hasAnswer(p, "smoking")) return prompt("smoking", "fumas actualmente?");
   if (!hasAnswer(p, "safety")) return prompt("safety", "hay embarazo actual o alguna enfermedad importante descompensada?");
   if (!hasAnswer(p, "insurance")) return prompt("insurance", "tienes fonasa isapre o particular?");
   if (String(p.answers.insurance || "").toUpperCase().includes("FONASA") && !state?.system?.padNonEligibilityLead && !hasAnswer(p, "fonasa_tramo")) {
@@ -493,7 +491,6 @@ function nextBalloon(state, p) {
   if (!hasAnswer(p, "age")) return prompt("age", "qué edad tienes?");
   if (!hasAnswer(p, "prior_surgery")) return prompt("prior_surgery", "te has operado antes de manga bypass u otra bariátrica?");
   if (!hasAnswer(p, "comorbidities")) return prompt("comorbidities", "tienes alguna enfermedad importante diagnosticada?");
-  if (!hasAnswer(p, "smoking")) return prompt("smoking", "fumas actualmente?");
   if (!hasAnswer(p, "insurance")) return prompt("insurance", "tienes fonasa isapre o particular?");
   if (!hasAnswer(p, "city")) return prompt("city", "en que ciudad vives?[[MSG]]porque estamos en Santiago y Antofagasta");
   return null;
@@ -508,7 +505,6 @@ function nextAbdomen(state, p) {
   if (!hasAnswer(p, "breastfeeding")) return prompt("breastfeeding", "estás amamantando actualmente?");
   if (!hasAnswer(p, "oncology")) return prompt("oncology", "tienes alguna enfermedad oncológica activa?");
   if (!hasAnswer(p, "skin_disease")) return prompt("skin_disease", "tienes alguna enfermedad activa en la piel del abdomen?");
-  if (!hasAnswer(p, "smoking")) return prompt("smoking", "fumas actualmente?");
   if (!hasAnswer(p, "insurance")) return prompt("insurance", "tienes fonasa isapre o particular?");
   if (String(p.answers.insurance || "").toUpperCase().includes("FONASA") && !state?.system?.padNonEligibilityLead && !hasAnswer(p, "fonasa_tramo")) {
     return prompt("fonasa_tramo", "qué tramo Fonasa tienes A B C o D?");
