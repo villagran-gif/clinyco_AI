@@ -69,7 +69,7 @@ async function start() {
     $('review-google-login').disabled = true;
     $('review-auth-message').textContent = 'Conectando con Google…';
     try {
-      if (location.pathname === '/antonia-feedback.html') {
+      if (['/antonia-feedback', '/antonia-feedback.html'].includes(location.pathname)) {
         const id = new URLSearchParams(location.search).get('conversation');
         try { sessionStorage.setItem('antonia-feedback-return', '/antonia-feedback.html' + (/^[1-9]\d{0,15}$/.test(id || '') ? `?conversation=${id}` : '')); } catch {}
       }
