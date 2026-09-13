@@ -5,10 +5,13 @@
   const boardProgress = window.createCrmLoadProgress({root:$('crm-load-progress'),bar:$('crm-load-bar'),fill:$('crm-load-fill'),status:$('crm-workspace-state'),regions:[$('crm-table-wrap'),$('crm-board')]});
   window.addEventListener('pagehide',()=>boardProgress.dispose());
   let dealRows=[], tableColumns=[], visibleColumns=[], dealView='table';
-  const columnPreferenceVersion=2;
+  const columnPreferenceVersion=3;
+  const defaultHiddenColumns=new Set(['medinetUrl','examsUrl','value','source','lossReason','unqualifiedReason','labels','stageChangedAt','closedAt','age','bmi','whatsappUrl','nextTask','nextTaskDue','overdueTasks']);
+  const defaultColumns=()=>tableColumns.map(c=>c.key).filter(k=>!defaultHiddenColumns.has(k));
+  let tablePage=0,tablePageSize=200;
   let columnsReady=false, sortKey='dealName', sortDirection=1, columnFilters={}, savedViews=[], draggedColumn=null;
   const preferenceKey=()=>`crm-table:${$('review-user-email').textContent.trim().toLowerCase()}`;
-  function savePreferences(){try{localStorage.setItem(preferenceKey(),JSON.stringify({version:columnPreferenceVersion,columns:visibleColumns,sortKey,sortDirection,filters:columnFilters,views:savedViews}));}catch{}}
+  function savePreferences(){try{localStorage.setItem(preferenceKey(),JSON.stringify({version:columnPreferenceVersion,columns:visibleColumns,sortKey,sortDirection,filters:columnFilters,views:savedViews,pageSize:tablePageSize}));}catch{}}
   function moveColumn(key,before){if(key===before)return;const next=visibleColumns.filter(k=>k!==key);next.splice(next.indexOf(before),0,key);visibleColumns=next;savePreferences();renderColumnPicker();renderDealTable();}
   function comparable(column,item){
     const raw={createdAt:item.createdAt,stageChangedAt:item.stageChangedAt,closedAt:item.closedAt,nextTaskDue:item.nextTask?.due};
@@ -95,7 +98,8 @@
     let prefs={};try{prefs=JSON.parse(localStorage.getItem(preferenceKey()))||{};}catch{}
     let stored=prefs.columns;sortKey=prefs.sortKey||'dealName';sortDirection=prefs.sortDirection===-1?-1:1;columnFilters=prefs.filters||{};savedViews=Array.isArray(prefs.views)?prefs.views:[];
     const allColumns=tableColumns.map(column=>column.key);
-    visibleColumns=prefs.version===columnPreferenceVersion&&Array.isArray(stored)?stored.filter(k=>allColumns.includes(k)):allColumns;
+    tablePageSize=[100,200,400].includes(prefs.pageSize)?prefs.pageSize:200;$('crm-page-size').value=String(tablePageSize);
+    visibleColumns=prefs.version===columnPreferenceVersion&&Array.isArray(stored)?stored.filter(k=>allColumns.includes(k)):defaultColumns();
     if(!visibleColumns.includes('dealName'))visibleColumns.unshift('dealName');
     columnsReady=true;renderColumnPicker();setupViewTools();
   }
@@ -114,12 +118,16 @@
     for(const column of columns){
       const th=element('th');th.scope='col';th.draggable=true;th.dataset.key=column.key;th.setAttribute('aria-sort',sortKey===column.key?(sortDirection===1?'ascending':'descending'):'none');
       th.ondragstart=e=>{draggedColumn=column.key;e.dataTransfer.setData('text/plain',column.key);};th.ondragover=e=>e.preventDefault();th.ondrop=e=>{e.preventDefault();if(visibleColumns.includes(draggedColumn))moveColumn(draggedColumn,column.key);};
-      const sort=button(column.label+(sortKey===column.key?(sortDirection===1?' ↑':' ↓'):' ↕'),()=>{sortDirection=sortKey===column.key?-sortDirection:1;sortKey=column.key;savePreferences();renderDealTable();});sort.title='Ordenar ascendente / descendente';th.append(sort);
+      const sort=button(column.label+(sortKey===column.key?(sortDirection===1?' ↑':' ↓'):' ↕'),()=>{sortDirection=sortKey===column.key?-sortDirection:1;sortKey=column.key;tablePage=0;savePreferences();renderDealTable();});sort.title='Ordenar ascendente / descendente';th.append(sort);
       sort.title='Clic para ordenar · Arrastra para mover · Alt + flechas para mover con teclado';
       sort.onkeydown=e=>{if(!e.altKey||!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const index=visibleColumns.indexOf(column.key);if(e.key==='ArrowLeft'&&index>0)moveColumn(column.key,visibleColumns[index-1]);if(e.key==='ArrowRight'&&index<visibleColumns.length-1)moveColumn(visibleColumns[index+1],column.key);table.querySelector(`th[data-key="${column.key}"] button`)?.focus();};
       tr.append(th);
     }head.append(tr);
-    for(const item of viewRows()){
+    const filteredRows=viewRows(),pages=Math.max(1,Math.ceil(filteredRows.length/tablePageSize));
+    tablePage=Math.min(tablePage,pages-1);
+    $('crm-page-status').textContent=filteredRows.length?`${tablePage*tablePageSize+1}–${Math.min((tablePage+1)*tablePageSize,filteredRows.length)} de ${filteredRows.length} DEALS · Página ${tablePage+1} de ${pages}`:'0 DEALS';
+    $('crm-page-prev').disabled=tablePage===0;$('crm-page-next').disabled=tablePage>=pages-1;
+    for(const item of filteredRows.slice(tablePage*tablePageSize,(tablePage+1)*tablePageSize)){
       const row=element('tr');
       for(const column of columns){
         const cell=element('td'),value=column.get(item);
@@ -138,11 +146,14 @@
     if(!viewRows().length){const row=element('tr'),cell=element('td',boardBusy?'Cargando DEALS…':'No hay DEALS con los filtros seleccionados.');cell.colSpan=columns.length;row.append(cell);body.append(row);}
   }
   function changeDealView(view){
-    dealView=view;$('crm-table-wrap').hidden=view!=='table';$('crm-column-picker').hidden=view!=='table';$('crm-board').hidden=view!=='board';
+    dealView=view;$('crm-pagination').hidden=view!=='table';$('crm-table-wrap').hidden=view!=='table';$('crm-column-picker').hidden=view!=='table';$('crm-board').hidden=view!=='board';
     $('crm-view-table').setAttribute('aria-pressed',String(view==='table'));$('crm-view-board').setAttribute('aria-pressed',String(view==='board'));
   }
   $('crm-view-table').onclick=()=>changeDealView('table');$('crm-view-board').onclick=()=>changeDealView('board');
-  $('crm-columns-reset').onclick=()=>{visibleColumns=tableColumns.map(column=>column.key);savePreferences();renderColumnPicker();renderDealTable();};
+  $('crm-columns-reset').onclick=()=>{visibleColumns=defaultColumns();savePreferences();renderColumnPicker();renderDealTable();};
+  $('crm-page-size').onchange=()=>{tablePageSize=Number($('crm-page-size').value);tablePage=0;savePreferences();renderDealTable();};
+  const pageMove=delta=>{tablePage+=delta;renderDealTable();$('crm-table-wrap').scrollTop=0;};
+  $('crm-page-prev').onclick=()=>pageMove(-1);$('crm-page-next').onclick=()=>pageMove(1);
   function boardColumns(){
     const pipeline=config.pipelines.find(p=>p.id===$('crm-pipeline').value);
     $('crm-board').replaceChildren();
@@ -156,7 +167,7 @@
     controls.forEach(id=>{if($(id))$(id).disabled=true;});
     try{
       await ensureConfig();
-      if(!more){boardOffset=0;dealRows=[];boardColumns();renderDealTable();}
+      if(!more){boardOffset=0;tablePage=0;dealRows=[];boardColumns();renderDealTable();}
       if($('crm-view-saved'))$('crm-view-saved').disabled=true;
       const q=new URLSearchParams({pipeline:$('crm-pipeline').value,branch:$('crm-branch').value,owner:$('crm-owner-filter').value,month:$('crm-board-month').value,offset:boardOffset});
       const data={items:[],more:false};let next=true;
@@ -189,6 +200,7 @@
   }
   const localDate=value=>value?new Date(value).toLocaleString('es-CL'): 'Sin vencimiento';
   async function loadTasks(more=false){
+    window.dispatchEvent(new Event('crm-tasks-changed'));
     if(tasksBusy)return;tasksBusy=true;
     const controls=['crm-task-filter','crm-task-owner-filter','crm-tasks-refresh','crm-tasks-more'];controls.forEach(id=>$(id).disabled=true);
     try{
@@ -356,5 +368,6 @@
       history.replaceState(null,'',location.pathname);
     } catch(e) { $('crm-workspace-state').textContent=e.message; }
   });
+  window.openCrmTask=async item=>{await ensureConfig();window.showTab('crm');openTask(item);};
   window.loadCrmWorkspace=()=>Promise.all([loadBoard(),loadTasks()]);
 })();

@@ -1,0 +1,81 @@
+/* Matte reading surfaces. No thin-font smoothing, shadows or text transforms. */
+:root { --reading-size:14px; --reading-font:Verdana,Arial,sans-serif; --sidebar-width:220px; }
+html[data-reading-font="system"] { --reading-font:system-ui,-apple-system,"Segoe UI",sans-serif; }
+html.sidebar-collapsed { --sidebar-width:56px; }
+html body { font-family:var(--reading-font); font-size:var(--reading-size); line-height:1.5; }
+body :is(button,input,select,textarea) { font-family:inherit; text-shadow:none; }
+html:not(.review-locked) body { padding-left:var(--sidebar-width); }
+body .header-bar { flex-wrap:wrap; gap:12px; padding:12px 20px; min-height:64px; background:#292929!important; }
+.header-bar h1 { font-size:18px; letter-spacing:normal; }
+#review-user { gap:12px; flex-wrap:wrap; min-width:0; }
+#review-user-email,#review-signout { font-size:13px; }
+.header-bar small { opacity:1; }
+#sync-status:empty { display:none; }
+body :is(#crm-workspace,.daily-workspace,#crm-op-form) :is(label,summary,p,small,input,select,textarea,button,.record-value,.record-label,.record-meta),
+body #crm-workspace :is(.crm-toolbar button,.crm-toolbar input,.crm-toolbar select,#crm-columns-reset),
+body #crm-deals-table :is(th,td,th>button,.crm-deal-name),body .daily-table-wrap :is(th,td) {
+  font-family:var(--reading-font); font-size:var(--reading-size); line-height:1.5; letter-spacing:normal; text-shadow:none;
+}
+body #crm-deals-table th>button { color:#ededed!important; font-weight:600; padding:4px 0; }
+body #crm-deals-table :is(th,td) { padding:8px 12px; height:auto; }
+body #crm-deals-table .crm-deal-name { font-weight:600; }
+body #crm-deals-table a { color:#a9d5ff; }
+body #crm-deals-table .crm-inline-edit { opacity:.8; }
+body #crm-deals-table tr:nth-child(even) td { background:#303030!important; }
+body #crm-deals-table tr:hover td,body #crm-deals-table tr:focus-within td { background:#3d3d3d!important; }
+body #crm-op-form :is(.record-value,.record-label,.record-meta) { color:#e2e2e2!important; }
+body #crm-workspace-state,body #crm-tasks-state { font-size:var(--reading-size); color:#c2c2c2; }
+body #tab-crm .crm-toolbar :is(button,input,select),body .daily-toolbar :is(button,input,select) { min-height:36px; height:auto; }
+body :is(h2,h3,h4) { letter-spacing:normal!important; }
+body a:focus-visible,body summary:focus-visible,body select:focus-visible,body input:focus-visible { outline:2px solid #a9d5ff; outline-offset:3px; }
+body .tabs.primary-nav { width:var(--sidebar-width); padding:68px 8px 20px; background:#303030!important; overflow-x:hidden; }
+.tabs.primary-nav::before { content:'CLINYCO'; top:20px; left:18px; color:#ededed; }
+body .tabs.primary-nav button { flex-direction:row; gap:12px; min-height:44px; padding:9px; font-size:13px; line-height:1.5; border-radius:5px; }
+body .tabs.primary-nav button::before { display:none; }
+.nav-icon { width:20px; height:20px; flex:0 0 20px; }
+body .tabs.primary-nav #sidebar-toggle { position:absolute; top:8px; right:8px; width:36px; padding:4px; justify-content:center; }
+#sidebar-toggle .nav-label { display:none; }
+.sidebar-chevron { font-size:26px; line-height:1; }
+.sidebar-collapsed .tabs.primary-nav::before { display:none; }
+.sidebar-collapsed .tabs.primary-nav .nav-label { display:none; }
+.sidebar-collapsed .tabs.primary-nav button { justify-content:center; padding:9px 2px; }
+.sidebar-collapsed .tabs.primary-nav { padding-left:6px; padding-right:6px; }
+.crm-pagination { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 0; }
+.crm-pagination label { display:flex; align-items:center; gap:8px; margin:0; }
+.crm-pagination select { width:auto; margin:0; }
+.crm-pagination button { margin:0; width:auto; padding:6px 12px; }
+#crm-page-status { margin-right:auto; }
+#crm-pagination[hidden] { display:none; }
+/* Twice the old 65vh cap; page controls bound the number of rendered rows. */
+.crm-table-wrap { max-height:130vh; }
+#my-tasks,#reading-settings { position:relative; margin:0; border:0; }
+#my-tasks>summary,#reading-settings>summary { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0; padding:7px 10px; border:1px solid #666; border-radius:6px; font-size:13px; background:#333; color:#ededed; cursor:pointer; list-style:none; }
+#my-tasks>summary::after,#reading-settings>summary::after { content:'⌄'; background:none; width:auto; height:auto; margin:0; transform:none; }
+#my-tasks[open]>summary::after,#reading-settings[open]>summary::after { content:'⌃'; }
+#my-tasks-badge { font-size:12px; color:#c2c2c2; }
+#my-tasks-badge.tasks-warning { color:#ffd28a; font-weight:600; }
+.my-tasks-panel,.reading-panel { position:absolute; z-index:40; right:0; top:calc(100% + 10px); background:#303030; border:1px solid #666; border-radius:8px; padding:16px; width:min(430px,calc(100vw - 80px)); max-height:75vh; overflow:auto; box-shadow:0 8px 24px #0003; }
+.my-tasks-heading { display:flex; align-items:center; gap:10px; }
+.my-tasks-heading strong { margin-right:auto; }
+.my-tasks-panel :is(p,small,label,select,button,summary),.reading-panel :is(label,select) { font-size:var(--reading-size); line-height:1.5; }
+.my-tasks-panel button { width:auto; margin:0; padding:5px 9px; }
+#my-tasks-state { margin:12px 0; color:#d1d1d1; }
+.my-task-group { margin:14px 0; }
+.my-task-group h3 { font-size:var(--reading-size); margin:0 0 8px; color:#ededed; }
+body .my-task-item { display:flex; flex-direction:column; gap:3px; width:100%; text-align:left; margin:6px 0; padding:10px; }
+.my-task-item span,.my-task-item small { color:#d1d1d1; overflow-wrap:anywhere; }
+.tasks-success { color:#a9e5be; background:#294034; padding:10px; border-radius:5px; }
+#my-tasks-settings { border-top:1px solid #666; padding-top:12px; margin:16px 0 0; }
+#my-tasks-settings summary { color:#d1d1d1; }
+.reading-panel { width:240px; }
+.reading-panel label { display:block; margin-bottom:10px; }
+@media(max-width:760px) {
+  html:not(.review-locked) body { padding-left:56px; }
+  body .tabs.primary-nav { width:var(--sidebar-width); }
+  body .header-bar { padding:10px; }
+  #review-user { margin-left:0; gap:8px; }
+  #review-user-email { overflow-wrap:anywhere; }
+  .my-tasks-panel,.reading-panel { position:fixed; left:64px; right:8px; top:110px; width:auto; max-height:calc(100dvh - 130px); }
+  .crm-pagination { gap:8px; }
+  #crm-page-status { flex-basis:100%; }
+}

@@ -174,6 +174,7 @@
   </style>
 <link rel="stylesheet" href="crm-workspace.css">
 <link rel="stylesheet" href="sell-daily.css">
+<link rel="stylesheet" href="sell-workspace.css">
 </head>
 <body>
 
@@ -182,7 +183,17 @@
   <div>
     <h1>SELL</h1>
   </div>
-  <div id="review-user"><span id="review-user-email"></span><button id="review-signout" type="button">Cerrar sesión</button></div>
+  <div id="review-user"><details id="my-tasks" class="my-tasks">
+    <summary id="my-tasks-summary">Mis tareas <span id="my-tasks-badge" role="status">…</span></summary>
+    <section class="my-tasks-panel" aria-label="Mis tareas próximas y vencidas">
+      <div class="my-tasks-heading"><strong>Mis tareas</strong><button id="my-tasks-refresh" type="button">Actualizar</button><button id="my-tasks-close" type="button" aria-label="Cerrar mis tareas">×</button></div>
+      <p id="my-tasks-state" role="status">Cargando tareas…</p>
+      <div id="my-tasks-content"></div>
+      <details id="my-tasks-settings"><summary>Vincular mi responsable</summary><p>Selecciona el nombre con el que se te asignan tareas en SELL.</p><label for="my-tasks-owner">Mi responsable</label><select id="my-tasks-owner"></select><button id="my-tasks-owner-save" type="button">Guardar vinculación</button></details>
+    </section>
+  </details>
+  <details id="reading-settings"><summary aria-label="Preferencias de lectura" title="Preferencias de lectura">Aa</summary><div class="reading-panel"><label>Letra<select id="reading-font"><option value="verdana">Verdana · trazos amplios</option><option value="system">Sistema</option></select></label><label>Tamaño<select id="reading-size"><option value="14">Normal</option><option value="16">Grande</option><option value="18">Muy grande</option></select></label></div></details>
+  <span id="review-user-email"></span><button id="review-signout" type="button">Cerrar sesión</button></div>
   <div id="sync-status" style="margin-left:auto;font-size:.75rem;opacity:.7;text-align:right"></div>
 </div>
 
@@ -195,12 +206,13 @@
   <noscript>Activa JavaScript para iniciar sesión.</noscript>
 </section>
 <main class="container">
-  <nav class="tabs primary-nav" aria-label="Navegación principal">
-    <button class="active" onclick="showTab('crm')">SELL</button>
-    <button onclick="showTab('medinet')">Medinet · cupos</button>
-    <button onclick="showTab('daily-agenda')">Agenda diaria</button>
-    <button onclick="showTab('daily-report')">Confirmaciones y caja</button>
-    <button onclick="showTab('contacts')">Contactos</button>
+  <nav id="primary-navigation" class="tabs primary-nav" aria-label="Navegación principal">
+    <button id="sidebar-toggle" type="button" aria-expanded="true" aria-controls="primary-navigation" aria-label="Colapsar barra lateral" title="Colapsar barra lateral"><span class="sidebar-chevron" aria-hidden="true">«</span><span class="nav-label">Colapsar menú</span></button>
+    <button class="active" onclick="showTab('crm')" aria-label="SELL" title="SELL"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></svg><span class="nav-label">SELL</span></button>
+    <button onclick="showTab('medinet')" aria-label="Medinet · cupos" title="Medinet · cupos"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v18M3 12h18"/></svg><span class="nav-label">Medinet · cupos</span></button>
+    <button onclick="showTab('daily-agenda')" aria-label="Agenda diaria" title="Agenda diaria"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v5m10-5v5M3 11h18"/></svg><span class="nav-label">Agenda diaria</span></button>
+    <button onclick="showTab('daily-report')" aria-label="Confirmaciones y caja" title="Confirmaciones y caja"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8m-8 4h8m-8 4h5"/></svg><span class="nav-label">Confirmaciones y caja</span></button>
+    <button onclick="showTab('contacts')" aria-label="Contactos" title="Contactos"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg><span class="nav-label">Contactos</span></button>
   </nav>
 
   <!-- ══════ TAB: DASHBOARD ══════ -->
@@ -226,6 +238,7 @@
         <button id="crm-view-board" type="button" aria-pressed="false">Tablero por etapas</button>
       </div>
       <details id="crm-column-picker"><summary>Columnas visibles</summary><div id="crm-column-options"></div><button id="crm-columns-reset" type="button">Restablecer columnas</button></details>
+      <div id="crm-pagination" class="crm-pagination"><label>DEALS por página <select id="crm-page-size"><option value="100">100</option><option value="200" selected>200</option><option value="400">400</option></select></label><span id="crm-page-status" role="status"></span><button id="crm-page-prev" type="button" disabled>Anterior</button><button id="crm-page-next" type="button" disabled>Siguiente</button></div>
       <div id="crm-table-wrap" class="crm-table-wrap" role="region" aria-label="Tabla de DEALS" tabindex="0"><table id="crm-deals-table"><thead></thead><tbody></tbody></table></div>
       <div id="crm-board" class="crm-board" hidden></div>
       <button id="crm-board-more" type="button" hidden>Cargar más DEALS</button>
@@ -1632,6 +1645,7 @@
 <script src="review-auth.js"></script>
 <script src="crm-loading.js"></script>
 <script src="crm-workspace.js"></script>
+<script src="sell-workspace.js"></script>
 <script src="crm-links.js"></script>
 <script src="medinet-daily.js"></script>
 
