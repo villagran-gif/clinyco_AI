@@ -69,6 +69,8 @@ import { recordContactEvent } from "./review/crm-links.js";
 import { startCrmSync } from "./review/crm-sync.js";
 import { getPool as getCrmPool } from "./review/db.js";
 import { recordAIUsage } from "./review/ai-usage.js";
+import { createReviewer, reviewErrorCode } from "./antonia-improvements/reviewer.js";
+import { startImprovementReviews } from "./antonia-improvements/scheduler.js";
 import { runConfiguredSellRestore } from "./review/sell-restore.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import { maybeSyncPrivateLeadNote } from "./chatwoot-adapter/private-lead-note.js";
@@ -3566,7 +3568,7 @@ async function askOpenAI({
     if (String(OPENAI_MODEL).startsWith("gpt-5.6")) {
       request.reasoning_effort = process.env.ANTONIA_REASONING_EFFORT || "none";
     }
-    const completion = await openai.chat.completions.create(request);
+    const completion = await openai.chat.completions.create(request, { timeout: 45000, maxRetries: 0 });
     try {
       await recordAIUsage(getCrmPool(), { model: completion.model || OPENAI_MODEL, usage: completion.usage, purpose: 'antonia_chat' });
     } catch (usageError) {
@@ -3579,7 +3581,7 @@ async function askOpenAI({
   try {
     response = await createCompletion(withImages(baseMessages));
   } catch (error) {
-    if (!safeImageUrls.length) throw error;
+    if (!safeImageUrls.length || error?.status === 429) throw error;
     console.warn("[vision] multimodal request failed; retrying with text/referral only:", error.message);
     response = await createCompletion(baseMessages);
   }
@@ -5578,6 +5580,9 @@ const handleInboundWebhook = async (req, res) => {
     }
   } catch (error) {
     console.error("ERROR /chatwoot/inbound:", error.message);
+    if (reviewErrorCode(error) === 'ai_quota_exhausted') {
+      return res.status(503).json({ ok: false, error: 'ai_quota_exhausted' });
+    }
     return res.status(500).json({ ok: false, error: error.message });
   }
 };
@@ -5610,4 +5615,6 @@ app.listen(PORT, () => {
   void runConfiguredSellRestore(getCrmPool());
   startFonasapadCron();
   startMonthlyCron();
+  const improvementPool = getCrmPool();
+  startImprovementReviews({ pool: improvementPool, review: createReviewer({ openai, model: OPENAI_MODEL, pool: improvementPool }) });
 });
