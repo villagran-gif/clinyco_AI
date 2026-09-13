@@ -4,6 +4,7 @@ import { bookAgendaweb } from "./Antonia/medinet-api.js";
 import { isEndoscopyBooking, ENDOSCOPY_HANDOFF } from "./melania/booking-policy.js";
 import express from "express";
 import OpenAI from "openai";
+import { antoniaAIConfig, createAntoniaClient, CHILEAN_STYLE } from "./analysis/antonia-provider.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { accessSync, readFileSync, writeFileSync, constants as fsConstants } from "node:fs";
@@ -119,7 +120,7 @@ const conversationProcessingLocks = new Map(); // per-conversation mutex to seri
 // =========================
 // Config
 // =========================
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
+const { provider: ANTONIA_AI_PROVIDER, model: ANTONIA_MODEL } = antoniaAIConfig();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const BRAINTRUST_API_KEY = process.env.BRAINTRUST_API_KEY || null;
 const BRAINTRUST_PROJECT_NAME = process.env.BRAINTRUST_PROJECT_NAME || "Clinyco AI - Dev";
@@ -544,6 +545,8 @@ const baseOpenAI = OPENAI_API_KEY
 const openai = baseOpenAI && BRAINTRUST_API_KEY
   ? wrapOpenAI(baseOpenAI)
   : baseOpenAI;
+const antoniaAI = createAntoniaClient({ openai });
+console.info("[antonia-ai]", JSON.stringify({ provider: ANTONIA_AI_PROVIDER, model: ANTONIA_MODEL, configured: Boolean(antoniaAI) }));
 
 
 const ASEGURADORA_OPTIONS = [
@@ -3502,19 +3505,14 @@ function buildReferralPromptContext(referralContext) {
   return lines.join("\n");
 }
 
-async function askOpenAI({
+async function askAntoniaAI({
   systemPrompt,
   stateSummary,
   history,
   imageUrls = [],
   referralContext = null,
 }) {
-  if (!OPENAI_API_KEY) {
-    throw new Error("Missing OPENAI_API_KEY");
-  }
-  if (!openai) {
-    throw new Error("OpenAI client not initialized");
-  }
+  if (!antoniaAI) throw new Error("Antonia AI client not initialized");
 
   const referralBlock = buildReferralPromptContext(referralContext);
   const safeImageUrls = [...new Set(
@@ -3524,7 +3522,7 @@ async function askOpenAI({
   )].slice(0, 3);
 
   const baseMessages = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: systemPrompt + "\n\n" + CHILEAN_STYLE },
     { role: "system", content: stateSummary },
     ...(referralBlock ? [{ role: "system", content: referralBlock }] : []),
     ...history.map((item) => ({ ...item })),
@@ -3562,19 +3560,20 @@ async function askOpenAI({
 
   async function createCompletion(messages) {
     const request = {
-      model: OPENAI_MODEL,
+      model: ANTONIA_MODEL,
       messages,
       max_completion_tokens: Math.max(300, Number(process.env.ANTONIA_MAX_COMPLETION_TOKENS || 800)),
     };
-    if (String(OPENAI_MODEL).startsWith("gpt-5.6")) {
+    if (String(ANTONIA_MODEL).startsWith("gpt-5.6")) {
       request.reasoning_effort = process.env.ANTONIA_REASONING_EFFORT || "none";
     }
-    const completion = await openai.chat.completions.create(request, { timeout: 45000, maxRetries: 0 });
+    const completion = await antoniaAI.chat.completions.create(request, { timeout: 45000, maxRetries: 0 });
     try {
-      await recordAIUsage(getCrmPool(), { model: completion.model || OPENAI_MODEL, usage: completion.usage, purpose: 'antonia_chat' });
+      await recordAIUsage(getCrmPool(), { provider: ANTONIA_AI_PROVIDER, model: completion.model || ANTONIA_MODEL, usage: completion.usage, purpose: 'antonia_chat' });
     } catch (usageError) {
       console.warn('[ai-usage] no se pudo registrar el consumo:', usageError.message);
     }
+    if (completion.choices?.[0]?.finish_reason === "length") throw new Error("Antonia response exceeded output limit");
     return completion;
   }
 
@@ -3582,7 +3581,7 @@ async function askOpenAI({
   try {
     response = await createCompletion(withImages(baseMessages));
   } catch (error) {
-    if (!safeImageUrls.length || error?.status === 429) throw error;
+    if (!safeImageUrls.length || ![400, 422].includes(error?.status) || reviewErrorCode(error) === "ai_quota_exhausted") throw error;
     console.warn("[vision] multimodal request failed; retrying with text/referral only:", error.message);
     response = await createCompletion(baseMessages);
   }
@@ -3590,7 +3589,7 @@ async function askOpenAI({
   let reply = response.choices?.[0]?.message?.content?.trim() || "";
   if (!reply) {
     const finishReason = response.choices?.[0]?.finish_reason || null;
-    console.warn("[openai-empty] respuesta vacía; reintentando", safeJson({ finishReason, model: OPENAI_MODEL }));
+    console.warn("[antonia-ai-empty] respuesta vacía; reintentando", safeJson({ finishReason, model: ANTONIA_MODEL }));
     try {
       const retry = await createCompletion([
         ...baseMessages,
@@ -3601,7 +3600,7 @@ async function askOpenAI({
       ]);
       reply = retry.choices?.[0]?.message?.content?.trim() || "";
     } catch (retryError) {
-      console.warn("[openai-empty] retry failed:", retryError.message);
+      console.warn("[antonia-ai-empty] retry failed:", retryError.message);
     }
   }
   if (!reply) reply = "claro[[MSG]]qué te gustaría saber?";
@@ -5533,7 +5532,7 @@ const handleInboundWebhook = async (req, res) => {
     const stateSummary = [buildStateSummary(state), customerContextBlock].filter(Boolean).join("\n\n");
     const systemPrompt = buildOpenAISystemPrompt();
 
-    let reply = await askOpenAI({
+    let reply = await askAntoniaAI({
       systemPrompt,
       stateSummary,
       history,
@@ -5617,7 +5616,7 @@ app.listen(PORT, () => {
   startFonasapadCron();
   startMonthlyCron();
   const improvementPool = getCrmPool();
-  startImprovementReviews({ pool: improvementPool, review: createReviewer({ openai, model: OPENAI_MODEL, pool: improvementPool }) });
+  startImprovementReviews({ pool: improvementPool, review: createReviewer({ openai: antoniaAI, provider: ANTONIA_AI_PROVIDER, model: ANTONIA_MODEL, pool: improvementPool }) });
   void registerImprovementApp().then(result => console.log('[antonia-improvements-app]', JSON.stringify(result)))
     .catch(error => console.error('[antonia-improvements-app]', error.message));
 });
