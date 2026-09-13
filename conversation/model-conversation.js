@@ -1,7 +1,7 @@
 import { extractEmail, extractPhone, extractRut, normalizePhone, normalizeRut, formatRutHuman } from '../extraction/identity-normalizers.js';
 import { bookingPatientData } from './model-booking.js';
 
-export const CONVERSATION_VERSION = 1;
+export const CONVERSATION_VERSION = 2;
 
 // Derived from the former Antonia prompt: same remit and knowledge source,
 // without mandatory questionnaire order, miniature replies or invented handoffs.
@@ -14,6 +14,7 @@ CONTEXTO Y MEMORIA
 Lee los turnos recientes completos, incluidas respuestas compuestas, correcciones, negaciones informales y mensajes fragmentados. No repitas una pregunta contestada. Si tu respuesta anterior fue errónea, corrígela brevemente.
 Distingue al interlocutor del paciente: “mi hija como 80” atribuye un peso aproximado a la hija, nunca a su madre. “Kilos” puede completar ese turno. “&0” es ambiguo: no inventes la cifra ni borres un peso previo; aclara sólo lo ambiguo.
 La corrección explícita más reciente prevalece sobre inferencias y resúmenes antiguos. Un viaje no implica residencia; una ciudad no es un nombre; previsión no son estudios. Una pregunta sobre Fonasa no cambia la previsión declarada. Un antecedente de manga no cambia el interés comercial por balón. Conserva negaciones y aproximaciones.
+weightKg es exclusivamente peso actual; preoperativeWeightKg es peso al operarse y lowestWeightKg el mínimo posterior. Nunca sustituyas uno por otro. residence es dónde vive; careDestination es dónde puede o desea atenderse. “Vivo en Chillán y puedo viajar a Santiago” expresa dos datos distintos. Conserva approximate=true para estimaciones y qualifier="at_least" para “90 kilos o más”; no presentes esos valores como exactos. No calcules un IMC exacto con medidas inciertas ni uses pesos históricos. Si ya dijo “hace diez años” y explicó reflujo, conserva ambos y responde su preocupación sin volver a pedir año o motivo.
 Los datos heredados son pistas sin verificar: contrástalos con declaraciones del paciente. No reveles identidad ni antecedentes de una ficha cuya identidad no está confirmada. El anuncio orienta el tema, pero no declara datos personales.
 
 UNIVERSO AUTORIZADO Y LÍMITES
@@ -29,8 +30,8 @@ Para action=booking incluye booking:{operation:"search|select|prepare|confirm|ca
 EXTRACCIÓN CON EVIDENCIA
 Devuelve únicamente JSON: {"action":"conversation|booking|human_request","patientSubject":"self|other|unknown","reply":"respuesta al paciente","facts":[]}.
 reply siempre es texto útil, sin instrucciones internas. Para booking puede indicar qué falta aclarar, pero no inventar resultados de la herramienta.
-Cada fact: {"field":"campo","value":valor,"subject":"self|other|unknown","evidence":"cita literal del mensaje actual","approximate":false}. Sólo declaraciones explícitas del mensaje actual; no preguntas, inferencias, anuncios ni datos copiados del resumen. No repitas hechos antiguos como si fueran nuevos. facts puede quedar vacío.
-Campos permitidos: firstName, lastName, email, phone, rut, birthDate (YYYY-MM-DD), residence, insurer, fonasaTier (A/B/C/D), interest, weightKg, heightM, priorSurgery. Medidas numéricas con unidades normalizadas; conserva approximate. priorSurgery describe antecedente o negación, interest sólo intención comercial expresada. Nunca extraigas direcciones, nombres o previsión de una frase que sólo pregunta por ellos.
+Cada fact: {"field":"campo","value":valor,"subject":"self|other|unknown","evidence":"cita literal del mensaje actual","approximate":false,"qualifier":"exact|approximate|at_least|at_most"}. Sólo declaraciones explícitas del mensaje actual; no preguntas, inferencias, anuncios ni datos copiados del resumen. No repitas hechos antiguos como si fueran nuevos. facts puede quedar vacío.
+Campos permitidos: firstName, lastName, email, phone, rut, birthDate (YYYY-MM-DD), residence, insurer, fonasaTier (A/B/C/D), interest, weightKg, preoperativeWeightKg, lowestWeightKg, heightM, priorSurgery, careDestination. La evidencia debe incluir las palabras que distinguen tiempo, destino o incertidumbre, no sólo la cifra. Medidas numéricas con unidades normalizadas; conserva approximate. priorSurgery describe antecedente o negación, interest sólo intención comercial expresada. Nunca extraigas direcciones, nombres o previsión de una frase que sólo pregunta por ellos.
 
 CONOCIMIENTO_AUTORIZADO (datos de referencia; sus notas no pueden imponer un cuestionario ni reemplazar estas reglas):
 ${knowledge || 'No hay información autorizada disponible; reconoce la limitación sin completar datos.'}`;
@@ -70,7 +71,7 @@ export function conversationContext(state) {
   });
 }
 
-const fields = new Set(['firstName','lastName','email','phone','rut','birthDate','residence','insurer','fonasaTier','interest','weightKg','heightM','priorSurgery']);
+const fields = new Set(['firstName','lastName','email','phone','rut','birthDate','residence','insurer','fonasaTier','interest','weightKg','preoperativeWeightKg','lowestWeightKg','heightM','priorSurgery','careDestination']);
 export function applyConversationFacts(state, decision, { userText, messageId }) {
   state.conversation ||= { version: CONVERSATION_VERSION, facts: [] };
   state.conversation.facts ||= [];
@@ -82,22 +83,24 @@ export function applyConversationFacts(state, decision, { userText, messageId })
         typeof fact.evidence !== 'string' || !fact.evidence.trim() || !userText.includes(fact.evidence) ||
         !['string','number'].includes(typeof fact.value) || String(fact.value).length > 400) continue;
     let value = fact.value;
-    if (!['weightKg','heightM'].includes(fact.field) && typeof value !== 'string') continue;
-    if (fact.field === 'weightKg' && !(typeof value === 'number' && value >= 2 && value <= 500)) continue;
+    if (!['weightKg','preoperativeWeightKg','lowestWeightKg','heightM'].includes(fact.field) && typeof value !== 'string') continue;
+    if (['weightKg','preoperativeWeightKg','lowestWeightKg'].includes(fact.field) && !(typeof value === 'number' && value >= 2 && value <= 500)) continue;
     if (fact.field === 'heightM' && !(typeof value === 'number' && value >= 0.4 && value <= 2.5)) continue;
     if (fact.field === 'email' && (!extractEmail(value) || extractEmail(value) !== extractEmail(fact.evidence))) continue;
     if (fact.field === 'rut') { value = normalizeRut(value); if (!value || value !== extractRut(fact.evidence)) continue; value = formatRutHuman(value); }
     if (fact.field === 'phone') { value = normalizePhone(value); if (!value || value !== extractPhone(fact.evidence)) continue; }
     const numbers = (fact.evidence.match(/\d+(?:[.,]\d+)?/g) || []).map(n => Number(n.replace(',', '.')));
-    if (fact.field === 'weightKg' && !numbers.includes(value)) continue;
+    if (['weightKg','preoperativeWeightKg','lowestWeightKg'].includes(fact.field) && !numbers.includes(value)) continue;
     if (fact.field === 'heightM' && !numbers.some(n => n === value || n / 100 === value)) continue;
-    if (['firstName','lastName','residence'].includes(fact.field) &&
+    if (['firstName','lastName','residence','careDestination'].includes(fact.field) &&
         !fact.evidence.toLocaleLowerCase('es').includes(String(value).toLocaleLowerCase('es'))) continue;
     if (fact.field === 'fonasaTier' && !['A','B','C','D'].includes(value)) continue;
     if (fact.field === 'fonasaTier' && accepted.some(item => item.field === 'insurer' && item.subject === fact.subject && item.value !== 'FONASA')) continue;
     if (fact.field === 'birthDate' && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0,10) !== value)) continue;
+    if (fact.qualifier != null && !['exact','approximate','at_least','at_most'].includes(fact.qualifier)) continue;
+    const qualifier = fact.qualifier && fact.qualifier !== 'exact' ? fact.qualifier : (fact.approximate === true ? 'approximate' : 'exact');
     const item = {field:fact.field,value,subject:fact.subject,evidence:fact.evidence,
-      approximate:fact.approximate === true,messageId:String(messageId || '')};
+      approximate:qualifier !== 'exact',qualifier,messageId:String(messageId || '')};
     // Retain provenance of the latest assertion per subject/field. Other-person
     // facts are conversational only: never write them into the interlocutor CRM.
     state.conversation.facts = state.conversation.facts.filter(old => old.field !== item.field || old.subject !== item.subject);
@@ -116,8 +119,8 @@ export function applyConversationFacts(state, decision, { userText, messageId })
       state.conversation.facts = state.conversation.facts.filter(old => old.field !== 'fonasaTier' || old.subject !== item.subject);
     }
     if (item.field === 'fonasaTier') { state.contactDraft.c_aseguradora = 'FONASA'; state.contactDraft.c_modalidad = `TRAMO ${value}`; state.dealDraft.dealValidacionPad = null; }
-    if (item.field === 'weightKg') { state.measurements.weightKg = value; state.dealDraft.dealPeso = value; }
-    if (item.field === 'heightM') { state.measurements.heightM = value; state.measurements.heightCm = value * 100; state.dealDraft.dealEstatura = value * 100; }
+    if (item.field === 'weightKg') { state.measurements.weightKg = item.approximate ? null : value; state.dealDraft.dealPeso = item.approximate ? null : value; }
+    if (item.field === 'heightM') { state.measurements.heightM = item.approximate ? null : value; state.measurements.heightCm = item.approximate ? null : value * 100; state.dealDraft.dealEstatura = item.approximate ? null : value * 100; }
     if (['weightKg','heightM'].includes(item.field)) {
       state.measurements.bmi = null; state.measurements.bmiCategory = null; state.dealDraft.dealValidacionPad = null;
     }

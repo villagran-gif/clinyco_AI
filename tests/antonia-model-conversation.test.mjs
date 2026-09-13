@@ -82,3 +82,31 @@ test('Opus conversation request uses adaptive thinking at low effort and preserv
   assert.deepEqual(request.thinking,{type:'adaptive'});assert.deepEqual(request.output_config,{effort:'low'});
   assert.equal(request.max_tokens,4096);assert.match(request.system,/JSON/);
 });
+
+test('current and historical weights coexist without replacing current measurements',()=>{
+  const s=state();
+  apply(s,decision([fact('weightKg',72,'Actualmente peso 72 kg'),fact('heightM',1.6,'mido 1,60')]),'Actualmente peso 72 kg y mido 1,60');
+  apply(s,decision([fact('preoperativeWeightKg',90,'Cuando me operé pesaba 90 kg')]),'Cuando me operé pesaba 90 kg');
+  assert.equal(s.measurements.weightKg,72);assert.equal(s.dealDraft.dealPeso,72);
+  assert.equal(s.conversation.facts.find(f=>f.field==='preoperativeWeightKg').value,90);
+  assert.equal(Math.round(s.measurements.weightKg/s.measurements.heightM**2*10)/10,28.1);
+});
+test('travel destination coexists with residence across later turns',()=>{
+  const s=state();apply(s,decision([fact('residence','Chillán','Vivo en Chillán')]),'Vivo en Chillán');
+  apply(s,decision([fact('careDestination','Santiago','Puedo viajar a Santiago')]),'Puedo viajar a Santiago');
+  assert.equal(s.contactDraft.c_comuna,'Chillán');
+  assert.equal(s.conversation.facts.find(f=>f.field==='careDestination').value,'Santiago');
+});
+test('uncertain current weight clears exact projections and derived BMI, preserving lower bound',()=>{
+  const s=state();apply(s,decision([fact('weightKg',85,'85')]),'85');s.measurements.bmi=33;
+  apply(s,decision([{...fact('weightKg',90,'Creo que 90 kilos o más'),approximate:true,qualifier:'at_least'}]),'Creo que 90 kilos o más');
+  assert.equal(s.measurements.weightKg,null);assert.equal(s.dealDraft.dealPeso,null);assert.equal(s.measurements.bmi,null);
+  assert.equal(s.conversation.facts[0].qualifier,'at_least');assert.equal(s.conversation.facts[0].value,90);
+  apply(s,decision([fact('weightKg',92,'Me pesé: 92 kg')]),'Me pesé: 92 kg');
+  assert.equal(s.dealDraft.dealPeso,92);assert.equal(s.conversation.facts[0].approximate,false);
+});
+test('uncertain height cannot leave an exact projection behind',()=>{
+  const s=state();apply(s,decision([fact('heightM',1.6,'1,60')]),'1,60');
+  apply(s,decision([{...fact('heightM',1.6,'como 1,60'),approximate:true}]),'como 1,60');
+  assert.equal(s.measurements.heightM,null);assert.equal(s.dealDraft.dealEstatura,null);
+});

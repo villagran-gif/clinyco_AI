@@ -29,3 +29,18 @@ Las conversaciones heredadas no confirman reservas automáticamente: necesitan s
 ## Rollback
 
 Revertir este PR vuelve al comportamiento anterior con los controles persistentes de PR 252. No requiere migración ni elimina columnas o registros. Antes de volver atrás, mantener en pausa las conversaciones con reservas `pending`/`uncertain` y conciliar sus resultados: la versión anterior no interpreta `booking.modelAttempt`. Cambiar sólo `ANTONIA_CONVERSATION_MODEL` revierte la elección de modelo sin restaurar los cuestionarios. No se ha desplegado este cambio.
+
+## Context precision follow-up
+
+Separate current `weightKg` from `preoperativeWeightKg` and `lowestWeightKg`, and
+`residence` from `careDestination`. Historical weights and travel destinations stay
+in evidence-backed conversational memory, without overwriting current CRM fields.
+Numeric facts retain `qualifier` (exact, approximate, at_least, at_most). Uncertain
+current measurements clear exact CRM projections and derived BMI; their value and
+qualifier remain available in declaredFacts. A later exact measurement restores
+that projection. No migration or production data repair is included.
+
+Added state regressions for weight history, travel, uncertain weight and height,
+and four opt-in provider cases for semantic extraction and answering the concern.
+Local tests validate supplied model decisions; provider evaluation and manual
+review are still required to demonstrate actual model interpretation.
