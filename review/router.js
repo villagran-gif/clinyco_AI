@@ -139,7 +139,7 @@ router.get('/medinet/professional-agenda', async (req,res) => {
   const professional=String(req.query.professional || config.professional || '').trim();
   if(!professional || professional.length>200)return res.status(400).json({error:'Selecciona un profesional.'});
   try { res.json({...await previewProfessionalAgenda({professional}),delivery:{enabled:config.enabled,hour:config.hour,timeZone:'America/Santiago',status:config.enabled?'Configurado; revisar entregas en Chatwoot.':'Pendiente de plantilla aprobada y verificación del destinatario.'}}); }
-  catch {res.status(503).json({error:'No se pudo preparar la agenda de hoy y mañana.'});}
+  catch(e) {if(e.code==='snapshot_pending')return res.status(202).json({pending:true,error:e.message});res.status(503).json({error:'No se pudo preparar la agenda de hoy y mañana.'});}
 });
 router.use("/antonia/improvements", improvementsRouter({ getPool }));
 router.use("/crm/workspace", workspaceRouter({ getPool }));

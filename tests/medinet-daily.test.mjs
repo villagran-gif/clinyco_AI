@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { buildDailyReport, validDay, chileDate, dailyMedinetRouter } from '../review/medinet-daily.js';
+import { buildDailyReport, validDay, chileDate, dailyMedinetRouter, dailyFailure, checkDailyConnection } from '../review/medinet-daily.js';
 const date='2026-09-14', now=new Date('2026-09-14T14:00:00Z');
 const appointment=(id,status='Agendado',extra={})=>({id,fecha:'2026/09/14',hora:'10:00:00',estado:{nombre:status},tipo_id:3,tipo:'Consulta',profesional:{nombres:'Profesional',paterno:'Prueba'},sucursal:{id:2,nombre:'Sede prueba'},paciente:{nombres:'Paciente',paterno:'Prueba'},...extra});
 const report=extra=>buildDailyReport({date,now,appointments:[],...extra});
@@ -14,3 +14,12 @@ test('route fails visibly on incomplete Medinet response and validates writes be
 test('cancelled appointments are not confirmed; sent reminders cannot downgrade a Medinet confirmation',()=>{const r=report({appointments:[appointment(1,'Cancelada'),appointment(2,'Confirmado')],confirmations:[{external_id:1,appointment_at:'2026-09-14T14:00:00Z',state:'confirmed'},{external_id:2,appointment_at:'2026-09-14T14:00:00Z',state:'reminder_sent',first_msg_sent_at:'2026-09-12T14:00:00Z'}]});assert.equal(r.items[0].confirmation,'Cita cancelada o reagendada');assert.equal(r.items[1].confirmation,'Confirmada en Medinet');assert.equal(r.professionals[0].confirmed,1);});
 
 test('cash review separates expected booked value from expected attended consultations',()=>{const r=report({appointments:[appointment(1,'Atendido'),appointment(2,'Agendado'),appointment(3,'Ausente'),appointment(4,'Cancelada')],tariffs:[{professional_key:'profesional prueba',type_id:'3',amount_clp:20000}]});const p=r.professionals[0];assert.equal(p.expectedAmount,60000);assert.equal(p.attendedExpectedAmount,20000);assert.equal(p.attendedExpectedKnown,1);assert.equal(p.paidAmount,null);});
+
+test('connection check never logs patients or upstream error bodies',async()=>{
+  const ok=await checkDailyConnection({now,appointments:async()=>[appointment(1)]});
+  assert.deepEqual(ok,{ok:true,date,count:1});
+  const bad=await checkDailyConnection({now,appointments:async()=>{throw new Error('Medinet API GET /path → 401: private upstream content');}});
+  assert.deepEqual(bad,{ok:false,date,stage:'appointments',code:'access_denied',status:401});
+  assert.equal(JSON.stringify(bad).includes('private'),false);
+  assert.equal(dailyFailure({name:'TimeoutError'}).code,'timeout');
+});

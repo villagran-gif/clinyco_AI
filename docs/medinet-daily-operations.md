@@ -49,3 +49,17 @@ Este documento describe la recuperación pendiente; no declara activados esos en
 ## Pagos
 
 Distinguir recaudación de pacientes de pagos a profesionales. Para recaudación se necesita un medio de pago con comprobantes y estado verificable; para pagar profesionales, un convenio de pago a proveedores y autorización bancaria. Una sesión de navegador permanente no sustituye una integración ni garantiza continuidad.
+
+## Corrección de origen de red — septiembre de 2026
+
+Medinet restringe numerosas rutas por IP chilena. La agenda diaria no debe llamar a Medinet desde Render (Oregon).
+
+- `workers/medinet-daily-sync.js` se ejecuta exclusivamente en el VPS chileno y consulta la agenda mediante JWT de la cuenta Medinet configurada allí.
+- El VPS escribe resultados y la fecha real de actualización en `medinet_daily_snapshots`, en PostgreSQL compartido, mediante TLS con verificación de certificado.
+- Render lee esa tabla. Cuando falta una fecha o tiene más de dos minutos, solicita actualización. La interfaz muestra un estado pendiente y consulta nuevamente; nunca interpreta un resultado pendiente o fallido como cero citas.
+- El sincronizador actualiza hoy y mañana automáticamente, además de las fechas solicitadas desde SELL. Una reserva temporal evita procesar concurrentemente la misma fecha y permite recuperar un proceso interrumpido.
+- La agenda profesional por WhatsApp usa la misma fuente. No consulta Medinet directamente desde Render.
+- La cuenta verificada permite consultar citas, pero la API de bloqueos respondió 403 indicando falta de permisos. La existencia de una ruta en el índice de Medinet no acredita acceso ni una integración completada.
+- La interfaz de Chatwoot indica que la creación de plantillas se realiza en el proveedor. La plantilla diaria sigue pendiente de creación/aprobación en Meta; el envío continúa desactivado.
+
+Servicio VPS previsto: PM2 `medinet-daily-sync`. Requiere `DATABASE_URL`, `MEDINET_USER` y `MEDINET_USER_KEY`; se utiliza el entorno operativo existente, sin publicarlo. No requiere un nuevo puerto público ni traslado del worker de agendamiento.

@@ -3,6 +3,16 @@
   const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const el = (tag,text,cls) => {const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
   const views = new Map();
+  async function getLiveData(url,onPending=()=>{}) {
+    const until=Date.now()+60000;
+    while(true){
+      const response=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(25000)});
+      const data=await response.json();
+      if(response.status!==202){if(!response.ok)throw Error(data.error||'No fue posible cargar los datos.');return data;}
+      if(Date.now()>until)throw Error('El VPS todavía no termina de actualizar la agenda. Reintenta en unos momentos.');
+      onPending();await new Promise(resolve=>setTimeout(resolve,2000));
+    }
+  }
   function link(text,url) {const a=el('a',text);a.href=url;a.target='_blank';a.rel='noopener noreferrer';return a;}
   function makeView(name) {
     const root=document.getElementById(`tab-${name}`), report=name==='daily-report';
@@ -23,10 +33,10 @@
   function options(select,items,all) {const old=select.value;select.replaceChildren(new Option(all,''),...items.map(([id,name])=>new Option(name,id)));if([...select.options].some(o=>o.value===old))select.value=old;}
   async function load(v) {
     if(v.busy)return;v.busy=true;v.toolbar.querySelectorAll('input,select,button').forEach(e=>e.disabled=true);v.output.setAttribute('aria-busy','true');v.output.replaceChildren();v.state.textContent='Consultando citas en Medinet…';
-    try {const r=await fetch('/api/medinet/daily?date='+encodeURIComponent(v.date.value),{cache:'no-store'});const data=await r.json();if(!r.ok)throw Error(data.error||'No fue posible cargar la agenda.');v.data=data;
+    try {const data=await getLiveData('/api/medinet/daily?date='+encodeURIComponent(v.date.value),()=>{v.state.textContent='Actualizando la agenda desde el VPS de Chile…';});v.data=data;
       options(v.branch,[...new Map(data.professionals.map(p=>[p.branchId,p.branch])).entries()],'Todas las sedes');
       options(v.professional,[...new Map(data.professionals.map(p=>[p.key,p.name])).entries()],'Todos los profesionales');
-      v.state.textContent=`${data.items.length} citas · Consultado ${new Date(data.syncedAt).toLocaleTimeString('es-CL',{timeZone:'America/Santiago'})} · hora de Chile${data.slotsFresh?'':' · Cupos sin actualización reciente'}`;render(v);
+      v.state.textContent=`${data.items.length} citas · Medinet vía VPS · Actualizado ${new Date(data.syncedAt).toLocaleTimeString('es-CL',{timeZone:'America/Santiago'})} · hora de Chile${data.slotsFresh?'':' · Cupos sin actualización reciente'}`;render(v);
     }catch(e){v.data=null;v.state.textContent=e.message+' Pulsa Actualizar para reintentar.';}
     finally{v.busy=false;v.toolbar.querySelectorAll('input,select,button').forEach(e=>e.disabled=false);v.output.setAttribute('aria-busy','false');}
   }
@@ -53,7 +63,7 @@
     if(v.professional.value) {
       const box=el('details'),title=el('summary','Agenda del profesional · hoy y mañana');box.append(title);
       const button=el('button','Preparar mensaje de agenda'),text=el('pre',undefined,'daily-message');button.type='button';box.append(button,text);v.output.append(box);
-      button.onclick=async()=>{button.disabled=true;text.textContent='Preparando…';try{const name=v.professional.selectedOptions[0].textContent;const response=await fetch('/api/medinet/professional-agenda?professional='+encodeURIComponent(name),{cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error);text.textContent=data.message+'\n\nEnvío diario: '+data.delivery.status+' Hora prevista: '+data.delivery.hour+':00 Chile.';}catch(e){text.textContent=e.message;}finally{button.disabled=false;}};
+      button.onclick=async()=>{button.disabled=true;text.textContent='Preparando…';try{const name=v.professional.selectedOptions[0].textContent;const data=await getLiveData('/api/medinet/professional-agenda?professional='+encodeURIComponent(name),()=>{text.textContent='Actualizando hoy y mañana desde el VPS de Chile…';});text.textContent=data.message+'\n\nEnvío diario: '+data.delivery.status+' Hora prevista: '+data.delivery.hour+':00 Chile.';}catch(e){text.textContent=e.message;}finally{button.disabled=false;}};
     }
     const table=tableFor(['Hora','Paciente','Profesional','Sede','Atención','Estado Medinet','Confirmación','Arancel','Accesos']);
     for(const a of items){const row=el('tr');for(const value of [a.time,a.patient,a.professional,a.branch,a.type])row.append(el('td',value));

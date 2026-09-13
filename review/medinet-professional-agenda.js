@@ -1,4 +1,6 @@
-import { fetchAllAppointments } from '../Antonia/medinet-api.js';
+import { readDailyAppointments } from './medinet-snapshot.js';
+import { getPool } from './db.js';
+const fetchAllAppointments=(start,end)=>readDailyAppointments(start,end,{pool:getPool()});
 import { chileDate, normalizeAppointment, normalizedName } from './medinet-daily.js';
 
 export function agendaDates(now=new Date()) {
