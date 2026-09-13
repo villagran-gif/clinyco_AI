@@ -15,6 +15,8 @@ En Chatwoot → Ajustes → Integraciones → Dashboard Apps, registrar:
 
 La pestaña recibe el contexto oficial de Chatwoot, valida origen, ventana y cuenta, y abre `antonia-feedback.html?conversation=ID`. Solo transfiere el número de conversación. El formulario utiliza el acceso con Google y la lista autorizada existentes; no expone claves de API.
 
+Alternativamente, `ANTONIA_FEEDBACK_REGISTER_APP=true` registra la aplicación al iniciar el core de producción, usando su token de Chatwoot existente. Solo actúa en ese servicio/cuenta y no reemplaza aplicaciones existentes. Una autorización insuficiente queda registrada sin interrumpir el servicio. La bandera se puede apagar tras verificar la instalación.
+
 API protegida: `GET/POST /api/review/antonia/improvements` (en Netlify, `/api/antonia/improvements`). El servidor atribuye cada sugerencia al usuario autenticado y exige el origen del sitio para guardar. La clave de idempotencia evita duplicados si se repite una solicitud cuyo resultado se perdió.
 
 ## Revisión cada media hora
