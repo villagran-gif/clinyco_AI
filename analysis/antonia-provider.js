@@ -28,7 +28,10 @@ export function claudeRequest(request) {
   }
   if (!messages.length) throw new Error('Antonia history is empty');
   if (request.response_format?.type === 'json_object') system.push('Devuelve exclusivamente un objeto JSON válido, sin Markdown ni texto fuera del JSON.');
-  return { model: request.model, max_tokens: request.max_completion_tokens || 800, thinking: { type: 'disabled' }, system: system.join('\n\n'), messages };
+  const thinking = request.model === 'claude-opus-5'
+    ? { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } }
+    : { thinking: { type: 'disabled' } };
+  return { model: request.model, max_tokens: request.max_completion_tokens || 800, ...thinking, system: system.join('\n\n'), messages };
 }
 
 // Keep the existing text-generation boundary; audio continues on its own client.

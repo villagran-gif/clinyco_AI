@@ -15,7 +15,9 @@
     "dashboard:serve": "node dashboard/medinet-dashboard-server.cjs",
     "dashboard:deploy": "bash dashboard/deploy-vps.sh",
     "start:medinet-worker": "node workers/medinet-worker.js",
-    "test:antonia-control": "node --test tests/antonia-control.test.mjs tests/antonia-control-core.test.mjs tests/review-auth.test.mjs tests/chatwoot-call-guard.test.mjs tests/agendaweb-only.test.mjs tests/chatwoot-adapter.test.js"
+    "test:antonia-control": "node --test tests/antonia-control.test.mjs tests/antonia-control-core.test.mjs tests/review-auth.test.mjs tests/chatwoot-call-guard.test.mjs tests/agendaweb-only.test.mjs tests/chatwoot-adapter.test.js",
+    "test:antonia-conversation": "npm run test:antonia-control && node --test tests/antonia-model-conversation.test.mjs tests/antonia-model-booking.test.mjs tests/antonia-provider.test.mjs tests/exam-policy.test.mjs tests/endoscopy-booking-policy.test.mjs tests/medinet-booking.test.mjs tests/chatwoot-private-lead-note.test.mjs",
+    "eval:antonia-conversation": "node scripts/evaluate-antonia-conversation.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
