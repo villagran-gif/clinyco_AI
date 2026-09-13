@@ -1,5 +1,6 @@
 import { Router, json } from 'express';
 import { board, tasks, configuration, addOption, saveOpportunity, saveTask, conversationContact, dealActivity, addDealNote, CrmError } from './crm-workspace.js';
+import { antoniaAIConfig } from '../analysis/antonia-provider.js';
 import { usageDashboard } from './ai-usage.js';
 export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKSPACE_ENABLED === 'true', allowedOrigins = () => ['https://clinyco-ai.netlify.app', ...(process.env.CRM_ALLOWED_ORIGINS || '').split(',').filter(Boolean)] }) {
   const router = Router();
@@ -23,7 +24,7 @@ export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKS
   router.get('/ai-usage',route(req=>usageDashboard(getPool(), {
     month:req.query.month,
     budgetUsd:process.env.AI_MONTHLY_BUDGET_USD || 100,
-    activeModel:process.env.OPENAI_MODEL || 'gpt-5.6-terra'
+    activeModel:antoniaAIConfig().model
   })));
   router.post('/options',route(async req=>{ await addOption(getPool(),req.body); return {saved:true}; }));
   router.get('/opportunities/:id/activity',route(req=>dealActivity(getPool(),req.params.id,req.query)));

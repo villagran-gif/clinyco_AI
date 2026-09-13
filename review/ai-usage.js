@@ -1,4 +1,6 @@
 const USD_PER_MILLION = Object.freeze({
+  // Anthropic standard rates verified 2026-09-13.
+  'claude-sonnet-5': { input: 2, cachedInput: 0.2, cacheWrite: 2.5, cacheWriteHour: 4, output: 10 },
   'gpt-6-astra': { input: 10, cachedInput: 1, cacheWrite: 12.5, output: 50 },
   'gpt-5.6-sol': { input: 4, cachedInput: 0.4, cacheWrite: 5, output: 20 },
   'gpt-5.6-terra': { input: 2, cachedInput: 0.2, cacheWrite: 2.5, output: 12 },
@@ -41,6 +43,11 @@ function nonNegativeInteger(value) {
 }
 
 export function tokenUsage(usage = {}) {
+  if (usage.prompt_tokens === undefined && ('cache_read_input_tokens' in usage || 'cache_creation_input_tokens' in usage)) {
+    const cached = nonNegativeInteger(usage.cache_read_input_tokens);
+    const cacheWrite = nonNegativeInteger(usage.cache_creation_input_tokens);
+    return { input: nonNegativeInteger(usage.input_tokens) + cached + cacheWrite, cached, cacheWrite, output: nonNegativeInteger(usage.output_tokens) };
+  }
   const input = nonNegativeInteger(usage.prompt_tokens ?? usage.input_tokens);
   const output = nonNegativeInteger(usage.completion_tokens ?? usage.output_tokens);
   const cached = Math.min(input, nonNegativeInteger(
@@ -56,17 +63,18 @@ export function estimateTextCost(model, usage = {}) {
   const rates = USD_PER_MILLION[model];
   if (!rates) return null;
   const { input, cached, cacheWrite, output } = tokenUsage(usage);
-  return ((input - cached - cacheWrite) * rates.input + cached * rates.cachedInput + cacheWrite * rates.cacheWrite + output * rates.output) / 1_000_000;
+  const hourWrite = Math.min(cacheWrite, nonNegativeInteger(usage.cache_creation?.ephemeral_1h_input_tokens));
+  return (hourWrite * ((rates.cacheWriteHour || rates.cacheWrite) - rates.cacheWrite) + (input - cached - cacheWrite) * rates.input + cached * rates.cachedInput + cacheWrite * rates.cacheWrite + output * rates.output) / 1_000_000;
 }
 
-export async function recordAIUsage(pool, { model, usage, purpose = 'antonia_chat' }) {
+export async function recordAIUsage(pool, { model, usage, purpose = 'antonia_chat', provider = 'openai' }) {
   const tokens = tokenUsage(usage);
   if (!pool || !model || (!tokens.input && !tokens.output)) return;
   await ensureUsageTable(pool);
   await pool.query(
-    `INSERT INTO ai_usage_events(purpose,model,input_tokens,cached_input_tokens,cache_write_tokens,output_tokens,estimated_cost_usd)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [purpose, model, tokens.input, tokens.cached, tokens.cacheWrite, tokens.output, estimateTextCost(model, usage)]
+    `INSERT INTO ai_usage_events(provider,purpose,model,input_tokens,cached_input_tokens,cache_write_tokens,output_tokens,estimated_cost_usd)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [provider, purpose, model, tokens.input, tokens.cached, tokens.cacheWrite, tokens.output, estimateTextCost(model, usage)]
   );
 }
 
