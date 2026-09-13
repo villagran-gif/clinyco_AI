@@ -71,6 +71,7 @@ import { getPool as getCrmPool } from "./review/db.js";
 import { recordAIUsage } from "./review/ai-usage.js";
 import { createReviewer, reviewErrorCode } from "./antonia-improvements/reviewer.js";
 import { startImprovementReviews } from "./antonia-improvements/scheduler.js";
+import { registerImprovementApp } from "./antonia-improvements/chatwoot-app.js";
 import { runConfiguredSellRestore } from "./review/sell-restore.js";
 import { sendChatwootReply, sendChatwootAttachment } from "./chatwoot-adapter/client.js";
 import { maybeSyncPrivateLeadNote } from "./chatwoot-adapter/private-lead-note.js";
@@ -5617,4 +5618,6 @@ app.listen(PORT, () => {
   startMonthlyCron();
   const improvementPool = getCrmPool();
   startImprovementReviews({ pool: improvementPool, review: createReviewer({ openai, model: OPENAI_MODEL, pool: improvementPool }) });
+  void registerImprovementApp().then(result => console.log('[antonia-improvements-app]', JSON.stringify(result)))
+    .catch(error => console.error('[antonia-improvements-app]', error.message));
 });

@@ -7,7 +7,7 @@
   let saving = false;
   let refreshing = false;
   const errorLabel = code => ({ ai_quota_exhausted: 'Pendiente de análisis: falta saldo de IA.', ai_rate_limited: 'Pendiente de análisis: límite temporal de IA.', ai_not_configured: 'Pendiente de análisis: IA sin configurar.', review_failed: 'El análisis falló y se intentará en la próxima revisión.' }[code] || 'Pendiente de revisión');
-  const date = value => new Date(value).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' });
+  const date = value => new Date(value).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Santiago' });
   const el = (tag, text, className) => { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; };
   function caseLink(id) {
     const link = el('a', `Conversación #${id}`);
@@ -39,7 +39,7 @@
       const data = await response.json();
       $('suggestions').replaceChildren(...(data.items.length ? data.items.map(renderItem) : [el('p', 'Todavía no hay sugerencias.')]));
       const blocked = data.lastRun?.error ? ` ${errorLabel(data.lastRun.error)}` : '';
-      $('review-status').textContent = `${data.pending} pendientes. Próxima revisión: ${date(data.nextReviewAt)}.${blocked}`;
+      $('review-status').textContent = `${data.pending} pendientes. Próxima revisión: ${date(data.nextReviewAt)} (hora de Chile).${blocked}`;
     } catch { $('review-status').textContent = 'No se pudieron cargar las sugerencias. Pulsa Actualizar para reintentar.'; }
     finally { refreshing = false; $('refresh-feedback').disabled = false; }
   }
