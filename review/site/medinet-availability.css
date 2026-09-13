@@ -1,0 +1,38 @@
+/* Semantic colors must survive the global matte-gray reading theme. */
+body #tab-medinet .mn-occupancy-red { background:#fecaca!important; color:#7f1d1d!important; border-color:#f87171!important; }
+body #tab-medinet .mn-occupancy-orange { background:#fed7aa!important; color:#7c2d12!important; border-color:#fb923c!important; }
+body #tab-medinet .mn-occupancy-yellow { background:#fef08a!important; color:#713f12!important; border-color:#eab308!important; }
+body #tab-medinet .mn-occupancy-green { background:#86efac!important; color:#14532d!important; border-color:#4ade80!important; }
+body #tab-medinet .mn-occupancy-unknown { background:#393939!important; color:#d4d4d4!important; border-color:#666!important; }
+#mn-legend { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:14px; font-size:13px; }
+#mn-legend small { flex-basis:100%; color:#c2c2c2; }
+#mn-legend .mn-legend-key { padding:3px 7px; border-radius:4px; }
+#tab-medinet .mn-slot { display:block; width:100%; min-width:44px; margin:0; padding:6px 4px; font-size:13px; line-height:1.4; font-weight:600; border:1px solid; }
+#tab-medinet .mn-slot:hover { filter:brightness(.94); }
+#tab-medinet .mn-slot:focus-visible { outline:3px solid #93c5fd; outline-offset:2px; }
+#tab-medinet .mn-table { width:100%; border-collapse:collapse; font-size:13px; }
+#tab-medinet .mn-table th, #tab-medinet .mn-table td { padding:5px; text-align:center; border-bottom:1px solid #494949; }
+#tab-medinet .mn-table th:first-child { min-width:210px; max-width:260px; text-align:left; position:sticky; left:0; z-index:1; background:#333!important; }
+#tab-medinet .mn-table thead th { white-space:nowrap; }
+#tab-medinet .mn-table th span, #tab-medinet .mn-table th strong { display:block; font-size:13px; }
+#tab-medinet .mn-table th span { color:#c2c2c2; font-weight:400; margin-top:3px; }
+#tab-medinet .mn-table th .mn-branch { color:#b5ddd6; }
+#tab-medinet .mn-summary-card { padding:10px 14px; border:1px solid #555; border-radius:6px; background:#303030; }
+#tab-medinet .mn-summary-card strong, #tab-medinet .mn-summary-card span { display:block; }
+#tab-medinet .mn-summary-card strong { font-size:18px; }
+#tab-medinet .mn-summary-card span { color:#c2c2c2; font-size:12px; margin-top:4px; }
+#tab-medinet .mn-warning { color:#fcd88a; border-left:3px solid #e7a940; padding:8px 12px; background:#35312a; }
+#tab-medinet #mn-detail-popup { position:fixed; width:390px; max-width:calc(100vw - 32px); max-height:calc(100vh - 32px); overflow:auto; z-index:1000; padding:16px; border:1px solid #777; border-radius:8px; background:#303030; color:#ededed; box-shadow:0 8px 24px #0006; font-size:13px; line-height:1.55; box-sizing:border-box; }
+#mn-detail-popup[hidden] { display:none!important; }
+#mn-detail-popup h4 { margin:0 32px 6px 0; color:inherit; font-size:14px; }
+#mn-detail-popup p { margin:6px 0 10px; }
+#mn-detail-popup #mn-detail-close { float:right; min-width:28px; padding:1px 6px; margin:0; font-size:20px; }
+#mn-detail-popup .mn-hours { display:flex; flex-wrap:wrap; gap:6px; }
+#mn-detail-popup .mn-hours span { background:#404040; padding:3px 8px; border-radius:4px; }
+#mn-detail-popup .mn-warnings { border-top:1px solid #666; padding-top:12px; margin-top:12px; color:#fcd88a; }
+#mn-detail-popup ul { padding-left:18px; margin:8px 0; }
+#mn-detail-popup li { margin-bottom:8px; }
+#tab-medinet #mn-professional { max-width:300px; padding:4px 8px; font-size:13px; }
+#tab-medinet .mn-empty { padding:30px; text-align:center; }
+
+#tab-medinet .mn-avatar { width:28px; height:28px; border-radius:50%; object-fit:cover; float:left; margin:3px 8px 6px 0; }
