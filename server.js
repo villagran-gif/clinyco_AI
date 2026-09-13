@@ -3,6 +3,8 @@ import { publishedProfessionals, publishedSlots, reservePublishedSlot, UNAVAILAB
 import { bookAgendaweb } from "./Antonia/medinet-api.js";
 import { isEndoscopyBooking, ENDOSCOPY_HANDOFF } from "./melania/booking-policy.js";
 import express from "express";
+import { controlKey, createControlStore, ControlError } from "./conversation/control.js";
+const antoniaControl = createControlStore(getControlPool);
 import OpenAI from "openai";
 import { antoniaAIConfig, createAntoniaClient, CHILEAN_STYLE } from "./analysis/antonia-provider.js";
 import { execFile } from "node:child_process";
@@ -13,6 +15,7 @@ import { Pool } from "pg";
 import { initLogger, wrapOpenAI } from "braintrust";
 import { resolveIdentityAndContext, getNextBestQuestion, applyResolverToState } from "./conversation-resolver.js";
 import {
+  getPool as getControlPool,
   dbEnabled,
   initDb,
   getConversationRecord,
@@ -140,10 +143,6 @@ function botMessageLimitReached(count) {
 }
 const INBOUND_DEDUPE_TTL_MS = 2 * 60 * 1000;
 const OUTBOUND_DEDUPE_WINDOW_MS = 45 * 1000;
-const HUMAN_HANDOFF_PAUSE_MS = Math.max(
-  1,
-  Number(process.env.HUMAN_HANDOFF_PAUSE_MINUTES || 120)
-) * 60 * 1000;
 const MEDINET_AGENDA_WEB_URL = "https://clinyco.medinetapp.com/agendaweb/planned/";
 const MEDINET_RUT = process.env.MEDINET_RUT || "13580388k";
 function firstExistingPath(paths) {
@@ -441,10 +440,16 @@ async function runMedinetAntonia({ query, branchId, professionalId }) {
   }
 }
 
-async function runMedinetAntoniaBooking({slot,patientData}) {
+async function runMedinetAntoniaBooking({slot,patientData,info}) {
   try {
     return await reservePublishedSlot({slot, patientData:{...patientData,rut:formatRutWithDots(patientData.rut || patientData.run || "")},
-      load:loadPublishedAgendaweb,check:checkCupos,post:bookAgendaweb});
+      load:loadPublishedAgendaweb,check:checkCupos,post:async payload => {
+        const receipt = await antoniaControl.send(info.controlKey, info.controlRevision, 'booking', async () => {
+          const value = await bookAgendaweb(payload);
+          return { confirmed: value?.status === 'agendado_correctamente', value };
+        });
+        return receipt.value;
+      }});
   } catch {
     return {success:false,step:"booking_unconfirmed",message:UNAVAILABLE,
       patient_reply:"No pude confirmar la reserva. El equipo debe verificar Medinet antes de reintentar."};
@@ -1310,14 +1315,7 @@ function clearSoftHandoffState(state) {
 function resumeSoftHandoffIfAllowed(state, latestUserText) {
   if (state.system.aiEnabled) return false;
 
-  if (state.system.humanTakenOver) {
-    const pauseUntilMs = Date.parse(state.system.humanPauseUntil || "");
-    // Los bloqueos creados antes de humanPauseUntil no deben quedar eternos.
-    // Si no hay fecha válida, se consideran vencidos al próximo mensaje del paciente.
-    if (Number.isFinite(pauseUntilMs) && Date.now() < pauseUntilMs) return false;
-    clearSoftHandoffState(state);
-    return true;
-  }
+  if (state.system.humanTakenOver) return false;
 
   if (state.system.handoffReason === "max_bot_messages_reached") {
     clearSoftHandoffState(state);
@@ -2417,9 +2415,13 @@ async function sendManagedReply({
   handoffReasonAfterSend = null,
   allowDuplicateText = false
 }) {
+  await antoniaControl.assertActive(info.controlKey, info.controlRevision);
+  const guardedSend = (kind, fn) => antoniaControl.send(info.controlKey, info.controlRevision, kind, fn);
+  const receipts = [];
   const delayMs = calculateHumanDelay(reply);
   await sleep(delayMs);
 
+  await antoniaControl.assertActive(info.controlKey, info.controlRevision);
   const latestState = getConversationState(conversationId);
   if (!latestState.system.aiEnabled) {
     return resJsonSkip("ai_disabled_after_delay");
@@ -2455,18 +2457,20 @@ async function sendManagedReply({
     if (ANTONIA_AUDIO_ENABLED && info?.transport === "chatwoot" && wantsAudioReply(userText)) {
       try {
         const audioBytes = await generateAntoniaAudio(finalReply);
-        await sendChatwootReply({
-          conversationId,
-          content: "🎙️ Te lo envío por audio. La voz de Antonia es generada por IA.",
-        });
-        await sendChatwootAttachment({
+        receipts.push(await guardedSend('audio_intro', () => sendChatwootReply({
+          conversationId, content: "🎙️ Te lo envío por audio. La voz de Antonia es generada por IA.",
+        })));
+        receipts.push(await guardedSend('audio', () => sendChatwootAttachment({
           conversationId,
           bytes: audioBytes,
           filename: `antonia-${Date.now()}.ogg`,
           mimeType: "audio/ogg",
-        });
+        })));
         sentAsAudio = true;
       } catch (audioError) {
+        // Never fall back after an uncertain or partial external send.
+        if (receipts.length || audioError instanceof ControlError) throw audioError;
+        await antoniaControl.assertActive(info.controlKey, info.controlRevision);
         console.error("ANTONIA_AUDIO_SEND_ERROR, fallback text:", audioError.message);
       }
     }
@@ -2479,7 +2483,12 @@ async function sendManagedReply({
           if (!getConversationState(conversationId).system.aiEnabled) break;
           if (!isStillLatestUserMessage(conversationId, messageId)) break;
         }
-        await sendConversationReply(appId, conversationId, bubblesToSend[i], info);
+        try {
+          receipts.push(await guardedSend('text', () => sendConversationReply(appId, conversationId, bubblesToSend[i], info)));
+        } catch (error) {
+          if (error instanceof ControlError && sentBubbles.length) break;
+          throw error;
+        }
         sentBubbles.push(bubblesToSend[i]);
       }
       if (sentBubbles.length) {
@@ -2487,6 +2496,11 @@ async function sendManagedReply({
       }
     }
   } catch (sendError) {
+    if (sendError instanceof ControlError) {
+      await saveConversationEvent({conversationId,info,channelLabel,userText,botReply:null,
+        state:latestState,resolverDecision:{nextAction:'blocked',reason:sendError.message,receipts}});
+      return resJsonSkip(sendError.message);
+    }
     console.error("SEND_REPLY_ERROR:", sendError.message);
     await saveConversationEvent({
       conversationId, info, channelLabel, userText,
@@ -2496,12 +2510,19 @@ async function sendManagedReply({
     });
     throw sendError;
   }
+  if (!sentAsAudio && !sentBubbles.length) return resJsonSkip('human_control_before_send');
   addToHistory(conversationId, "assistant", deliveredReply);
 
   latestState.system.botMessagesSent += 1;
   rememberOutboundReply(latestState, deliveredReply, kind);
   // Public reply has already been delivered. Keep the private agent card secondary.
-  await maybeSyncPrivateLeadNote({ conversationId, channel: channelLabel, state: latestState });
+  // A human takeover also stops pending Antonia card updates.
+  try {
+    await antoniaControl.assertActive(info.controlKey, info.controlRevision);
+    await maybeSyncPrivateLeadNote({ conversationId, channel: channelLabel, state: latestState });
+  } catch (error) {
+    if (!(error instanceof ControlError)) console.warn('ANTONIA_CARD_CONTROL_UNAVAILABLE');
+  }
   let shouldSaveSummary = false;
 
   if (disableAiAfterSend) {
@@ -2519,7 +2540,7 @@ async function sendManagedReply({
     channel: channelLabel,
     sourceType: "api:conversations",
     content: deliveredReply,
-    rawJson: { kind, resolverDecision, sentAsAudio, bubbles: sentAsAudio ? null : sentBubbles },
+    rawJson: { kind, resolverDecision, sentAsAudio, receipts, bubbles: sentAsAudio ? null : sentBubbles },
     authorDisplayName: "Antonia"
   });
   await saveConversationEvent({
@@ -3772,10 +3793,38 @@ const handleInboundWebhook = async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing conversationId" });
     }
 
+    if (String(appId) !== String(process.env.CHATWOOT_ACCOUNT_ID || '162472')) {
+      return res.status(403).json({ok:false,error:'account_mismatch'});
+    }
+    if (authorType === 'business' && isRealHumanBusinessTakeover(info) && !messageId)
+      return res.status(400).json({ok:false,error:'human_message_id_required'});
+    info.controlKey = controlKey(appId, conversationId);
+    const control = authorType === 'business' && isRealHumanBusinessTakeover(info)
+      ? await antoniaControl.change(info.controlKey, {
+          mode:'human_active', actor:`chatwoot:${info.rawSource?.id || 'unidentified'}`,
+          reason:'human_business_message_detected', eventId:`human-message:${messageId}`,
+          humanEvent:true,
+        })
+      : await antoniaControl.read(info.controlKey);
+    info.controlRevision = control.revision;
+    if (authorType === 'business' && isRealHumanBusinessTakeover(info) && control.mode !== 'human_active') {
+      return res.json({ok:true,skipped:'duplicate_human_event_after_resume'});
+    }
     await hydrateConversationCache(conversationId);
     const state = getConversationState(conversationId);
     const channelLabel = info.sourceType || info.entryPoint || null;
     updateIdentityChannelContext(state, info, channelLabel);
+    // Save paused patient messages without running the questionnaire or model hooks.
+    if (authorType === 'user' && control.mode === 'human_active') {
+      state.system.aiEnabled = false;
+      state.system.humanTakenOver = true;
+      state.system.humanPauseUntil = null;
+      await persistConversationSnapshot(conversationId, state, channelLabel);
+      await insertConversationMessage({conversationId,role:'user',messageId,channel:channelLabel,
+        sourceType,content:userText,rawJson:{humanControl:true}});
+      return res.json({ok:true,skipped:'human_control'});
+    }
+
 
     if (authorType === "business" && isRealHumanBusinessTakeover(info)) {
       const humanBusinessText = String(info?.businessText || "").trim();
@@ -3800,13 +3849,13 @@ const handleInboundWebhook = async (req, res) => {
       }
       state.system.aiEnabled = false;
       state.system.humanTakenOver = true;
-      state.system.humanPauseUntil = new Date(Date.now() + HUMAN_HANDOFF_PAUSE_MS).toISOString();
+      state.system.humanPauseUntil = null;
       state.system.handoffReason = "human_business_message_detected";
       console.log(
         "AI paused due to human business message:",
         conversationId,
-        "until",
-        state.system.humanPauseUntil
+        "persistent revision",
+        control.revision
       );
       console.log("Business sourceType:", sourceType);
 
@@ -3869,6 +3918,29 @@ const handleInboundWebhook = async (req, res) => {
     // Re-hydrate state after acquiring lock — a prior message may have updated it
     await hydrateConversationCache(conversationId);
     Object.assign(state, getConversationState(conversationId));
+    await antoniaControl.assertActive(info.controlKey, info.controlRevision);
+    // Queued turns from before explicit reactivation are history, never work to replay.
+    const rawCreatedAt = info.rawMessage?.created_at;
+    const occurredAt = typeof rawCreatedAt === 'number'
+      ? rawCreatedAt * 1000 : Date.parse(rawCreatedAt || '');
+    if (control.resumed_at && Number.isFinite(occurredAt) && occurredAt <= Date.parse(control.resumed_at)) {
+      await insertConversationMessage({conversationId,role:'user',messageId,channel:channelLabel,
+        sourceType,content:userText,rawJson:{beforeExplicitResume:true}});
+      return res.json({ok:true,skipped:'before_explicit_resume'});
+    }
+    if (control.resumed_at && state.system.controlRevision !== control.revision) {
+      const latestRecord = await getConversationRecord(conversationId);
+      if (latestRecord?.state_json) Object.assign(state, mergeConversationState(state, latestRecord.state_json));
+      const recent = await getRecentCompleteConversationHistory(conversationId, MAX_HISTORY_MESSAGES);
+      conversationHistory.set(conversationId, recent.map(row => ({role:row.role,content:row.content})));
+      clearSoftHandoffState(state);
+      state.system.controlRevision = control.revision;
+      state.system.resumeContextPending = true;
+      // Keep collected facts; discard only the stale question/booking interaction.
+      if (state.preevaluation) state.preevaluation.awaiting = null;
+      state.melania = {...state.melania,active:false};
+    }
+
 
     if (isRecentOutboundEcho(state, userText)) {
       await saveConversationEvent({
@@ -3964,6 +4036,23 @@ const handleInboundWebhook = async (req, res) => {
     state.system.lastInboundMessageId = messageId || state.system.lastInboundMessageId || null;
     state.system.lastQuestionKey = null;
 
+    if (state.system.resumeContextPending) {
+      const recent = await getRecentCompleteConversationHistory(conversationId, MAX_HISTORY_MESSAGES);
+      conversationHistory.set(conversationId, recent.map(row => ({role:row.role,content:row.content})));
+      await antoniaControl.assertActive(info.controlKey, info.controlRevision);
+      const reply = guardOpenAiSchedulingClaims(await askAntoniaAI({
+        systemPrompt: buildOpenAISystemPrompt() + "\nEl equipo reactivó explícitamente a Antonia. Responde a la solicitud actual usando el historial reciente. No retomes preguntas acumuladas del cuestionario ni afirmes realizar reservas o gestiones. Los hechos del historial reciente prevalecen sobre un resumen antiguo; si hay conflicto pide una aclaración concreta.",
+        stateSummary: buildStateSummary(state), history:getHistory(conversationId),
+        imageUrls:info.imageUrls || [], referralContext:info.referralContext || null,
+      }),state).reply;
+      const result = await sendManagedReply({appId,conversationId,messageId,userText,reply,
+        kind:'explicit_resume_context',state,info,channelLabel});
+      if (!result.skipped) {
+        state.system.resumeContextPending = false;
+        await persistConversationSnapshot(conversationId,state,channelLabel);
+      }
+      return res.json(result);
+    }
     updateDraftsFromText(state, userText, info);
 
     const afterHoursContext = registerAfterHoursInbound(state);
@@ -4235,7 +4324,7 @@ const handleInboundWebhook = async (req, res) => {
         };
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
-        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
+        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData, info });
 
         const reply = bookingResult?.success
           ? bookingResult.patient_reply || "Tu hora fue agendada correctamente."
@@ -4698,7 +4787,7 @@ const handleInboundWebhook = async (req, res) => {
         state.booking.missingFields = null;
         await persistConversationSnapshot(conversationId, state, channelLabel);
 
-        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData });
+        const bookingResult = await runMedinetAntoniaBooking({ slot: slotToBook, patientData, info });
 
         const bookingFailureMessage = "No fue posible concretar tu agendamiento. Disculpas mil... 😔\n\nPuedes encontrar el mismo calendario en https://clinyco.medinetapp.com/agendaweb/planned/\n\nGracias\n\nAntonia, soy una IA mejorando cada día.";
         let reply;
@@ -5533,6 +5622,7 @@ const handleInboundWebhook = async (req, res) => {
     const stateSummary = [buildStateSummary(state), customerContextBlock].filter(Boolean).join("\n\n");
     const systemPrompt = buildOpenAISystemPrompt();
 
+    await antoniaControl.assertActive(info.controlKey, info.controlRevision);
     let reply = await askAntoniaAI({
       systemPrompt,
       stateSummary,
@@ -5580,6 +5670,8 @@ const handleInboundWebhook = async (req, res) => {
       convLock.release();
     }
   } catch (error) {
+    if (error instanceof ControlError && error.status === 409)
+      return res.json({ok:true,skipped:error.message});
     console.error("ERROR /chatwoot/inbound:", error.message);
     if (reviewErrorCode(error) === 'ai_quota_exhausted') {
       return res.status(503).json({ ok: false, error: 'ai_quota_exhausted' });
