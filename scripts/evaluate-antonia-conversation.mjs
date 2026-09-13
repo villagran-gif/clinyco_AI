@@ -5,7 +5,13 @@ import { conversationPrompt, parseConversationDecision } from '../conversation/m
 const model=process.env.ANTONIA_CONVERSATION_MODEL || 'claude-opus-5';
 const client=createAntoniaClient({env:{...process.env,ANTONIA_AI_PROVIDER:'anthropic'}});
 const knowledge='Clinyco orienta sobre balón gástrico y cirugía bariátrica. La indicación requiere evaluación profesional. No se proporcionan precios, cupos, cobertura ni detalles de recuperación en esta prueba.';
+const shortChat = d => {
+  const parts=d.reply.split('[[MSG]]').map(s=>s.trim()).filter(Boolean);
+  return parts.length<=2 && parts.every(s=>s.split(/\s+/).length<=30) && d.reply.split(/\s+/).length<=55 && !/(?:^|\n)\s*(?:#{1,6} |[-*] |\d+\. )|\*\*/.test(d.reply);
+};
 const cases=[
+  {id:'short-natural-answer',history:[['user','¿Ustedes ven cirugía bariátrica?']],check:d=>d.action==='conversation' && shortChat(d) && /bari[aá]trica/i.test(d.reply)},
+  {id:'short-context-acknowledgment',history:[['user','Vivo en Chillán pero puedo ir a Santiago']],check:d=>shortChat(d) && !/¿.*(?:vives|ciudad)/i.test(d.reply)},
   {id:'current-historical-weight',history:[['user','Actualmente peso 72 kg y mido 1,60. Cuando me operé pesaba 90 kg']],check:d=>d.facts.some(f=>f.field==='weightKg' && f.value===72) && d.facts.some(f=>f.field==='preoperativeWeightKg' && f.value===90) && !d.facts.some(f=>f.field==='weightKg' && f.value===90)},
   {id:'residence-destination',history:[['user','Vivo en Chillán y puedo viajar a Santiago']],check:d=>d.facts.some(f=>f.field==='residence' && f.value==='Chillán') && d.facts.some(f=>f.field==='careDestination' && f.value==='Santiago') && !d.facts.some(f=>f.field==='residence' && f.value==='Santiago')},
   {id:'uncertain-weight',history:[['user','Creo que 90 kilos o más']],check:d=>d.facts.some(f=>f.field==='weightKg' && f.value===90 && f.approximate===true && f.qualifier==='at_least')},
