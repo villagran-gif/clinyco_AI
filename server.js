@@ -2961,6 +2961,15 @@ function splitAntoniaReplyBubbles(text) {
     }
   }
 
+  // Formatting only: split a question followed by an explanation without another
+  // model call. Preserve explicit bubble boundaries and URL query strings.
+  if (parts.length === 1) {
+    const questionThenExplanation = parts[0].match(/^([^?\n]*\?)\s+([A-ZÁÉÍÓÚÑ][\s\S]*)$/u);
+    if (questionThenExplanation && !/https?:\/\//i.test(questionThenExplanation[1])) {
+      parts = questionThenExplanation.slice(1).map(cleanHumanBubble).filter(Boolean);
+    }
+  }
+
   const isAfterHoursSequence = /Carolin/i.test(clean) && /\+56973763009/.test(clean);
   if (parts.length > 2 && !isAfterHoursSequence) {
     parts = [parts[0], cleanHumanBubble(parts.slice(1).join("\n"))];
