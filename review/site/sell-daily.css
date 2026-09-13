@@ -1,17 +1,17 @@
 /* Shared SELL palette and daily Medinet workspaces. */
-:root { --sell-bg:#080b10; --sell-panel:#141a22; --sell-panel-alt:#1b2430; --sell-border:#354151; --sell-text:#e7edf5; --sell-muted:#b0bdcd; --sell-accent:#63d5ff; }
+:root { --sell-bg:#0b0b0b; --sell-panel:#171717; --sell-panel-alt:#202020; --sell-border:#353535; --sell-text:#e5e5e5; --sell-muted:#a3a3a3; --sell-accent:#86efac; }
 html:not(.review-locked) body { background:var(--sell-bg); color:var(--sell-text); }
-html:not(.review-locked) body>header { background:#111720; color:var(--sell-text); border-bottom:1px solid var(--sell-border); }
+html:not(.review-locked) body>header { background:#111111; color:var(--sell-text); border-bottom:1px solid var(--sell-border); }
 html:not(.review-locked) body>header h1,html:not(.review-locked) body>header p { color:var(--sell-text); }
-.tabs.primary-nav { background:#42464c; border-right:1px solid #626971; }
-.tabs.primary-nav button { color:#eef2f6; font-size:12px; line-height:1.35; white-space:normal; }
-.tabs.primary-nav button.active { background:#252c35; color:#72ddff; border-left:3px solid #72ddff; }
-.tabs.primary-nav button:hover { background:#535b66; color:#fff; }
-#tab-crm,.daily-workspace { color:var(--sell-text); --pico-color:var(--sell-text); --pico-background-color:var(--sell-bg); --pico-muted-color:var(--sell-muted); --pico-form-element-background-color:var(--sell-panel); --pico-form-element-color:var(--sell-text); --pico-form-element-border-color:var(--sell-border); --pico-primary:var(--sell-accent); --pico-primary-background:#12618a; --pico-primary-border:#237fad; }
+.tabs.primary-nav { background:#262626; border-right:1px solid #404040; }
+.tabs.primary-nav button { color:#e5e5e5; font-size:12px; line-height:1.35; white-space:normal; }
+.tabs.primary-nav button.active { background:#333333; color:#86efac; border-left:3px solid #86efac; }
+.tabs.primary-nav button:hover { background:#333333; color:#fff; }
+#tab-crm,.daily-workspace { color:var(--sell-text); --pico-color:var(--sell-text); --pico-background-color:var(--sell-bg); --pico-muted-color:var(--sell-muted); --pico-form-element-background-color:var(--sell-panel); --pico-form-element-color:var(--sell-text); --pico-form-element-border-color:var(--sell-border); --pico-primary:var(--sell-accent); --pico-primary-background:#24533b; --pico-primary-border:#3c7655; }
 #tab-crm :is(h2,h3,h4,label,summary,dt,strong),.daily-workspace :is(h2,h3,h4,label,summary,th) { color:var(--sell-text); }
 #tab-crm :is(input,select,textarea),.daily-workspace :is(input,select,textarea) { background:var(--sell-panel); color:var(--sell-text); border:1px solid var(--sell-border); color-scheme:dark; }
-#tab-crm :is(button,.crm-chip),.daily-workspace button { background:#26364a; color:#dff5ff; border:1px solid #46627e; }
-#tab-crm button:hover,.daily-workspace button:hover { background:#35516c; }
+#tab-crm :is(button,.crm-chip),.daily-workspace button { background:#262626; color:#e5e5e5; border:1px solid #404040; }
+#tab-crm button:hover,.daily-workspace button:hover { background:#333333; }
 #tab-crm :is(.crm-toolbar,.crm-column,.crm-card,.crm-task-row,#crm-column-options,dialog,.record-card,.record-event,.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer,.record-note-box) { background:var(--sell-panel); color:var(--sell-text); border-color:var(--sell-border); }
 #tab-crm .crm-toolbar:first-child { background:var(--sell-panel); }
 #tab-crm :is(.record-value,.record-label,.record-meta,.crm-muted,.muted,dd,p,small) { color:var(--sell-muted); }
@@ -19,7 +19,7 @@ html:not(.review-locked) body>header h1,html:not(.review-locked) body>header p {
 #tab-crm :is(table,tbody,td) { background:var(--sell-bg); color:var(--sell-text); border-color:var(--sell-border); }
 #tab-crm th { background:var(--sell-panel-alt); color:var(--sell-text); border-color:var(--sell-border); }
 #crm-deals-table :is(td,th):first-child { background:var(--sell-panel); }
-#crm-deals-table tr:hover td,#crm-deals-table tr:focus-within td { background:#1d3040; }
+#crm-deals-table tr:hover td,#crm-deals-table tr:focus-within td { background:#242424; }
 #tab-crm dialog { --pico-background-color:var(--sell-panel); }
 #crm-op-form :is(.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer) { background:var(--sell-panel); color:var(--sell-text); }
 #crm-op-form .record-value { color:var(--sell-text); }
@@ -40,11 +40,76 @@ html:not(.review-locked) body>header h1,html:not(.review-locked) body>header p {
 .daily-table-wrap table { width:100%; margin:0; font-size:12px; white-space:nowrap; background:var(--sell-bg); }
 .daily-table-wrap :is(th,td) { padding:11px 12px; border-bottom:1px solid var(--sell-border); background:transparent; color:var(--sell-text); }
 .daily-table-wrap th { background:var(--sell-panel-alt); position:sticky; top:0; }
-.daily-table-wrap tr:hover td { background:#182432; }
-.daily-badge { display:inline-block; border-radius:4px; padding:3px 7px; background:#25303d; color:var(--tone); }
+.daily-table-wrap tr:hover td { background:#242424; }
+.daily-badge { display:inline-block; border-radius:4px; padding:3px 7px; background:#292929; color:var(--tone); }
 .daily-links a { margin-right:10px; }
 .daily-workspace details { background:var(--sell-panel); border:1px solid var(--sell-border); border-radius:6px; padding:12px; margin:16px 0; }
 .daily-workspace .daily-notes { padding-left:20px; }
 @media(max-width:760px) { .daily-workspace { padding:10px; }.daily-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }.daily-toolbar label { min-width:150px; }.tabs.primary-nav button { font-size:10px; padding:10px 4px; } }
 
 .daily-message { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; color:var(--sell-text); background:var(--sell-panel); padding:12px; }
+
+/* Charcoal application theme, inspired by ShadcnStore's dark dashboard.
+   Explicit surface rules also cover legacy inline styling and sticky headers. */
+html[data-theme="dark"] {
+  color-scheme:dark;
+  --pico-background-color:#0b0b0b; --pico-color:#e5e5e5; --pico-muted-color:#a3a3a3;
+  --pico-h1-color:#e5e5e5; --pico-h2-color:#e5e5e5; --pico-h3-color:#e5e5e5;
+  --pico-h4-color:#d4d4d4; --pico-h5-color:#d4d4d4; --pico-h6-color:#d4d4d4;
+  --pico-card-background-color:#171717; --pico-card-sectioning-background-color:#202020;
+  --pico-form-element-background-color:#202020; --pico-form-element-color:#e5e5e5;
+  --pico-form-element-border-color:#404040; --pico-form-element-placeholder-color:#a3a3a3;
+  --pico-dropdown-background-color:#202020; --pico-dropdown-color:#e5e5e5;
+  --pico-dropdown-border-color:#404040; --pico-table-border-color:#353535;
+  --pico-primary:#86efac; --pico-primary-background:#24533b; --pico-primary-border:#3c7655;
+  --pico-secondary-background:#262626; --pico-secondary-border:#404040;
+  --pico-secondary-inverse:#e5e5e5;
+  scrollbar-color:#525252 #171717;
+}
+html body { background:#0b0b0b!important; color:#e5e5e5; }
+.header-bar { background:#111111!important; color:#e5e5e5!important; border-color:#353535; }
+.header-bar :is(h1,small),#review-user-email,#sync-status { color:#d4d4d4!important; }
+body :is(.chart-box,.kpi-card,.crm-card,.crm-column,.record-card,.record-event,.record-note-box) { background:#171717!important; border-color:#353535!important; color:#d4d4d4!important; box-shadow:none; }
+body :is(.kpi-card .value,.chart-box h3) { color:#e5e5e5; }
+body :is(.kpi-card .label,.loading,.empty-state) { color:#a3a3a3; }
+body :is(dialog,dialog>article,dialog>article>header,dialog>article>footer) { background:#171717!important; color:#e5e5e5!important; border-color:#353535!important; }
+body dialog::backdrop { background:#000b; }
+#review-login { background:#171717!important; color:#d4d4d4!important; border:1px solid #353535; border-radius:12px; box-shadow:0 18px 65px #0005; padding:28px; }
+#review-login :is(h2,p) { color:#d4d4d4!important; }
+#review-login h2 { font-size:18px; }
+body :is(button,[role="button"],input[type="submit"]) { background-color:#262626!important; color:#e5e5e5!important; border-color:#404040!important; border-radius:6px; }
+body :is(button,[role="button"]):hover { background-color:#333333!important; }
+body :is(button,[role="button"]):focus-visible { outline:2px solid #86efac; outline-offset:2px; }
+body :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea,option) { background-color:#202020!important; color:#e5e5e5!important; border-color:#404040!important; color-scheme:dark; }
+body input::placeholder,body textarea::placeholder { color:#a3a3a3; opacity:1; }
+body :is(input[type="checkbox"],input[type="radio"]) { accent-color:#4ade80; }
+body :is(table,tbody,td) { background:#111111!important; color:#d4d4d4!important; border-color:#353535!important; }
+body thead th,body #crm-deals-table th:first-child { background:#202020!important; color:#d4d4d4!important; border-color:#353535!important; }
+body #crm-deals-table td:first-child { background:#171717!important; }
+body tbody tr:hover td,body #crm-deals-table tbody tr:focus-within td { background:#242424!important; }
+body #crm-deals-table th>button,body .crm-deal-name,body .crm-inline-edit { background:transparent!important; color:#e5e5e5!important; border:0; }
+#crm-workspace>.crm-toolbar:first-child,#crm-column-options,#crm-deal-fields details { background:#171717!important; border-color:#353535!important; border-radius:8px; }
+#crm-op-form :is(.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer) { background:#171717!important; border-color:#353535!important; }
+#crm-op-form :is(.record-value,h2,h3,h4,label,summary,dt,dd),#tab-crm legend { color:#d4d4d4!important; }
+#crm-op-form :is(.record-meta,.record-label),#tab-crm .crm-muted { color:#a3a3a3!important; }
+body .tabs.primary-nav { background:#262626!important; border-right:1px solid #353535; box-shadow:none; }
+body .tabs.primary-nav button { background:transparent!important; border-radius:6px; }
+body .tabs.primary-nav button.active,body .crm-view-controls [aria-pressed="true"] { background:#333333!important; color:#86efac!important; border-color:#86efac!important; }
+body .tabs.primary-nav button:hover { background:#333333!important; }
+.crm-table-wrap { border:1px solid #353535; border-radius:8px; }
+.crm-load-track { background:#292929; }
+.crm-load-progress[data-state="loading"] .crm-load-fill { background-image:linear-gradient(110deg,transparent 25%,#a3a3a344 50%,transparent 75%); }
+.daily-metric { border-radius:10px; }
+.daily-metric strong { font-size:22px; }
+.daily-table-wrap { border-radius:9px; }
+body :is(.crm-card,.record-card,.chart-box,.kpi-card) { border-radius:8px; }
+body a { color:#86efac; }
+body .crm-overdue { color:#fca5a5; }
+body footer { background:#111111; color:#a3a3a3; border-color:#353535; }
+
+/* Legacy inline light panels inherit the same charcoal surface. */
+body :is([style*="background:#dbeafe" i],[style*="background: #dbeafe" i],[style*="background-color:#dbeafe" i],[style*="background-color: #dbeafe" i],[style*="background:#dcfce7" i],[style*="background: #dcfce7" i],[style*="background-color:#dcfce7" i],[style*="background-color: #dcfce7" i],[style*="background:#e2e8f0" i],[style*="background: #e2e8f0" i],[style*="background-color:#e2e8f0" i],[style*="background-color: #e2e8f0" i],[style*="background:#ecfdf5" i],[style*="background: #ecfdf5" i],[style*="background-color:#ecfdf5" i],[style*="background-color: #ecfdf5" i],[style*="background:#eff6ff" i],[style*="background: #eff6ff" i],[style*="background-color:#eff6ff" i],[style*="background-color: #eff6ff" i],[style*="background:#f0f4ff" i],[style*="background: #f0f4ff" i],[style*="background-color:#f0f4ff" i],[style*="background-color: #f0f4ff" i],[style*="background:#f0fdf4" i],[style*="background: #f0fdf4" i],[style*="background-color:#f0fdf4" i],[style*="background-color: #f0fdf4" i],[style*="background:#f1f5f9" i],[style*="background: #f1f5f9" i],[style*="background-color:#f1f5f9" i],[style*="background-color: #f1f5f9" i],[style*="background:#f3e8ff" i],[style*="background: #f3e8ff" i],[style*="background-color:#f3e8ff" i],[style*="background-color: #f3e8ff" i],[style*="background:#f3f4f6" i],[style*="background: #f3f4f6" i],[style*="background-color:#f3f4f6" i],[style*="background-color: #f3f4f6" i],[style*="background:#f8fafc" i],[style*="background: #f8fafc" i],[style*="background-color:#f8fafc" i],[style*="background-color: #f8fafc" i],[style*="background:#faf5ff" i],[style*="background: #faf5ff" i],[style*="background-color:#faf5ff" i],[style*="background-color: #faf5ff" i],[style*="background:#fecaca" i],[style*="background: #fecaca" i],[style*="background-color:#fecaca" i],[style*="background-color: #fecaca" i],[style*="background:#fed7aa" i],[style*="background: #fed7aa" i],[style*="background-color:#fed7aa" i],[style*="background-color: #fed7aa" i],[style*="background:#fee2e2" i],[style*="background: #fee2e2" i],[style*="background-color:#fee2e2" i],[style*="background-color: #fee2e2" i],[style*="background:#fef2f2" i],[style*="background: #fef2f2" i],[style*="background-color:#fef2f2" i],[style*="background-color: #fef2f2" i],[style*="background:#fef3c7" i],[style*="background: #fef3c7" i],[style*="background-color:#fef3c7" i],[style*="background-color: #fef3c7" i],[style*="background:#fef9c3" i],[style*="background: #fef9c3" i],[style*="background-color:#fef9c3" i],[style*="background-color: #fef9c3" i],[style*="background:#fff" i],[style*="background: #fff" i],[style*="background-color:#fff" i],[style*="background-color: #fff" i],[style*="background:#fffbeb" i],[style*="background: #fffbeb" i],[style*="background-color:#fffbeb" i],[style*="background-color: #fffbeb" i]) { background:#202020!important; color:#d4d4d4!important; border-color:#404040!important; }
+.source-tag { background:#292929!important; }
+.source-waha { color:#93c5fd; }
+.source-zendesk { color:#fcd34d; }
+body .btn-sm.active { background:#333333!important; color:#86efac!important; }
