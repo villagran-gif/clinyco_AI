@@ -1,17 +1,17 @@
 /* Shared SELL palette and daily Medinet workspaces. */
-:root { --sell-bg:#0b0b0b; --sell-panel:#171717; --sell-panel-alt:#202020; --sell-border:#353535; --sell-text:#e5e5e5; --sell-muted:#a3a3a3; --sell-accent:#86efac; }
+:root { --sell-bg:#090909; --sell-panel:#101010; --sell-panel-alt:#181818; --sell-border:#272727; --sell-text:#e5e5e5; --sell-muted:#a3a3a3; --sell-accent:#d4d4d4; }
 html:not(.review-locked) body { background:var(--sell-bg); color:var(--sell-text); }
 html:not(.review-locked) body>header { background:#111111; color:var(--sell-text); border-bottom:1px solid var(--sell-border); }
 html:not(.review-locked) body>header h1,html:not(.review-locked) body>header p { color:var(--sell-text); }
-.tabs.primary-nav { background:#262626; border-right:1px solid #404040; }
+.tabs.primary-nav { background:#191919; border-right:1px solid #303030; }
 .tabs.primary-nav button { color:#e5e5e5; font-size:12px; line-height:1.35; white-space:normal; }
-.tabs.primary-nav button.active { background:#333333; color:#86efac; border-left:3px solid #86efac; }
-.tabs.primary-nav button:hover { background:#333333; color:#fff; }
+.tabs.primary-nav button.active { background:#262626; color:#d4d4d4; border-left:3px solid #d4d4d4; }
+.tabs.primary-nav button:hover { background:#262626; color:#fff; }
 #tab-crm,.daily-workspace { color:var(--sell-text); --pico-color:var(--sell-text); --pico-background-color:var(--sell-bg); --pico-muted-color:var(--sell-muted); --pico-form-element-background-color:var(--sell-panel); --pico-form-element-color:var(--sell-text); --pico-form-element-border-color:var(--sell-border); --pico-primary:var(--sell-accent); --pico-primary-background:#24533b; --pico-primary-border:#3c7655; }
 #tab-crm :is(h2,h3,h4,label,summary,dt,strong),.daily-workspace :is(h2,h3,h4,label,summary,th) { color:var(--sell-text); }
 #tab-crm :is(input,select,textarea),.daily-workspace :is(input,select,textarea) { background:var(--sell-panel); color:var(--sell-text); border:1px solid var(--sell-border); color-scheme:dark; }
-#tab-crm :is(button,.crm-chip),.daily-workspace button { background:#262626; color:#e5e5e5; border:1px solid #404040; }
-#tab-crm button:hover,.daily-workspace button:hover { background:#333333; }
+#tab-crm :is(button,.crm-chip),.daily-workspace button { background:#191919; color:#e5e5e5; border:1px solid #303030; }
+#tab-crm button:hover,.daily-workspace button:hover { background:#262626; }
 #tab-crm :is(.crm-toolbar,.crm-column,.crm-card,.crm-task-row,#crm-column-options,dialog,.record-card,.record-event,.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer,.record-note-box) { background:var(--sell-panel); color:var(--sell-text); border-color:var(--sell-border); }
 #tab-crm .crm-toolbar:first-child { background:var(--sell-panel); }
 #tab-crm :is(.record-value,.record-label,.record-meta,.crm-muted,.muted,dd,p,small) { color:var(--sell-muted); }
@@ -49,67 +49,130 @@ html:not(.review-locked) body>header h1,html:not(.review-locked) body>header p {
 
 .daily-message { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; color:var(--sell-text); background:var(--sell-panel); padding:12px; }
 
-/* Charcoal application theme, inspired by ShadcnStore's dark dashboard.
+/* Charcoal application theme, based on the supplied Shadcn UI Kit sales-dashboard reference.
    Explicit surface rules also cover legacy inline styling and sticky headers. */
 html[data-theme="dark"] {
   color-scheme:dark;
-  --pico-background-color:#0b0b0b; --pico-color:#e5e5e5; --pico-muted-color:#a3a3a3;
+  --pico-background-color:#090909; --pico-color:#e5e5e5; --pico-muted-color:#a3a3a3;
   --pico-h1-color:#e5e5e5; --pico-h2-color:#e5e5e5; --pico-h3-color:#e5e5e5;
   --pico-h4-color:#d4d4d4; --pico-h5-color:#d4d4d4; --pico-h6-color:#d4d4d4;
-  --pico-card-background-color:#171717; --pico-card-sectioning-background-color:#202020;
-  --pico-form-element-background-color:#202020; --pico-form-element-color:#e5e5e5;
-  --pico-form-element-border-color:#404040; --pico-form-element-placeholder-color:#a3a3a3;
-  --pico-dropdown-background-color:#202020; --pico-dropdown-color:#e5e5e5;
-  --pico-dropdown-border-color:#404040; --pico-table-border-color:#353535;
-  --pico-primary:#86efac; --pico-primary-background:#24533b; --pico-primary-border:#3c7655;
-  --pico-secondary-background:#262626; --pico-secondary-border:#404040;
+  --pico-card-background-color:#101010; --pico-card-sectioning-background-color:#181818;
+  --pico-form-element-background-color:#181818; --pico-form-element-color:#e5e5e5;
+  --pico-form-element-border-color:#303030; --pico-form-element-placeholder-color:#a3a3a3;
+  --pico-dropdown-background-color:#181818; --pico-dropdown-color:#e5e5e5;
+  --pico-dropdown-border-color:#303030; --pico-table-border-color:#272727;
+  --pico-primary:#d4d4d4; --pico-primary-background:#24533b; --pico-primary-border:#3c7655;
+  --pico-secondary-background:#191919; --pico-secondary-border:#303030;
   --pico-secondary-inverse:#e5e5e5;
-  scrollbar-color:#525252 #171717;
+  scrollbar-color:#525252 #101010;
 }
-html body { background:#0b0b0b!important; color:#e5e5e5; }
-.header-bar { background:#111111!important; color:#e5e5e5!important; border-color:#353535; }
+html body { background:#090909!important; color:#e5e5e5; }
+.header-bar { background:#111111!important; color:#e5e5e5!important; border-color:#272727; }
 .header-bar :is(h1,small),#review-user-email,#sync-status { color:#d4d4d4!important; }
-body :is(.chart-box,.kpi-card,.crm-card,.crm-column,.record-card,.record-event,.record-note-box) { background:#171717!important; border-color:#353535!important; color:#d4d4d4!important; box-shadow:none; }
+body :is(.chart-box,.kpi-card,.crm-card,.crm-column,.record-card,.record-event,.record-note-box) { background:#101010!important; border-color:#272727!important; color:#d4d4d4!important; box-shadow:none; }
 body :is(.kpi-card .value,.chart-box h3) { color:#e5e5e5; }
 body :is(.kpi-card .label,.loading,.empty-state) { color:#a3a3a3; }
-body :is(dialog,dialog>article,dialog>article>header,dialog>article>footer) { background:#171717!important; color:#e5e5e5!important; border-color:#353535!important; }
+body :is(dialog,dialog>article,dialog>article>header,dialog>article>footer) { background:#101010!important; color:#e5e5e5!important; border-color:#272727!important; }
 body dialog::backdrop { background:#000b; }
-#review-login { background:#171717!important; color:#d4d4d4!important; border:1px solid #353535; border-radius:12px; box-shadow:0 18px 65px #0005; padding:28px; }
+#review-login { background:#101010!important; color:#d4d4d4!important; border:1px solid #272727; border-radius:12px; box-shadow:0 18px 65px #0005; padding:28px; }
 #review-login :is(h2,p) { color:#d4d4d4!important; }
 #review-login h2 { font-size:18px; }
-body :is(button,[role="button"],input[type="submit"]) { background-color:#262626!important; color:#e5e5e5!important; border-color:#404040!important; border-radius:6px; }
-body :is(button,[role="button"]):hover { background-color:#333333!important; }
-body :is(button,[role="button"]):focus-visible { outline:2px solid #86efac; outline-offset:2px; }
-body :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea,option) { background-color:#202020!important; color:#e5e5e5!important; border-color:#404040!important; color-scheme:dark; }
+body :is(button,[role="button"],input[type="submit"]) { background-color:#191919!important; color:#e5e5e5!important; border-color:#303030!important; border-radius:6px; }
+body :is(button,[role="button"]):hover { background-color:#262626!important; }
+body :is(button,[role="button"]):focus-visible { outline:2px solid #d4d4d4; outline-offset:2px; }
+body :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea,option) { background-color:#181818!important; color:#e5e5e5!important; border-color:#303030!important; color-scheme:dark; }
 body input::placeholder,body textarea::placeholder { color:#a3a3a3; opacity:1; }
 body :is(input[type="checkbox"],input[type="radio"]) { accent-color:#4ade80; }
-body :is(table,tbody,td) { background:#111111!important; color:#d4d4d4!important; border-color:#353535!important; }
-body thead th,body #crm-deals-table th:first-child { background:#202020!important; color:#d4d4d4!important; border-color:#353535!important; }
-body #crm-deals-table td:first-child { background:#171717!important; }
+body :is(table,tbody,td) { background:#111111!important; color:#d4d4d4!important; border-color:#272727!important; }
+body thead th,body #crm-deals-table th:first-child { background:#181818!important; color:#d4d4d4!important; border-color:#272727!important; }
+body #crm-deals-table td:first-child { background:#101010!important; }
 body tbody tr:hover td,body #crm-deals-table tbody tr:focus-within td { background:#242424!important; }
 body #crm-deals-table th>button,body .crm-deal-name,body .crm-inline-edit { background:transparent!important; color:#e5e5e5!important; border:0; }
-#crm-workspace>.crm-toolbar:first-child,#crm-column-options,#crm-deal-fields details { background:#171717!important; border-color:#353535!important; border-radius:8px; }
-#crm-op-form :is(.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer) { background:#171717!important; border-color:#353535!important; }
+#crm-workspace>.crm-toolbar:first-child,#crm-column-options,#crm-deal-fields details { background:#101010!important; border-color:#272727!important; border-radius:8px; }
+#crm-op-form :is(.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer) { background:#101010!important; border-color:#272727!important; }
 #crm-op-form :is(.record-value,h2,h3,h4,label,summary,dt,dd),#tab-crm legend { color:#d4d4d4!important; }
 #crm-op-form :is(.record-meta,.record-label),#tab-crm .crm-muted { color:#a3a3a3!important; }
-body .tabs.primary-nav { background:#262626!important; border-right:1px solid #353535; box-shadow:none; }
+body .tabs.primary-nav { background:#191919!important; border-right:1px solid #272727; box-shadow:none; }
 body .tabs.primary-nav button { background:transparent!important; border-radius:6px; }
-body .tabs.primary-nav button.active,body .crm-view-controls [aria-pressed="true"] { background:#333333!important; color:#86efac!important; border-color:#86efac!important; }
-body .tabs.primary-nav button:hover { background:#333333!important; }
-.crm-table-wrap { border:1px solid #353535; border-radius:8px; }
+body .tabs.primary-nav button.active,body .crm-view-controls [aria-pressed="true"] { background:#262626!important; color:#d4d4d4!important; border-color:#d4d4d4!important; }
+body .tabs.primary-nav button:hover { background:#262626!important; }
+.crm-table-wrap { border:1px solid #272727; border-radius:8px; }
 .crm-load-track { background:#292929; }
 .crm-load-progress[data-state="loading"] .crm-load-fill { background-image:linear-gradient(110deg,transparent 25%,#a3a3a344 50%,transparent 75%); }
 .daily-metric { border-radius:10px; }
 .daily-metric strong { font-size:22px; }
 .daily-table-wrap { border-radius:9px; }
 body :is(.crm-card,.record-card,.chart-box,.kpi-card) { border-radius:8px; }
-body a { color:#86efac; }
+body a { color:#d4d4d4; }
 body .crm-overdue { color:#fca5a5; }
-body footer { background:#111111; color:#a3a3a3; border-color:#353535; }
+body footer { background:#111111; color:#a3a3a3; border-color:#272727; }
 
 /* Legacy inline light panels inherit the same charcoal surface. */
-body :is([style*="background:#dbeafe" i],[style*="background: #dbeafe" i],[style*="background-color:#dbeafe" i],[style*="background-color: #dbeafe" i],[style*="background:#dcfce7" i],[style*="background: #dcfce7" i],[style*="background-color:#dcfce7" i],[style*="background-color: #dcfce7" i],[style*="background:#e2e8f0" i],[style*="background: #e2e8f0" i],[style*="background-color:#e2e8f0" i],[style*="background-color: #e2e8f0" i],[style*="background:#ecfdf5" i],[style*="background: #ecfdf5" i],[style*="background-color:#ecfdf5" i],[style*="background-color: #ecfdf5" i],[style*="background:#eff6ff" i],[style*="background: #eff6ff" i],[style*="background-color:#eff6ff" i],[style*="background-color: #eff6ff" i],[style*="background:#f0f4ff" i],[style*="background: #f0f4ff" i],[style*="background-color:#f0f4ff" i],[style*="background-color: #f0f4ff" i],[style*="background:#f0fdf4" i],[style*="background: #f0fdf4" i],[style*="background-color:#f0fdf4" i],[style*="background-color: #f0fdf4" i],[style*="background:#f1f5f9" i],[style*="background: #f1f5f9" i],[style*="background-color:#f1f5f9" i],[style*="background-color: #f1f5f9" i],[style*="background:#f3e8ff" i],[style*="background: #f3e8ff" i],[style*="background-color:#f3e8ff" i],[style*="background-color: #f3e8ff" i],[style*="background:#f3f4f6" i],[style*="background: #f3f4f6" i],[style*="background-color:#f3f4f6" i],[style*="background-color: #f3f4f6" i],[style*="background:#f8fafc" i],[style*="background: #f8fafc" i],[style*="background-color:#f8fafc" i],[style*="background-color: #f8fafc" i],[style*="background:#faf5ff" i],[style*="background: #faf5ff" i],[style*="background-color:#faf5ff" i],[style*="background-color: #faf5ff" i],[style*="background:#fecaca" i],[style*="background: #fecaca" i],[style*="background-color:#fecaca" i],[style*="background-color: #fecaca" i],[style*="background:#fed7aa" i],[style*="background: #fed7aa" i],[style*="background-color:#fed7aa" i],[style*="background-color: #fed7aa" i],[style*="background:#fee2e2" i],[style*="background: #fee2e2" i],[style*="background-color:#fee2e2" i],[style*="background-color: #fee2e2" i],[style*="background:#fef2f2" i],[style*="background: #fef2f2" i],[style*="background-color:#fef2f2" i],[style*="background-color: #fef2f2" i],[style*="background:#fef3c7" i],[style*="background: #fef3c7" i],[style*="background-color:#fef3c7" i],[style*="background-color: #fef3c7" i],[style*="background:#fef9c3" i],[style*="background: #fef9c3" i],[style*="background-color:#fef9c3" i],[style*="background-color: #fef9c3" i],[style*="background:#fff" i],[style*="background: #fff" i],[style*="background-color:#fff" i],[style*="background-color: #fff" i],[style*="background:#fffbeb" i],[style*="background: #fffbeb" i],[style*="background-color:#fffbeb" i],[style*="background-color: #fffbeb" i]) { background:#202020!important; color:#d4d4d4!important; border-color:#404040!important; }
+body :is([style*="background:#dbeafe" i],[style*="background: #dbeafe" i],[style*="background-color:#dbeafe" i],[style*="background-color: #dbeafe" i],[style*="background:#dcfce7" i],[style*="background: #dcfce7" i],[style*="background-color:#dcfce7" i],[style*="background-color: #dcfce7" i],[style*="background:#e2e8f0" i],[style*="background: #e2e8f0" i],[style*="background-color:#e2e8f0" i],[style*="background-color: #e2e8f0" i],[style*="background:#ecfdf5" i],[style*="background: #ecfdf5" i],[style*="background-color:#ecfdf5" i],[style*="background-color: #ecfdf5" i],[style*="background:#eff6ff" i],[style*="background: #eff6ff" i],[style*="background-color:#eff6ff" i],[style*="background-color: #eff6ff" i],[style*="background:#f0f4ff" i],[style*="background: #f0f4ff" i],[style*="background-color:#f0f4ff" i],[style*="background-color: #f0f4ff" i],[style*="background:#f0fdf4" i],[style*="background: #f0fdf4" i],[style*="background-color:#f0fdf4" i],[style*="background-color: #f0fdf4" i],[style*="background:#f1f5f9" i],[style*="background: #f1f5f9" i],[style*="background-color:#f1f5f9" i],[style*="background-color: #f1f5f9" i],[style*="background:#f3e8ff" i],[style*="background: #f3e8ff" i],[style*="background-color:#f3e8ff" i],[style*="background-color: #f3e8ff" i],[style*="background:#f3f4f6" i],[style*="background: #f3f4f6" i],[style*="background-color:#f3f4f6" i],[style*="background-color: #f3f4f6" i],[style*="background:#f8fafc" i],[style*="background: #f8fafc" i],[style*="background-color:#f8fafc" i],[style*="background-color: #f8fafc" i],[style*="background:#faf5ff" i],[style*="background: #faf5ff" i],[style*="background-color:#faf5ff" i],[style*="background-color: #faf5ff" i],[style*="background:#fecaca" i],[style*="background: #fecaca" i],[style*="background-color:#fecaca" i],[style*="background-color: #fecaca" i],[style*="background:#fed7aa" i],[style*="background: #fed7aa" i],[style*="background-color:#fed7aa" i],[style*="background-color: #fed7aa" i],[style*="background:#fee2e2" i],[style*="background: #fee2e2" i],[style*="background-color:#fee2e2" i],[style*="background-color: #fee2e2" i],[style*="background:#fef2f2" i],[style*="background: #fef2f2" i],[style*="background-color:#fef2f2" i],[style*="background-color: #fef2f2" i],[style*="background:#fef3c7" i],[style*="background: #fef3c7" i],[style*="background-color:#fef3c7" i],[style*="background-color: #fef3c7" i],[style*="background:#fef9c3" i],[style*="background: #fef9c3" i],[style*="background-color:#fef9c3" i],[style*="background-color: #fef9c3" i],[style*="background:#fff" i],[style*="background: #fff" i],[style*="background-color:#fff" i],[style*="background-color: #fff" i],[style*="background:#fffbeb" i],[style*="background: #fffbeb" i],[style*="background-color:#fffbeb" i],[style*="background-color: #fffbeb" i]) { background:#181818!important; color:#d4d4d4!important; border-color:#303030!important; }
 .source-tag { background:#292929!important; }
 .source-waha { color:#93c5fd; }
 .source-zendesk { color:#fcd34d; }
-body .btn-sm.active { background:#333333!important; color:#86efac!important; }
+body .btn-sm.active { background:#262626!important; color:#d4d4d4!important; }
+
+/* Match the supplied UI Kit screenshot: quiet shell, dense controls and restrained accents. */
+html:not(.review-locked) body { padding-left:196px; }
+html:not(.review-locked) main.container { padding:0 20px; }
+body .header-bar { min-height:48px; padding:8px 20px; background:#090909!important; box-shadow:none; }
+.header-bar h1 { font-size:15px; font-weight:600; letter-spacing:-.3px; }
+body .tabs.primary-nav { width:196px; padding:66px 10px 20px; gap:3px; background:#151515!important; }
+.tabs.primary-nav::before { top:18px; left:18px; font-size:12px; letter-spacing:.8px; }
+body .tabs.primary-nav button { min-height:34px; padding:8px 9px; gap:9px; font-size:11px; line-height:1.4; border:0!important; }
+body .tabs.primary-nav button.active { color:#f5f5f5!important; background:#262626!important; }
+.tabs.primary-nav button::before { width:13px; height:13px; flex-basis:13px; opacity:.75; }
+#tab-crm,#tab-medinet { padding-top:16px; }
+#tab-crm>h2 { font-size:18px; font-weight:600; letter-spacing:-.4px; padding-bottom:0; margin-bottom:14px; border:0; }
+#crm-workspace>.crm-toolbar:first-child { padding:10px 12px; margin-bottom:10px; background:#101010!important; border-radius:7px; }
+#crm-workspace .crm-toolbar { gap:8px; }
+#crm-workspace label,#crm-workspace summary { font-size:11px; }
+#tab-crm .crm-toolbar :is(button,input,select),#tab-crm #crm-columns-reset { font-size:11px; min-height:30px; padding:5px 9px; border-radius:5px; }
+#tab-crm select { padding-right:28px!important; }
+#crm-workspace-state,#crm-tasks-state { font-size:11px; color:#a3a3a3; margin:8px 0; }
+body .crm-view-controls { display:inline-flex; gap:3px; padding:3px; margin:6px 0; background:#151515; border:1px solid #272727; border-radius:6px; }
+body .crm-view-controls button { border:0!important; border-radius:4px!important; background:transparent!important; }
+body .crm-view-controls [aria-pressed="true"] { background:#303030!important; color:#f5f5f5!important; }
+#crm-column-picker { margin:8px 0; }
+#crm-column-picker>summary { color:#a3a3a3; }
+#crm-saved-views { border-color:#272727; }
+.crm-table-wrap { border-radius:7px; }
+body #crm-deals-table :is(th,td) { font-size:11px; line-height:1.4; padding:6px 9px; border-color:#242424!important; }
+body #crm-deals-table td { height:34px; }
+body #crm-deals-table thead th,body #crm-deals-table th:first-child { background:#151515!important; color:#a3a3a3!important; }
+body #crm-deals-table th>button { color:#a3a3a3!important; font-size:11px; }
+body #crm-deals-table .crm-deal-name { font-size:11px; font-weight:500; text-decoration:none; }
+body #crm-deals-table a { color:#d4d4d4; }
+body #crm-deals-table a:hover,body #crm-deals-table .crm-deal-name:hover { color:#fff!important; text-decoration:underline; }
+body #crm-deals-table .crm-inline-edit { opacity:.45; }
+body #crm-deals-table tr:hover .crm-inline-edit,body #crm-deals-table tr:focus-within .crm-inline-edit { opacity:1; }
+.daily-workspace { padding:16px 0; }
+.daily-workspace h2 { font-size:18px; font-weight:600; letter-spacing:-.4px; }
+.daily-metrics { gap:10px; margin:12px 0; }
+.daily-metric { position:relative; padding:12px 14px 16px; border:1px solid #272727; border-radius:7px; background:#101010; }
+.daily-metric::after { content:""; position:absolute; bottom:0; left:14px; right:14px; height:2px; background:var(--tone); opacity:.65; }
+.daily-metric strong { font-size:22px; font-weight:600; color:#f5f5f5; letter-spacing:-.5px; }
+.daily-metric span { font-size:11px; }
+.daily-badge { font-size:10px; line-height:1.4; padding:2px 6px; border:1px solid currentColor; background:#181818; }
+.daily-table-wrap :is(th,td) { padding:7px 10px; font-size:11px; }
+.daily-toolbar { margin:12px 0; }
+.daily-toolbar :is(input,select,button) { height:32px; font-size:11px; }
+#crm-op-form .deal-detail-header { padding:12px 18px; }
+#tab-crm .deal-detail-header h3 { font-size:18px; letter-spacing:-.3px; }
+#crm-op-form :is(.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking) { padding:16px; }
+#crm-op-form :is(.record-card,.record-event) { border-radius:6px; }
+#crm-op-form :is(.record-value,.record-label,.record-meta) { font-size:12px; }
+.crm-load-track { height:5px; }
+@media(max-width:760px) {
+ html:not(.review-locked) body { padding-left:76px; }
+ html:not(.review-locked) main.container { padding:0 10px; }
+ body .tabs.primary-nav { width:76px; padding:65px 5px 12px; }
+ .tabs.primary-nav::before { font-size:9px; left:10px; }
+ body .tabs.primary-nav button { min-height:60px; font-size:10px; padding:8px 3px; }
+ body .header-bar { padding:8px 10px; }
+ .daily-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ #tab-crm .crm-toolbar :is(input,select) { font-size:16px; min-height:40px; }
+ #tab-crm .crm-toolbar button { min-height:40px; }
+}
