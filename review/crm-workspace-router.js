@@ -2,6 +2,7 @@ import { Router, json } from 'express';
 import { board, tasks, configuration, addOption, saveOpportunity, saveTask, conversationContact, dealActivity, addDealNote, CrmError } from './crm-workspace.js';
 import { antoniaAIConfig } from '../analysis/antonia-provider.js';
 import { usageDashboard } from './ai-usage.js';
+import {myTasks,saveMyTaskOwner} from './my-tasks.js';
 export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKSPACE_ENABLED === 'true', allowedOrigins = () => ['https://clinyco-ai.netlify.app', ...(process.env.CRM_ALLOWED_ORIGINS || '').split(',').filter(Boolean)] }) {
   const router = Router();
   router.use((req,res,next) => {
@@ -33,6 +34,8 @@ export function workspaceRouter({ getPool, enabled = () => process.env.CRM_WORKS
   router.post('/opportunities',route(req=>saveOpportunity(getPool(),req.body,null,req.reviewUser?.email)));
   router.put('/opportunities/:id',route(req=>saveOpportunity(getPool(),req.body,req.params.id,req.reviewUser?.email)));
   router.get('/tasks',route(req=>tasks(getPool(),req.query)));
+  router.get('/my-tasks',route(req=>myTasks(getPool(),req.reviewUser?.email)));
+  router.put('/my-tasks/owner',route(req=>saveMyTaskOwner(getPool(),req.reviewUser?.email,req.body.owner)));
   router.post('/tasks',route(req=>saveTask(getPool(),req.body,null,req.reviewUser?.email)));
   router.put('/tasks/:id',route(req=>saveTask(getPool(),req.body,req.params.id,req.reviewUser?.email)));
   router.use((err,req,res,next)=>res.status(err.status===413 ? 413 : 400).json({error:'invalid_json'}));
