@@ -81,21 +81,26 @@ const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const orchestrator = server.slice(server.indexOf("async function runMedinetAntoniaBooking"),
   server.indexOf("function detectBookingSlotChoice"));
 for (const mode of ["failure", "timeout", "empty"]) {
-  test("Render never falls through after remote " + mode, async () => {
+  test("Render never retries an unconfirmed Agenda Web result: " + mode, async () => {
     let calls = 0;
     const context = vm.createContext({
-      process: { env: {} }, console: { log() {}, warn() {} },
-      useRemoteWorker: () => true,
-      callMedinetWorkerPath: async () => {
+      UNAVAILABLE:"Availability unconfirmed",formatRutWithDots:s=>s,
+      loadPublishedAgendaweb:async()=>[],checkCupos:async()=>({}),
+      reservePublishedSlot:async({post})=>{const result=await post({synthetic:true});return {success:result?.status==='agendado_correctamente'}},
+      antoniaControl:{send:async(key,revision,kind,execute)=>{
+        assert.equal(kind,'booking');const receipt=await execute();
+        if(!receipt.confirmed)throw new Error('send_reconciliation_required');return receipt;
+      }},
+      bookAgendaweb:async()=>{
         calls++;
-        if (mode === "timeout") throw Error("timeout");
-        return mode === "empty" ? null : { success: false, step: "book" };
+        if(mode==='timeout')throw new Error('timeout');
+        return mode==='empty'?null:{status:'rejected'};
       },
-      apiBookAppointment: () => { throw Error("Unexpected second booking"); },
     });
     vm.runInContext(orchestrator, context);
-    const result = await context.runMedinetAntoniaBooking({ slot, patientData: { rut: "TEST" } });
+    const result = await context.runMedinetAntoniaBooking({ slot, patientData: { rut: "TEST" }, info:{controlKey:['test','cw:1'],controlRevision:0} });
     assert.equal(calls, 1);
     assert.equal(result.success, false);
+    assert.equal(result.step,'booking_unconfirmed');
   });
 }
