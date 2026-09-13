@@ -10,8 +10,8 @@ const html = await readFile(new URL('../review/site/index.html', import.meta.url
 const bundle = await readFile(new URL('../review/site/review-auth.js', import.meta.url), 'utf8');
 const user = { id: 'operator-1', email: 'operator@example.test', confirmed_at: '2026-01-01T00:00:00Z', app_metadata: { provider: 'google' } };
 
-function browser({ session = false, enabled = true, denied = false } = {}) {
-  const dom = new JSDOM(html, { url: 'https://clinyco-ai.netlify.app/', runScripts: 'outside-only', pretendToBeVisual: true });
+function browser({ session = false, enabled = true, denied = false, path = '/' } = {}) {
+  const dom = new JSDOM(html, { url: 'https://clinyco-ai.netlify.app' + path, runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
   const calls = [];
   let revoked = false;
@@ -85,4 +85,15 @@ test('signing out in another tab locks and clears the current workspace', { skip
     assert.equal(b.window.document.documentElement.classList.contains('review-locked'), true);
     assert.equal(b.window.document.querySelector('main').children.length, 0);
   } finally { b.dom.window.close(); }
+});
+test('feedback context survives the Google redirect with Netlify pretty URLs', { skip: !JSDOM }, async () => {
+  for (const path of ['/antonia-feedback?conversation=999001', '/antonia-feedback.html?conversation=999001']) {
+    const b = browser({ path });
+    try {
+      await b.window.reviewAuthReady;
+      b.window.document.getElementById('review-google-login').click();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(b.window.sessionStorage.getItem('antonia-feedback-return'), '/antonia-feedback.html?conversation=999001');
+    } finally { b.dom.window.close(); }
+  }
 });

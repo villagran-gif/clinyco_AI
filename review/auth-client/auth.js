@@ -69,6 +69,10 @@ async function start() {
     $('review-google-login').disabled = true;
     $('review-auth-message').textContent = 'Conectando con Google…';
     try {
+      if (['/antonia-feedback', '/antonia-feedback.html'].includes(location.pathname)) {
+        const id = new URLSearchParams(location.search).get('conversation');
+        try { sessionStorage.setItem('antonia-feedback-return', '/antonia-feedback.html' + (/^[1-9]\d{0,15}$/.test(id || '') ? `?conversation=${id}` : '')); } catch {}
+      }
       // Avoid retaining another account when retrying after denied access.
       await logout();
       oauthLogin('google');
@@ -90,6 +94,14 @@ async function start() {
     sessionEmail = user.email || '';
     $('review-switch-account').hidden = false;
     const verified = await checkAccess();
+    try {
+      const target = sessionStorage.getItem('antonia-feedback-return');
+      sessionStorage.removeItem('antonia-feedback-return');
+      if (location.pathname === '/' && /^\/antonia-feedback\.html(?:\?conversation=[1-9]\d{0,15})?$/.test(target || '')) {
+        location.replace(target);
+        return false;
+      }
+    } catch {}
     authorized = true;
     initialized = true;
     $('review-user-email').textContent = verified.email;

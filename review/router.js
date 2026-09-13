@@ -6,6 +6,7 @@
  */
 import { Router } from "express";
 import { reviewAuth } from "./auth.js";
+import { improvementsRouter } from "../antonia-improvements/router.js";
 import { listLinks } from "./crm-links.js";
 import { workspaceRouter } from "./crm-workspace-router.js";
 import { PDFParse } from "pdf-parse";
@@ -129,6 +130,7 @@ const router = Router();
 // Protect every review route, including CRM and direct Render requests.
 router.use(reviewAuth());
 router.get("/auth/me", (req, res) => res.json({ user: req.reviewUser }));
+router.use("/antonia/improvements", improvementsRouter({ getPool }));
 router.use("/crm/workspace", workspaceRouter({ getPool }));
 
 router.get("/crm/links", async (req, res) => {

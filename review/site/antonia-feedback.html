@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="es" class="review-locked">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mejoras de Antonia · SELL</title><link rel="stylesheet" href="/antonia-feedback.css"><script src="/review-auth.js" defer></script><script src="/antonia-feedback.js" defer></script></head>
+<body>
+<header><a href="/">SELL</a><strong>Mejoras de Antonia</strong><span id="review-user-email"></span><button id="review-signout" type="button">Cerrar sesión</button></header>
+<section id="review-login" aria-labelledby="review-login-title"><h1 id="review-login-title">Acceso del equipo Clinyco</h1><p>Ingresa con tu cuenta autorizada para guardar una mejora.</p><p id="review-auth-message" role="status">Verificando acceso…</p><button id="review-google-login" type="button" disabled>Continuar con Google</button><button id="review-switch-account" type="button" hidden>Cerrar sesión y cambiar de cuenta</button></section>
+<main class="container">
+  <section class="panel"><h1>Sugerir una mejora</h1><p id="conversation-label">Puedes enviar una sugerencia general.</p>
+    <form id="feedback-form">
+      <label>Área<select id="category" required><option value="respuesta">Respuestas de Antonia</option><option value="datos">Datos recopilados</option><option value="agendamiento">Agendamiento</option><option value="error">Error o falta de respuesta</option><option value="otra">Otra mejora</option></select></label>
+      <label>¿Qué ocurrió?<textarea id="problem" required minlength="10" maxlength="2000" rows="5" placeholder="Describe el problema que observaste."></textarea></label>
+      <label>¿Cómo debería funcionar?<textarea id="proposal" maxlength="2000" rows="4" placeholder="Indica la respuesta o el comportamiento que esperabas."></textarea></label>
+      <button type="submit" id="save-feedback">Guardar sugerencia</button><p id="save-status" role="status" aria-live="polite"></p>
+    </form>
+    <p class="muted">La sugerencia se guarda al enviarla. Antonia revisa las pendientes cada 30 minutos y registra una propuesta para revisión del equipo.</p>
+  </section>
+  <section class="panel"><div class="section-head"><h2>Sugerencias del equipo</h2><button id="refresh-feedback" type="button">Actualizar</button></div><p id="review-status" role="status"></p><div id="suggestions"></div></section>
+</main>
+</body></html>

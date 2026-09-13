@@ -474,6 +474,7 @@ export async function getRecentCompleteConversationHistory(conversationId, limit
           and payload->>'event' = 'message_created'
           and payload->'conversation'->>'id' = $1
           and payload->>'message_type' in ('incoming', 'outgoing')
+          and coalesce(payload->>'private', 'false') <> 'true'
           and nullif(trim(coalesce(payload->>'content', '')), '') is not null
         order by received_at desc
         limit $2
