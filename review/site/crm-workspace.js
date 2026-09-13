@@ -2,6 +2,8 @@
   const $ = id => document.getElementById(id);
   const base = location.hostname === 'localhost' ? 'http://localhost:10000/api/review' : '/api';
   let config = null, loading = null, boardOffset = 0, taskOffset = 0, boardBusy = false, tasksBusy = false;
+  const boardProgress = window.createCrmLoadProgress({root:$('crm-load-progress'),bar:$('crm-load-bar'),fill:$('crm-load-fill'),status:$('crm-workspace-state'),regions:[$('crm-table-wrap'),$('crm-board')]});
+  window.addEventListener('pagehide',()=>boardProgress.dispose());
   let dealRows=[], tableColumns=[], visibleColumns=[], dealView='table';
   const columnPreferenceVersion=2;
   let columnsReady=false, sortKey='dealName', sortDirection=1, columnFilters={}, savedViews=[], draggedColumn=null;
@@ -133,7 +135,7 @@
       }
       body.append(row);
     }
-    if(!viewRows().length){const row=element('tr'),cell=element('td','No hay DEALS con los filtros seleccionados.');cell.colSpan=columns.length;row.append(cell);body.append(row);}
+    if(!viewRows().length){const row=element('tr'),cell=element('td',boardBusy?'Cargando DEALS…':'No hay DEALS con los filtros seleccionados.');cell.colSpan=columns.length;row.append(cell);body.append(row);}
   }
   function changeDealView(view){
     dealView=view;$('crm-table-wrap').hidden=view!=='table';$('crm-column-picker').hidden=view!=='table';$('crm-board').hidden=view!=='board';
@@ -149,16 +151,19 @@
   async function loadBoard(more=false){
     if(boardBusy)return;
     boardBusy=true;
-    const controls=['crm-pipeline','crm-branch','crm-owner-filter','crm-board-month','crm-board-all','crm-board-refresh','crm-board-more'];
-    controls.forEach(id=>$(id).disabled=true);
+    boardProgress.start();
+    const controls=['crm-pipeline','crm-branch','crm-owner-filter','crm-board-month','crm-board-all','crm-board-refresh','crm-board-more','crm-view-saved'];
+    controls.forEach(id=>{if($(id))$(id).disabled=true;});
     try{
       await ensureConfig();
       if(!more){boardOffset=0;dealRows=[];boardColumns();renderDealTable();}
-      $('crm-workspace-state').textContent='Cargando DEALS…';
+      if($('crm-view-saved'))$('crm-view-saved').disabled=true;
       const q=new URLSearchParams({pipeline:$('crm-pipeline').value,branch:$('crm-branch').value,owner:$('crm-owner-filter').value,month:$('crm-board-month').value,offset:boardOffset});
       const data={items:[],more:false};let next=true;
-      while(next){q.set('offset',boardOffset+data.items.length);const page=await api(`/opportunities?${q}`);data.items.push(...page.items);next=!!page.more&&page.items.length>0;}
+      while(next){q.set('offset',boardOffset+data.items.length);const page=await api(`/opportunities?${q}`);data.items.push(...page.items);boardProgress.page(boardOffset+data.items.length);next=!!page.more&&page.items.length>0;}
 
+      boardProgress.rendering();
+      await new Promise(resolve=>setTimeout(resolve,0));
       dealRows.push(...data.items);renderDealTable();
       for(const item of data.items){
         const card=element('article',undefined,'crm-card');
@@ -173,9 +178,14 @@
         const column=[...$('crm-board').children].find(c=>c.dataset.stage===item.stage);column?.append(card);
       }
       boardOffset+=data.items.length;$('crm-board-more').hidden=!data.more;
-      $('crm-workspace-state').textContent=boardOffset ? `${boardOffset} DEALS cargados${data.more?' · Hay más resultados':''}.` : 'No hay DEALS con estos filtros.';
-    }catch(e){$('crm-workspace-state').textContent=e.message;}
-    finally{boardBusy=false;controls.forEach(id=>$(id).disabled=false);}
+      boardBusy=false;
+      if(!dealRows.length)renderDealTable();
+      boardProgress.complete(boardOffset ? `${boardOffset} DEALS cargados.` : 'Carga completada. No hay DEALS con estos filtros.');
+    }catch(e){
+      boardProgress.fail(e.message);
+      if(!dealRows.length){const cell=$('crm-deals-table')?.querySelector('tbody td');if(cell)cell.textContent='No se pudo completar la carga de DEALS.';}
+    }
+    finally{boardBusy=false;controls.forEach(id=>{if($(id))$(id).disabled=false;});}
   }
   const localDate=value=>value?new Date(value).toLocaleString('es-CL'): 'Sin vencimiento';
   async function loadTasks(more=false){

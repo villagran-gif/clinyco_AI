@@ -5,6 +5,8 @@
  * Legacy review endpoints plus opt-in CRM workspace.
  */
 import { Router } from "express";
+import { previewProfessionalAgenda, deliveryConfig } from './medinet-professional-agenda.js';
+import { dailyMedinetRouter } from "./medinet-daily.js";
 import { reviewAuth } from "./auth.js";
 import { improvementsRouter } from "../antonia-improvements/router.js";
 import { listLinks } from "./crm-links.js";
@@ -130,6 +132,15 @@ const router = Router();
 // Protect every review route, including CRM and direct Render requests.
 router.use(reviewAuth());
 router.get("/auth/me", (req, res) => res.json({ user: req.reviewUser }));
+router.use("/medinet", dailyMedinetRouter({ getPool }));
+router.get('/medinet/professional-agenda', async (req,res) => {
+  const config=deliveryConfig();
+  res.set('Cache-Control','private, no-store');
+  const professional=String(req.query.professional || config.professional || '').trim();
+  if(!professional || professional.length>200)return res.status(400).json({error:'Selecciona un profesional.'});
+  try { res.json({...await previewProfessionalAgenda({professional}),delivery:{enabled:config.enabled,hour:config.hour,timeZone:'America/Santiago',status:config.enabled?'Configurado; revisar entregas en Chatwoot.':'Pendiente de plantilla aprobada y verificación del destinatario.'}}); }
+  catch {res.status(503).json({error:'No se pudo preparar la agenda de hoy y mañana.'});}
+});
 router.use("/antonia/improvements", improvementsRouter({ getPool }));
 router.use("/crm/workspace", workspaceRouter({ getPool }));
 

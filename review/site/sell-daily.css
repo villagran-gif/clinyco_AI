@@ -1,0 +1,50 @@
+/* Shared SELL palette and daily Medinet workspaces. */
+:root { --sell-bg:#080b10; --sell-panel:#141a22; --sell-panel-alt:#1b2430; --sell-border:#354151; --sell-text:#e7edf5; --sell-muted:#b0bdcd; --sell-accent:#63d5ff; }
+html:not(.review-locked) body { background:var(--sell-bg); color:var(--sell-text); }
+html:not(.review-locked) body>header { background:#111720; color:var(--sell-text); border-bottom:1px solid var(--sell-border); }
+html:not(.review-locked) body>header h1,html:not(.review-locked) body>header p { color:var(--sell-text); }
+.tabs.primary-nav { background:#42464c; border-right:1px solid #626971; }
+.tabs.primary-nav .tab-button { color:#eef2f6; font-size:12px; line-height:1.35; white-space:normal; }
+.tabs.primary-nav .tab-button.active { background:#252c35; color:#72ddff; border-left:3px solid #72ddff; }
+.tabs.primary-nav .tab-button:hover { background:#535b66; color:#fff; }
+#tab-crm,.daily-workspace { color:var(--sell-text); --pico-color:var(--sell-text); --pico-background-color:var(--sell-bg); --pico-muted-color:var(--sell-muted); --pico-form-element-background-color:var(--sell-panel); --pico-form-element-color:var(--sell-text); --pico-form-element-border-color:var(--sell-border); --pico-primary:var(--sell-accent); --pico-primary-background:#12618a; --pico-primary-border:#237fad; }
+#tab-crm :is(h2,h3,h4,label,summary,dt,strong),.daily-workspace :is(h2,h3,h4,label,summary,th) { color:var(--sell-text); }
+#tab-crm :is(input,select,textarea),.daily-workspace :is(input,select,textarea) { background:var(--sell-panel); color:var(--sell-text); border:1px solid var(--sell-border); color-scheme:dark; }
+#tab-crm :is(button,.crm-chip),.daily-workspace button { background:#26364a; color:#dff5ff; border:1px solid #46627e; }
+#tab-crm button:hover,.daily-workspace button:hover { background:#35516c; }
+#tab-crm :is(.crm-toolbar,.crm-column,.crm-card,.crm-task-row,#crm-column-options,dialog,.record-card,.record-event,.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer,.record-note-box) { background:var(--sell-panel); color:var(--sell-text); border-color:var(--sell-border); }
+#tab-crm .crm-toolbar:first-child { background:var(--sell-panel); }
+#tab-crm :is(.record-value,.record-label,.record-meta,.crm-muted,.muted,dd,p,small) { color:var(--sell-muted); }
+#tab-crm a,.daily-workspace a { color:var(--sell-accent); }
+#tab-crm :is(table,tbody,td) { background:var(--sell-bg); color:var(--sell-text); border-color:var(--sell-border); }
+#tab-crm th { background:var(--sell-panel-alt); color:var(--sell-text); border-color:var(--sell-border); }
+#crm-deals-table :is(td,th):first-child { background:var(--sell-panel); }
+#crm-deals-table tr:hover td,#crm-deals-table tr:focus-within td { background:#1d3040; }
+#tab-crm dialog { --pico-background-color:var(--sell-panel); }
+#crm-op-form :is(.deal-detail-header,.deal-detail-properties,.deal-detail-fields,.deal-detail-tracking,.deal-detail-footer) { background:var(--sell-panel); color:var(--sell-text); }
+#crm-op-form .record-value { color:var(--sell-text); }
+.daily-workspace { padding:20px; font-size:13px; min-width:0; }
+.daily-workspace h2 { font-size:20px; margin:0 0 6px; }
+.daily-subtitle,.daily-state,.daily-notes { color:var(--sell-muted); font-size:12px; }
+.daily-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:10px; margin:18px 0; }
+.daily-toolbar label { font-size:12px; margin:0; min-width:130px; flex:1; }
+.daily-toolbar :is(input,select,button) { font-size:12px; height:36px; padding:6px 10px; margin:4px 0 0; border-radius:5px; width:auto; }
+.daily-toolbar label :is(input,select) { width:100%; }
+.daily-toolbar button:disabled { opacity:.55; cursor:wait; }
+.daily-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.daily-metric { background:var(--sell-panel); border:1px solid var(--sell-border); border-top:3px solid var(--tone); border-radius:7px; padding:16px; margin:0; box-shadow:none; }
+.daily-metric strong { display:block; font-size:25px; color:var(--tone); }
+.daily-metric span { display:block; font-size:12px; color:var(--sell-muted); }
+.cyan { --tone:#65d6fa; }.green { --tone:#6ae5a6; }.purple { --tone:#c5a6ff; }.amber { --tone:#f6c86b; }.red { --tone:#ff939c; }
+.daily-table-wrap { max-width:100%; overflow:auto; border:1px solid var(--sell-border); border-radius:7px; margin:16px 0; }
+.daily-table-wrap table { width:100%; margin:0; font-size:12px; white-space:nowrap; background:var(--sell-bg); }
+.daily-table-wrap :is(th,td) { padding:11px 12px; border-bottom:1px solid var(--sell-border); background:transparent; color:var(--sell-text); }
+.daily-table-wrap th { background:var(--sell-panel-alt); position:sticky; top:0; }
+.daily-table-wrap tr:hover td { background:#182432; }
+.daily-badge { display:inline-block; border-radius:4px; padding:3px 7px; background:#25303d; color:var(--tone); }
+.daily-links a { margin-right:10px; }
+.daily-workspace details { background:var(--sell-panel); border:1px solid var(--sell-border); border-radius:6px; padding:12px; margin:16px 0; }
+.daily-workspace .daily-notes { padding-left:20px; }
+@media(max-width:760px) { .daily-workspace { padding:10px; }.daily-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }.daily-toolbar label { min-width:150px; }.tabs.primary-nav .tab-button { font-size:10px; padding:10px 4px; } }
+
+.daily-message { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; color:var(--sell-text); background:var(--sell-panel); padding:12px; }

@@ -71,6 +71,7 @@ import { startCrmSync } from "./review/crm-sync.js";
 import { getPool as getCrmPool } from "./review/db.js";
 import { recordAIUsage } from "./review/ai-usage.js";
 import { createReviewer, reviewErrorCode } from "./antonia-improvements/reviewer.js";
+import { startDailyProfessionalAgenda } from './review/medinet-professional-agenda.js';
 import { startImprovementReviews } from "./antonia-improvements/scheduler.js";
 import { registerImprovementApp } from "./antonia-improvements/chatwoot-app.js";
 import { runConfiguredSellRestore } from "./review/sell-restore.js";
@@ -5616,6 +5617,7 @@ app.listen(PORT, () => {
   startFonasapadCron();
   startMonthlyCron();
   const improvementPool = getCrmPool();
+  startDailyProfessionalAgenda({pool: improvementPool});
   startImprovementReviews({ pool: improvementPool, review: createReviewer({ openai: antoniaAI, provider: ANTONIA_AI_PROVIDER, model: ANTONIA_MODEL, pool: improvementPool }) });
   void registerImprovementApp().then(result => console.log('[antonia-improvements-app]', JSON.stringify(result)))
     .catch(error => console.error('[antonia-improvements-app]', error.message));
