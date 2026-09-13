@@ -37,9 +37,10 @@
     const cards=el('div',undefined,'daily-metrics');
     for(const [label,value,cls] of [['Citas',items.filter(a=>!a.cancelled).length,'cyan'],['Confirmadas',items.filter(a=>!a.cancelled&&a.confirmation.startsWith('Confirmada')).length,'green'],['Atendidos',items.filter(a=>a.attended).length,'purple'],['Sin confirmación',items.filter(a=>!a.cancelled&&!a.attended&&!a.confirmation.startsWith('Confirmada')).length,'amber']]) {const c=el('article',undefined,'daily-metric '+cls);c.append(el('strong',value),el('span',label));cards.append(c);}v.output.append(cards);
     if(v.report) {
-      const table=tableFor(['Profesional / sede','Libres web','Bloqueados','Ocupadas','Confirmadas','Atendidos','Ausentes','Canceladas','Esperado agenda','Recibido','Diferencia']);
+      const table=tableFor(['Profesional / sede','Libres web','Bloqueados','Ocupadas','Confirmadas','Atendidos','Ausentes','Canceladas','Esperado agenda','Esperado atendidos','Recibido','Diferencia']);
       for(const p of people){const row=el('tr');const expected=p.expectedKnown?money(p.expectedAmount)+(p.missingTariffs?` + ${p.missingTariffs} sin arancel`:''):(p.occupied?'Sin arancel':money(0));
-        for(const value of [p.name+' · '+p.branch,p.free??'Sin dato',p.blocked??'Sin dato',p.occupied,p.confirmed,p.attended,p.absent,p.cancelled,expected,'Sin integración','Sin integración'])row.append(el('td',value));table.body.append(row);}
+        const attendedExpected=p.attendedExpectedKnown?money(p.attendedExpectedAmount)+(p.attendedMissingTariffs?` + ${p.attendedMissingTariffs} sin arancel`:''):(p.attended?'Sin arancel':money(0));
+        for(const value of [p.name+' · '+p.branch,p.free??'Sin dato',p.blocked??'Sin dato',p.occupied,p.confirmed,p.attended,p.absent,p.cancelled,expected,attendedExpected,'Sin integración','Sin integración'])row.append(el('td',value));table.body.append(row);}
       v.output.append(table.wrap);const notes=el('ul',undefined,'daily-notes');for(const text of v.data.limitations)notes.append(el('li',text));v.output.append(notes);
       const tariff=el('details'),summary=el('summary','Configurar arancel por profesional y tipo de cita');tariff.append(summary);
       const form=el('form',undefined,'daily-toolbar'),select=el('select');select.setAttribute('aria-label','Profesional y tipo de cita');
