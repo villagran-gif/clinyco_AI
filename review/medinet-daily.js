@@ -1,5 +1,5 @@
 import { Router, json } from 'express';
-import { fetchAllAppointments } from '../Antonia/medinet-api.js';
+import { readDailySnapshot } from './medinet-snapshot.js';
 
 export const chileDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 export const normalizedName = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -68,6 +68,19 @@ export function buildDailyReport({ date, appointments, slots, confirmations = []
   };
 }
 
+// Keep diagnostics useful without recording upstream bodies or patient data.
+export function dailyFailure(error, stage = 'appointments') {
+  const status = Number(error?.status || String(error?.message || '').match(/→ (\d{3})/)?.[1]);
+  const timeout = ['TimeoutError', 'AbortError'].includes(error?.name);
+  return {stage, code: error?.code==='snapshot_pending' ? 'waiting_for_vps' : [401,403].includes(status) ? 'access_denied' : timeout ? 'timeout' : 'unavailable',
+    ...(status >= 400 && status <= 599 ? {status} : {})};
+}
+export async function checkDailyConnection({ appointments, now = new Date() } = {}) {
+  const date = chileDate(now);
+  try { const rows = unwrap(await appointments(date,date)); return {ok:true,date,count:rows.length}; }
+  catch (error) { return {ok:false,date,...dailyFailure(error)}; }
+}
+
 const schema = `CREATE TABLE IF NOT EXISTS medinet_daily_tariffs (professional_key text NOT NULL, type_id text NOT NULL, amount_clp numeric(12,0) NOT NULL CHECK(amount_clp>=0), updated_by text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(professional_key,type_id));`;
 const initialized = new WeakMap();
 async function ensureSchema(pool) {
@@ -75,25 +88,43 @@ async function ensureSchema(pool) {
   await initialized.get(pool);
 }
 
-export function dailyMedinetRouter({ getPool, appointments = fetchAllAppointments, fetchSlots = async () => {
+export function dailyMedinetRouter({ getPool, appointments = (start,end)=>readDailySnapshot(start,end,{pool:getPool()}), fetchSlots = async () => {
   const base = (process.env.MEDINET_VPS_URL || 'http://69.6.226.132:3001').replace(/\/+$/, '');
   const r = await fetch(`${base}/api/slots`, { signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error('slots_unavailable'); return r.json();
 } }) {
   const router = Router();
+  // One read-only startup check in the production core; never sends messages.
+  if (process.env.RENDER_SERVICE_ID === 'srv-d6r082fkijhs73bdsejg') {
+    void checkDailyConnection({appointments}).then(result => console.info('[medinet-daily] connection', JSON.stringify(result)));
+  }
   router.use((_req,res,next)=>{res.set('Cache-Control','private, no-store');next();});
   router.get('/daily', async(req,res)=>{
     const date = req.query.date || chileDate();
     if (!validDay(date)) return res.status(400).json({error:'Fecha inválida.'});
+    let stage='database';
     try {
       const pool=getPool(); await ensureSchema(pool);
+      const track = (name,promise) => promise.catch(error=>{error.dailyStage=name;throw error;});
       const [raw, slotResult, confirmations, tariffs] = await Promise.all([
-        appointments(date,date), fetchSlots().catch(()=>null),
+        track('appointments',appointments(date,date)), fetchSlots().catch(()=>null),
         pool.query("SELECT external_id,appointment_at,state,first_msg_sent_at,chatwoot_conversation_id FROM confirmations.appointments WHERE appointment_at >= ($1::date::timestamp AT TIME ZONE 'America/Santiago') AND appointment_at < (($1::date+1)::timestamp AT TIME ZONE 'America/Santiago')",[date]),
         pool.query('SELECT professional_key,type_id,amount_clp FROM medinet_daily_tariffs'),
       ]);
-      res.json(buildDailyReport({date,appointments:unwrap(raw),slots:slotResult,confirmations:confirmations.rows,tariffs:tariffs.rows}));
-    } catch(e) { console.warn('[medinet-daily] query failed', e.name || 'Error'); res.status(503).json({error:'No se pudo consultar la agenda de Medinet. Reintenta; no se ha asumido que esté vacía.'}); }
+      stage='appointments';
+      const report=buildDailyReport({date,appointments:unwrap(raw),slots:slotResult,confirmations:confirmations.rows,tariffs:tariffs.rows});
+      if(raw.syncedAt)report.syncedAt=raw.syncedAt;
+      report.source='VPS Chile';
+      res.json(report);
+    } catch(e) {
+      if(e.code==='snapshot_pending')return res.status(202).json({pending:true,error:e.message});
+      const failure=dailyFailure(e,e.dailyStage||stage);
+      console.warn('[medinet-daily] query failed',JSON.stringify(failure));
+      const error=failure.stage==='appointments'&&failure.code==='access_denied'
+        ? 'Medinet rechazó el acceso a la agenda. Revisa la conexión con Medinet.'
+        : 'No se pudo consultar la agenda de Medinet. Reintenta; no se ha asumido que esté vacía.';
+      res.status(503).json({error});
+    }
   });
   router.put('/daily/tariff',json({limit:'4kb'}),async(req,res)=>{
     if (req.get('origin') !== 'https://clinyco-ai.netlify.app') return res.status(403).json({error:'origin_not_allowed'});
