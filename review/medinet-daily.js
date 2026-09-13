@@ -51,11 +51,11 @@ export function buildDailyReport({ date, appointments, slots, confirmations = []
     if (c?.state === 'confirmed') item.confirmation = 'Confirmada por WhatsApp';
     else if (c?.state === 'reschedule_requested') item.confirmation = 'Solicita reagendar';
     else if (c?.state === 'cancelled') item.confirmation = 'Solicita cancelar';
-    else if (c?.first_msg_sent_at) item.confirmation = 'Enviada · esperando respuesta';
+    else if (c?.first_msg_sent_at && !item.confirmation.startsWith('Confirmada')) item.confirmation = 'Enviada · esperando respuesta';
     if (c?.chatwoot_conversation_id && /^\d+$/.test(String(c.chatwoot_conversation_id))) item.conversationUrl = `https://app.chatwoot.com/app/accounts/162472/conversations/${c.chatwoot_conversation_id}`;
     const tariff = tariffs.find(t => t.professional_key === item.professionalKey && String(t.type_id) === item.typeId);
     if (tariff) item.expectedAmount = Number(tariff.amount_clp);
-    if (item.cancelled) { p.cancelled++; continue; }
+    if (item.cancelled) { item.confirmation = 'Cita cancelada o reagendada'; p.cancelled++; continue; }
     p.occupied++; if (item.attended) p.attended++; if (item.absent) p.absent++;
     if (item.confirmation.startsWith('Confirmada')) p.confirmed++;
     if (item.expectedAmount === null) p.missingTariffs++;

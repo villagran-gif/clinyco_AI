@@ -35,7 +35,7 @@
     const selected=p=>(!v.branch.value||p.branchId===v.branch.value)&&(!v.professional.value||(p.professionalKey||p.key)===v.professional.value);
     const items=v.data.items.filter(selected),people=v.data.professionals.filter(selected);
     const cards=el('div',undefined,'daily-metrics');
-    for(const [label,value,cls] of [['Citas',items.filter(a=>!a.cancelled).length,'cyan'],['Confirmadas',items.filter(a=>a.confirmation.startsWith('Confirmada')).length,'green'],['Atendidos',items.filter(a=>a.attended).length,'purple'],['Sin confirmación',items.filter(a=>!a.cancelled&&!a.attended&&!a.confirmation.startsWith('Confirmada')).length,'amber']]) {const c=el('article',undefined,'daily-metric '+cls);c.append(el('strong',value),el('span',label));cards.append(c);}v.output.append(cards);
+    for(const [label,value,cls] of [['Citas',items.filter(a=>!a.cancelled).length,'cyan'],['Confirmadas',items.filter(a=>!a.cancelled&&a.confirmation.startsWith('Confirmada')).length,'green'],['Atendidos',items.filter(a=>a.attended).length,'purple'],['Sin confirmación',items.filter(a=>!a.cancelled&&!a.attended&&!a.confirmation.startsWith('Confirmada')).length,'amber']]) {const c=el('article',undefined,'daily-metric '+cls);c.append(el('strong',value),el('span',label));cards.append(c);}v.output.append(cards);
     if(v.report) {
       const table=tableFor(['Profesional / sede','Libres web','Bloqueados','Ocupadas','Confirmadas','Atendidos','Ausentes','Canceladas','Esperado agenda','Recibido','Diferencia']);
       for(const p of people){const row=el('tr');const expected=p.expectedKnown?money(p.expectedAmount)+(p.missingTariffs?` + ${p.missingTariffs} sin arancel`:''):(p.occupied?'Sin arancel':money(0));
