@@ -26,7 +26,9 @@ test("construye una ficha consolidada con datos bariátricos útiles", () => {
   assert.match(built.content, /1,65 m/);
   assert.match(built.content, /Manga gástrica/);
   assert.match(built.content, /2013/);
-  assert.match(built.content, /NO VOLVER A PREGUNTAR/);
+  assert.doesNotMatch(built.content, /NO VOLVER A PREGUNTAR|Actualizada automáticamente|Confirmar correcciones/);
+  assert.ok(built.snapshot.meaningfulKeys.includes('weight'));
+  assert.equal(built.content.split('\n').filter(line => line.includes('Peso:')).length, 1);
 });
 
 test("no acepta como nombre una frase capturada por error", () => {
