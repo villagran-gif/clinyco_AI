@@ -1,4 +1,5 @@
 import pg from "pg";
+import { ensureControlSchema } from "./conversation/control.js";
 
 import { normalizePhone, normalizeRut } from "./extraction/identity-normalizers.js";
 
@@ -433,6 +434,7 @@ export async function initDb() {
       on eugenia_help_sessions (conversation_id, created_at desc);
     `);
 
+    await ensureControlSchema(client);
     console.log("Database ready");
   } finally {
     client.release();

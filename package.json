@@ -14,7 +14,8 @@
     "dashboard:sync": "node dashboard/medinet-dashboard-sync.cjs",
     "dashboard:serve": "node dashboard/medinet-dashboard-server.cjs",
     "dashboard:deploy": "bash dashboard/deploy-vps.sh",
-    "start:medinet-worker": "node workers/medinet-worker.js"
+    "start:medinet-worker": "node workers/medinet-worker.js",
+    "test:antonia-control": "node --test tests/antonia-control.test.mjs tests/antonia-control-core.test.mjs tests/review-auth.test.mjs tests/chatwoot-call-guard.test.mjs tests/agendaweb-only.test.mjs tests/chatwoot-adapter.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -28,5 +29,8 @@
     "pg": "^8.20.0",
     "playwright": "^1.58.2",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
   }
 }

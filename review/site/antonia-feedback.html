@@ -1,10 +1,19 @@
 <!doctype html>
 <html lang="es" class="review-locked">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mejoras de Antonia · SELL</title><link rel="stylesheet" href="/antonia-feedback.css"><script src="/review-auth.js" defer></script><script src="/antonia-feedback.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mejoras de Antonia · SELL</title><link rel="stylesheet" href="/antonia-feedback.css"><script src="/review-auth.js" defer></script><script src="/antonia-feedback.js" defer></script><script src="/antonia-control.js" defer></script></head>
 <body>
 <header><a href="/">SELL</a><strong>Mejoras de Antonia</strong><span id="review-user-email"></span><button id="review-signout" type="button">Cerrar sesión</button></header>
 <section id="review-login" aria-labelledby="review-login-title"><h1 id="review-login-title">Acceso del equipo Clinyco</h1><p>Ingresa con tu cuenta autorizada para guardar una mejora.</p><p id="review-auth-message" role="status">Verificando acceso…</p><button id="review-google-login" type="button" disabled>Continuar con Google</button><button id="review-switch-account" type="button" hidden>Cerrar sesión y cambiar de cuenta</button></section>
 <main class="container">
+  <section class="panel" id="antonia-control" hidden style="grid-column:1/-1">
+    <div class="section-head"><h2>Control de Antonia</h2><button id="control-refresh" type="button">Actualizar estado</button></div>
+    <p id="control-status" role="status" aria-live="polite">Consultando estado…</p>
+    <label>Motivo del cambio<textarea id="control-reason" rows="2" maxlength="500" placeholder="Por qué tomas el control o reactivas a Antonia"></textarea></label>
+    <button id="control-pause" type="button" disabled>Tomar control</button>
+    <button id="control-resume" type="button" disabled>Reactivar Antonia</button>
+    <p class="muted">La pausa no vence. Al reactivar, Antonia espera el próximo mensaje del paciente y consulta el historial reciente. Los mensajes ya enviados no se retiran.</p>
+    <p id="control-result" role="status" aria-live="polite"></p>
+  </section>
   <section class="panel"><h1>Sugerir una mejora</h1><p id="conversation-label">Puedes enviar una sugerencia general.</p>
     <form id="feedback-form">
       <label>Área<select id="category" required><option value="respuesta">Respuestas de Antonia</option><option value="datos">Datos recopilados</option><option value="agendamiento">Agendamiento</option><option value="error">Error o falta de respuesta</option><option value="otra">Otra mejora</option></select></label>

@@ -5,6 +5,7 @@
  * Legacy review endpoints plus opt-in CRM workspace.
  */
 import { Router } from "express";
+import { antoniaControlRouter } from "./antonia-control-router.js";
 import { previewProfessionalAgenda, deliveryConfig } from './medinet-professional-agenda.js';
 import { dailyMedinetRouter } from "./medinet-daily.js";
 import { reviewAuth } from "./auth.js";
@@ -131,6 +132,7 @@ import {
 const router = Router();
 // Protect every review route, including CRM and direct Render requests.
 router.use(reviewAuth());
+router.use("/antonia/conversations", antoniaControlRouter({ getPool }));
 router.get("/auth/me", (req, res) => res.json({ user: req.reviewUser }));
 router.use("/medinet", dailyMedinetRouter({ getPool }));
 router.get('/medinet/professional-agenda', async (req,res) => {

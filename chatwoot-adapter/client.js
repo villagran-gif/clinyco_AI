@@ -54,6 +54,7 @@ export async function sendChatwootReply({ conversationId, content }) {
   const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/messages`;
   const res = await fetch(url, {
     method: "POST",
+    signal: AbortSignal.timeout(15000),
     headers: { "Content-Type": "application/json", api_access_token: token() },
     body: JSON.stringify({ content, message_type: "outgoing" }),
   });
@@ -103,6 +104,7 @@ export async function sendChatwootAttachment({
   const url = `${baseUrl()}/api/v1/accounts/${accountId()}/conversations/${realId}/messages`;
   const res = await fetch(url, {
     method: "POST",
+    signal: AbortSignal.timeout(15000),
     headers: { api_access_token: token() },
     body: form,
   });
