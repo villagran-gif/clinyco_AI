@@ -35,7 +35,7 @@ export function buildDailyReport({ date, appointments, slots, confirmations = []
   const people = new Map();
   const ensure = (key, name, branchId, branch) => {
     const id = `${key}|${branchId}`;
-    if (!people.has(id)) people.set(id, { key, name, branchId, branch, free: null, blocked: null, occupied: 0, attended: 0, absent: 0, cancelled: 0, confirmed: 0, expectedAmount: 0, expectedKnown: 0, missingTariffs: 0, paidAmount: null, difference: null });
+    if (!people.has(id)) people.set(id, { key, name, branchId, branch, free: null, blocked: null, occupied: 0, attended: 0, absent: 0, cancelled: 0, confirmed: 0, expectedAmount: 0, expectedKnown: 0, missingTariffs: 0, attendedExpectedAmount: 0, attendedExpectedKnown: 0, attendedMissingTariffs: 0, paidAmount: null, difference: null });
     return people.get(id);
   };
   const slotsFresh = !!slots?.syncedAt && now - new Date(slots.syncedAt) < 30*60*1000 && now >= new Date(slots.syncedAt);
@@ -51,15 +51,16 @@ export function buildDailyReport({ date, appointments, slots, confirmations = []
     if (c?.state === 'confirmed') item.confirmation = 'Confirmada por WhatsApp';
     else if (c?.state === 'reschedule_requested') item.confirmation = 'Solicita reagendar';
     else if (c?.state === 'cancelled') item.confirmation = 'Solicita cancelar';
-    else if (c?.first_msg_sent_at) item.confirmation = 'Enviada · esperando respuesta';
+    else if (c?.first_msg_sent_at && !item.confirmation.startsWith('Confirmada')) item.confirmation = 'Enviada · esperando respuesta';
     if (c?.chatwoot_conversation_id && /^\d+$/.test(String(c.chatwoot_conversation_id))) item.conversationUrl = `https://app.chatwoot.com/app/accounts/162472/conversations/${c.chatwoot_conversation_id}`;
     const tariff = tariffs.find(t => t.professional_key === item.professionalKey && String(t.type_id) === item.typeId);
     if (tariff) item.expectedAmount = Number(tariff.amount_clp);
-    if (item.cancelled) { p.cancelled++; continue; }
+    if (item.cancelled) { item.confirmation = 'Cita cancelada o reagendada'; p.cancelled++; continue; }
     p.occupied++; if (item.attended) p.attended++; if (item.absent) p.absent++;
     if (item.confirmation.startsWith('Confirmada')) p.confirmed++;
     if (item.expectedAmount === null) p.missingTariffs++;
     else { p.expectedAmount += item.expectedAmount; p.expectedKnown++; }
+    if (item.attended) { if (item.expectedAmount === null) p.attendedMissingTariffs++; else {p.attendedExpectedAmount += item.expectedAmount; p.attendedExpectedKnown++;} }
   }
   return { date, syncedAt: now.toISOString(), slotsSyncedAt: slots?.syncedAt || null, slotsFresh, items: items.sort((a,b)=>a.time.localeCompare(b.time)),
     professionals: [...people.values()].sort((a,b)=>a.name.localeCompare(b.name,'es')),
