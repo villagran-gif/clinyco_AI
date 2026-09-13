@@ -173,6 +173,7 @@
     #ai-usage-table td, #ai-usage-table th { white-space: nowrap; }
   </style>
 <link rel="stylesheet" href="crm-workspace.css">
+<link rel="stylesheet" href="sell-daily.css">
 </head>
 <body>
 
@@ -196,7 +197,9 @@
 <main class="container">
   <nav class="tabs primary-nav" aria-label="Navegación principal">
     <button class="active" onclick="showTab('crm')">SELL</button>
-    <button onclick="showTab('medinet')">Medinet</button>
+    <button onclick="showTab('medinet')">Medinet · cupos</button>
+    <button onclick="showTab('daily-agenda')">Agenda diaria</button>
+    <button onclick="showTab('daily-report')">Confirmaciones y caja</button>
     <button onclick="showTab('contacts')">Contactos</button>
   </nav>
 
@@ -213,6 +216,11 @@
         <button id="crm-board-refresh" type="button">Actualizar DEALS</button>
       </div>
       <p id="crm-workspace-state" role="status" aria-live="polite"></p>
+      <div id="crm-load-progress" class="crm-load-progress" hidden>
+        <div id="crm-load-bar" class="crm-load-track" role="progressbar" aria-label="Carga de DEALS; avance estimado" aria-valuemin="0" aria-valuemax="100" aria-describedby="crm-workspace-state">
+          <span id="crm-load-fill" class="crm-load-fill"></span>
+        </div>
+      </div>
       <div class="crm-view-controls" role="group" aria-label="Vista de DEALS">
         <button id="crm-view-table" type="button" aria-pressed="true">Tabla</button>
         <button id="crm-view-board" type="button" aria-pressed="false">Tablero por etapas</button>
@@ -1600,6 +1608,8 @@
     <h3 style="margin:24px 0 8px;font-size:14px;color:#475569">Últimas decisiones</h3>
     <div id="cola-history" style="font-size:12px"></div>
   </div>
+<section id="tab-daily-agenda" class="tab-content daily-workspace" aria-label="Agenda diaria"></section>
+<section id="tab-daily-report" class="tab-content daily-workspace" aria-label="Confirmaciones y cuadratura"></section>
   <footer class="secondary-footer"><nav class="tabs secondary-nav" aria-label="Otras herramientas">
     <button onclick="showTab('ai-usage')">Gasto IA</button>
     <button onclick="showTab('dashboard')">Dashboard</button>
@@ -1620,8 +1630,10 @@
   </nav></footer>
 </main>
 <script src="review-auth.js"></script>
+<script src="crm-loading.js"></script>
 <script src="crm-workspace.js"></script>
 <script src="crm-links.js"></script>
+<script src="medinet-daily.js"></script>
 
 <script>
 
@@ -1861,6 +1873,7 @@ window.mnHideDetail = function() {
 
 // ── Tabs ──
 function showTab(name) {
+  if (["daily-agenda", "daily-report"].includes(name)) window.loadDailyMedinet(name);
   if (name === "crm") window.loadCrmWorkspace?.();
   if (name === "contacts") window.loadCrm();
   document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
