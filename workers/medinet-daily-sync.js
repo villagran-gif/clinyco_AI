@@ -36,7 +36,9 @@ export async function startDailySync({pool,appointments=fetchAllAppointments,now
   }catch(error){console.warn('[medinet-vps-daily]',JSON.stringify({code:'sync_unavailable',type:error.name}));}finally{busy=false;}};
   await tick();const timer=setInterval(tick,3000);return ()=>clearInterval(timer);
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
+// PM2 imports ESM through ProcessContainerFork; argv[1] names that wrapper.
+const entryPath=process.env.pm_exec_path||process.argv[1];
+if(entryPath&&import.meta.url===pathToFileURL(entryPath).href){
   if(!process.env.DATABASE_URL||!process.env.MEDINET_USER||!process.env.MEDINET_USER_KEY)throw new Error('Daily worker requires database and Medinet configuration');
   const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:true},max:2,connectionTimeoutMillis:10000});
   startDailySync({pool}).catch(error=>{console.error('[medinet-vps-daily] startup',error.name);process.exit(1);});
