@@ -1,5 +1,5 @@
 import { getPool, dbEnabled } from '../db.js';
-import { searchSlotsViaApi, checkCupos, bookAgendaweb, updateAppointmentState, fetchAppointmentDetail, formatRutWithDots } from '../Antonia/medinet-api.js';
+import { searchSlotsForKnownProfessional, checkCupos, bookAgendaweb, updateAppointmentState, fetchAppointmentDetail, formatRutWithDots } from '../Antonia/medinet-api.js';
 
 const norm = v => String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 const digits = v => String(v||'').replace(/\D/g,'');
@@ -11,7 +11,7 @@ async function ensure(){if(ensured||!dbEnabled())return;await getPool().query(`C
 function choice(text,max){const m=String(text||'').trim().match(/^(?:opci[oó]n\s*)?(\d{1,2})$/i);if(!m)return null;const n=Number(m[1]);return n>=1&&n<=max?n-1:null;}
 function exact(a,b){return ['professionalId','branchId','specialtyId','tipoCitaId','dataDia','time'].every(k=>String(a?.[k])===String(b?.[k]));}
 function options(result){const slots=(result.available_slots||[]).slice(0,6);if(!slots.length)return {slots,reply:`No encontré horas próximas con ${result.professional||'el mismo profesional'}. Si quieres, el equipo puede ayudarte.`};return {slots,reply:`Encontré estas horas con ${result.professional}:\n\n${slots.map((s,i)=>`${i+1}. ${s.date||s.dataDia} a las ${s.time}`).join('\n')}\n\nResponde con el número de la opción que prefieres.`};}
-async function search(payload){const r=await searchSlotsViaApi({query:payload.professional.name,branchId:payload.branch_id});const same=(r.available_slots||[]).filter(s=>String(s.professionalId)===String(payload.professional.id));return options({...r,available_slots:same});}
+async function search(payload){const r=await searchSlotsForKnownProfessional({professionalId:payload.professional.id,professionalName:payload.professional.name,branchId:payload.branch_id});return options(r);}
 export async function handleDirectReschedule(payload){
  if(!dbEnabled())throw Error('db_required'); await ensure();
  const externalId=Number(payload.external_id), phone=digits(payload.patient?.phone), professionalId=Number(payload.professional?.id), branchId=Number(payload.branch_id);
