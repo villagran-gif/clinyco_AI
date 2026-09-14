@@ -23,6 +23,7 @@
 
 import { Router } from "express";
 import { getPool, dbEnabled } from "../db.js";
+import { handleDirectReschedule } from "./direct-reschedule.js";
 
 let tableEnsured = false;
 
@@ -172,6 +173,11 @@ export function createMelaniaHandoffRouter() {
       console.error("[melania/handoff] db_error:", err.message);
       return res.status(500).json({ error: "db_error", message: err.message });
     }
+  });
+
+  router.post("/reschedule-direct", requireBearer, async (req, res) => {
+    try { return res.status(200).json(await handleDirectReschedule(req.body)); }
+    catch (err) { console.error("[melania/reschedule-direct]", err.message); return res.status(409).json({error:err.message}); }
   });
 
   /**
