@@ -9,6 +9,8 @@ import {
   searchSlotsViaApi,
   fetchProximosCuposAll,
   fetchSpecialtiesByBranchNoAuth,
+  fetchAppointmentDetail,
+  updateAppointmentState,
   formatRutWithDots,
   DEFAULT_BRANCH_ID,
 } from "../Antonia/medinet-api.js";
@@ -149,6 +151,34 @@ app.post("/medinet/api/book", authMiddleware, (req, res) => {
     query: slot?.professional || String(slot?.professionalId || ""),
   };
   return handleMelaniaBooking(req, res);
+});
+
+app.post("/medinet/api/appointment/detail", authMiddleware, async (req, res) => {
+  const id = Number(req.body?.appointmentId);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "appointment_id_required" });
+  try {
+    const appointment = await fetchAppointmentDetail(id);
+    return res.json({ success: true, appointment });
+  } catch (error) {
+    console.error("[medinet-worker] appointment/detail error:", error.message);
+    return res.status(502).json({ success: false, error: "appointment_read_failed" });
+  }
+});
+
+app.post("/medinet/api/appointment/state", authMiddleware, async (req, res) => {
+  const id = Number(req.body?.appointmentId);
+  const action = String(req.body?.action || "");
+  const observation = String(req.body?.observation || "").slice(0, 500);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "appointment_id_required" });
+  if (!["Confirm", "Cancel"].includes(action)) return res.status(400).json({ error: "invalid_action" });
+  try {
+    await updateAppointmentState(id, action, observation || undefined);
+    const appointment = await fetchAppointmentDetail(id);
+    return res.json({ success: true, appointment });
+  } catch (error) {
+    console.error("[medinet-worker] appointment/state error:", error.message);
+    return res.status(502).json({ success: false, error: "appointment_state_failed" });
+  }
 });
 
 // ─── Legacy Puppeteer-based endpoints ─────────────────────────
