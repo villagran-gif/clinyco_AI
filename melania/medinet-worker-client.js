@@ -25,3 +25,11 @@ export function searchSlotsOnChileVps({query, patientRut, branchId}) {
 export function bookSlotOnChileVps({slot, patientData, branchId}) {
   return post('/medinet/api/book', {slot, patientData, branchId}, 30000);
 }
+
+export function appointmentDetailOnChileVps(appointmentId) {
+  return post('/medinet/api/appointment/detail', {appointmentId}, 20000);
+}
+
+export function updateAppointmentOnChileVps({appointmentId, action, observation}) {
+  return post('/medinet/api/appointment/state', {appointmentId, action, observation}, 25000);
+}
