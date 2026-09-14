@@ -115,3 +115,62 @@ test('actual handler persists human request instead of merely muting a cached sn
   await f.run();assert.equal(f.response.statusCode,200);assert.equal(f.changes.length,1);
   assert.equal(f.changes[0].mode,'human_active');assert.equal(f.changes[0].expectedRevision,2);
 });
+
+for (const patientSubject of ['unknown','other']) {
+  test(`published search executes for ${patientSubject} without sending a model promise`,async()=>{
+    const f=inbound({mode:'bot_active',userText:'Busco cupos de nutrición en Santiago',
+      decision:{action:'booking',patientSubject,reply:'Déjame revisar los cupos disponibles',facts:[],booking:{operation:'search',query:'nutrición'}}});
+    f.state.system.aiEnabled=true;f.state.system.humanTakenOver=false;
+    await f.run();assert.equal(f.response.statusCode,200);assert.equal(f.searches,1);
+    assert.equal(f.response.body.reply,'No hay cupos publicados');
+  });
+  test(`automatic reservation remains blocked for ${patientSubject}`,async()=>{
+    const f=inbound({mode:'bot_active',userText:'Sí',
+      booking:{modelConfirmation:{presented:true},chosenSlot:{id:'synthetic'}},
+      decision:{action:'booking',patientSubject,reply:'Reserva confirmada',facts:[],booking:{operation:'confirm'}}});
+    f.state.system.aiEnabled=true;f.state.system.humanTakenOver=false;
+    await f.run();assert.equal(f.response.statusCode,200);assert.equal(f.searches,0);
+    assert.doesNotMatch(f.response.body.reply,/Reserva confirmada/);
+    assert.equal(f.state.booking.modelConfirmation,null);
+  });
+}
+test('clear data is persisted without adding a mandatory confirmation step',async()=>{
+  const f=inbound({mode:'bot_active',userText:'Peso 82 kg',decision:{action:'conversation',patientSubject:'self',reply:'¿Cuánto mides?',facts:[{field:'weightKg',value:82,subject:'self',evidence:'82 kg'}]}});
+  f.state.system.aiEnabled=true;f.state.system.humanTakenOver=false;
+  await f.run();assert.equal(f.state.conversation.facts[0].value,82);
+  assert.equal(f.response.body.reply,'¿Cuánto mides?');assert.equal(f.searches,0);
+});
+test('ambiguous datum preserves known facts and delivers only the proposed clarification',async()=>{
+  const f=inbound({mode:'bot_active',userText:'&0',decision:{action:'conversation',patientSubject:'self',reply:'¿Qué peso quisiste escribir?',facts:[]}});
+  f.state.conversation={facts:[{field:'weightKg',value:80,subject:'self'}]};
+  f.state.system.aiEnabled=true;f.state.system.humanTakenOver=false;
+  await f.run();assert.equal(f.state.conversation.facts[0].value,80);
+  assert.equal(f.response.body.reply,'¿Qué peso quisiste escribir?');assert.equal(f.searches,0);
+});
+test('intervening informational question invalidates consent so a later yes cannot authorize old proposal',async()=>{
+  const chosenSlot={source:'agendaweb',date:'20/09/2026',time:'10:00',professional:'Sintético',branchName:'Santiago'};
+  const f=inbound({mode:'bot_active',userText:'¿Cuánto cuesta?',booking:{chosenSlot,modelConfirmation:{presented:true}},
+    decision:{action:'conversation',patientSubject:'self',reply:'¿Quieres información del procedimiento?',facts:[]}});
+  f.state.system.aiEnabled=true;f.state.system.humanTakenOver=false;
+  await f.run();assert.equal(f.state.booking.modelConfirmation,null);assert.equal(f.state.booking.chosenSlot,chosenSlot);
+  f.state.conversation={facts:[{field:'rut',value:'12.345.678-5',subject:'self'},{field:'email',value:'test@example.test',subject:'self'},{field:'phone',value:'+56911111111',subject:'self'}]};
+  let posts=0;
+  const reply=await runModelBooking({state:f.state,plan:{operation:'confirm'},userText:'Sí',messageId:'1000',persist:async()=>{},assertActive:async()=>{},reserve:async()=>{posts++}});
+  assert.equal(posts,0);assert.match(reply,/Reserva por confirmar/);
+});
+test('clear conversational correction invalidates the old proposal without asking to reconfirm the datum',async()=>{
+  const f=inbound({mode:'bot_active',userText:'Corrijo: viajaré a Antofagasta',booking:{modelConfirmation:{presented:true}},
+    decision:{action:'conversation',patientSubject:'self',reply:'¿Qué fecha te acomoda?',facts:[{field:'careDestination',value:'Antofagasta',subject:'self',evidence:'viajaré a Antofagasta'}]}});
+  f.state.system.aiEnabled=true;f.state.system.humanTakenOver=false;
+  await f.run();assert.equal(f.state.booking.modelConfirmation,null);
+  assert.equal(f.state.conversation.facts[0].value,'Antofagasta');assert.equal(f.response.body.reply,'¿Qué fecha te acomoda?');
+});
+const guardSource=source.slice(source.indexOf('function guardOpenAiSchedulingClaims('),source.indexOf('\nfunction appendAntoniaIntroduction('));
+const realGuard=vm.runInNewContext(guardSource+'\nguardOpenAiSchedulingClaims',{normalizeKey:s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()});
+test('conversational text cannot announce an unexecuted availability search',()=>{
+  for(const text of ['Déjame revisar los cupos disponibles','Voy a consultar la agenda','Estoy buscando horarios','Perfecto[[MSG]]Déjame revisar los cupos disponibles']) {
+    assert.equal(realGuard(text,{}).reply,'No tengo un resultado de disponibilidad para esa solicitud.');
+  }
+  assert.equal(realGuard('¿En qué sede buscas la hora?',{}).reply,'¿En qué sede buscas la hora?');
+  assert.equal(realGuard('No estoy buscando cupos todavía.',{}).reply,'No estoy buscando cupos todavía.');
+});
