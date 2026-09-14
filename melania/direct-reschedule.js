@@ -27,6 +27,7 @@ export async function handleDirectReschedule(payload){
  if(idx===null){return {status:'choosing',reply:'Responde con el número de una de las horas ofrecidas. Si ninguna te sirve, escribe REAGENDAR y buscaré nuevamente.'};}
  const selected=slots[idx];const refreshed=await search(payload);const fresh=refreshed.slots.find(s=>exact(s,selected));
  if(!fresh)return {status:'choosing',reply:'Esa hora ya no está disponible. Buscaré nuevamente.',refresh:true,...await search(payload)};
+ if(process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_ENABLED!=='true') return {status:'choosing',reply:'La hora fue seleccionada, pero el cambio automático aún está en modo de prueba. El equipo debe confirmar la modificación.'};
  const run=formatRutWithDots(payload.patient?.run||payload.patient?.rut||'');if(!run)throw Error('patient_run_required');
  const eligibility=await checkCupos(fresh.branchId,run);if(eligibility?.paciente_existe!==true||eligibility?.puede_agendar===false)throw Error('patient_review_required');
  const booked=await bookAgendaweb({run,fecha:fresh.dataDia,hora:fresh.time,profesional:fresh.professionalId,especialidad:fresh.specialtyId,tipo:fresh.tipoCitaId,duracion:fresh.duration||30,ubicacion:fresh.branchId,pacienteExiste:true,email:payload.patient?.email||'',telefono:phone});
