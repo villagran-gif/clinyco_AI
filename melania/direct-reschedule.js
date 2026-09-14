@@ -22,7 +22,11 @@ async function ensure(){
  ensured=true;
 }
 function choice(text,max){const m=String(text||'').trim().match(/^(?:opci[oó]n\s*)?(\d{1,2})$/i);if(!m)return null;const n=Number(m[1]);return n>=1&&n<=max?n-1:null;}
-function exact(a,b){return ['professionalId','branchId','specialtyId','tipoCitaId','dataDia','time'].every(k=>String(a?.[k])===String(b?.[k]));}
+function exact(a,b){
+ const stable=['professionalId','specialtyId','tipoCitaId','dataDia','time'];
+ return stable.every(k=>String(a?.[k])===String(b?.[k]))
+  && (a?.branchId==null||b?.branchId==null||String(a.branchId)===String(b.branchId));
+}
 export function pickDiverseSlots(input,max=6){
  const slots=Array.isArray(input)?input:[];const groups=[];const byDate=new Map();
  for(const s of slots){const key=String(s.dataDia||s.date||'');if(!byDate.has(key)){const g=[];byDate.set(key,g);groups.push(g);}byDate.get(key).push(s);}
