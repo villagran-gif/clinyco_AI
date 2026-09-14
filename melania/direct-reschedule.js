@@ -11,11 +11,18 @@ async function ensure(){if(ensured||!dbEnabled())return;await getPool().query(`C
  chosen jsonb, error text, updated_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now())`);ensured=true;}
 function choice(text,max){const m=String(text||'').trim().match(/^(?:opci[oó]n\s*)?(\d{1,2})$/i);if(!m)return null;const n=Number(m[1]);return n>=1&&n<=max?n-1:null;}
 function exact(a,b){return ['professionalId','branchId','specialtyId','tipoCitaId','dataDia','time'].every(k=>String(a?.[k])===String(b?.[k]));}
-function options(result){const slots=(result.available_slots||[]).slice(0,6);if(!slots.length)return {slots,reply:`No encontré horas próximas con ${result.professional||'el mismo profesional'}. Si quieres, el equipo puede ayudarte.`};return {slots,reply:`Encontré estas horas con ${result.professional}:\n\n${slots.map((s,i)=>`${i+1}. ${s.date||s.dataDia} a las ${s.time}`).join('\n')}\n\nResponde con el número de la opción que prefieres.`};}
+export function pickDiverseSlots(input,max=6){
+ const slots=Array.isArray(input)?input:[];const groups=[];const byDate=new Map();
+ for(const s of slots){const key=String(s.dataDia||s.date||'');if(!byDate.has(key)){const g=[];byDate.set(key,g);groups.push(g);}byDate.get(key).push(s);}
+ const out=[];let round=0;while(out.length<max){let added=false;for(const g of groups){if(g[round]&&out.length<max){out.push(g[round]);added=true;}}if(!added)break;round++;}
+ return out;
+}
+function options(result,branchName){const slots=pickDiverseSlots(result.available_slots||[],6);const branch=String(branchName||'').trim();if(!slots.length)return {slots,reply:`No encontré horas próximas con ${result.professional||'el mismo profesional'}${branch?` en ${branch}`:''}. Si quieres, el equipo puede ayudarte.`};return {slots,reply:`Encontré estas horas con ${result.professional}${branch?` en ${branch}`:''}:\n\n${slots.map((s,i)=>`${i+1}. ${s.date||s.dataDia} a las ${s.time}${branch?` — Sucursal: ${branch}`:''}`).join('\n')}\n\nResponde con el número de la opción que prefieres.`};}
 async function search(payload){
  const r=await searchSlotsOnChileVps({query:payload.professional.name,patientRut:payload.patient?.run||payload.patient?.rut||'',branchId:payload.branch_id});
  const same=(r.available_slots||[]).filter(s=>String(s.professionalId)===String(payload.professional.id));
- return options({...r,professional:payload.professional.name,available_slots:same});
+ const branchName=payload.branch?.name||payload.branch_name||'';
+ return options({...r,professional:payload.professional.name,available_slots:same},branchName);
 }
 export async function handleDirectReschedule(payload){
  if(!dbEnabled())throw Error('db_required'); await ensure();
