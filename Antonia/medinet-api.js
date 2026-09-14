@@ -1242,6 +1242,28 @@ async function fetchPickerFechaSlots(ubicacionId, especialidadId, profesionalId)
  * Returns object compatible with runMedinetAntonia response shape:
  *  { professional, specialty, available_slots, patient_reply, source }
  */
+export async function searchSlotsForKnownProfessional({ professionalId, professionalName, branchId = DEFAULT_BRANCH_ID }) {
+  const profId = Number(professionalId);
+  if (!Number.isSafeInteger(profId)) throw new Error("professional_id_required");
+  const profName = String(professionalName || `Profesional ${profId}`).trim();
+  let specialties = [];
+  try { specialties = await fetchSpecialtiesForProfessional(branchId, profId); }
+  catch (e) { console.log(`[medinet-api] fetchSpecialtiesForProfessional(${branchId},${profId}) failed:`, e.message); }
+  const specialty = Array.isArray(specialties) && specialties.length ? specialties[0] : null;
+  const specialtyId = specialty?.id;
+  const specialtyName = specialty?.nombre || "";
+  if (!specialtyId) return {source:"api_known_professional",professional:profName,professionalId:profId,specialty:null,available_slots:[],patient_reply:null};
+  let tipoCitaId = null;
+  try { const all = await fetchProximosCuposAll(branchId); const pd = all?.find(p => Number(p.id) === profId); tipoCitaId = pd?.tipo_cita || null; }
+  catch (e) { console.log(`[medinet-api] known-prof tipoCita lookup failed:`, e.message); }
+  let slots = [];
+  try { slots = (await fetchPickerFechaSlots(branchId, specialtyId, profId)).map(s => ({...s,professional:profName,professionalId:String(profId),specialty:specialtyName,specialtyId,tipoCitaId})); }
+  catch (e) { console.log(`[medinet-api] known-prof picker failed:`, e.message); }
+  const todayIso = new Date().toISOString().slice(0,10);
+  slots = slots.filter(s => s.dataDia >= todayIso);
+  return {source:"api_known_professional",professional:profName,professionalId:profId,specialty:specialtyName,specialtyId,available_slots:slots};
+}
+
 export async function searchSlotsViaApi({ query, branchId = DEFAULT_BRANCH_ID }) {
   const profMatch = await findProfessional(query);
 
