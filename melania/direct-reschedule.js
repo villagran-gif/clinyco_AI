@@ -1,5 +1,6 @@
 import { getPool, dbEnabled } from '../db.js';
-import { searchSlotsForKnownProfessional, checkCupos, bookAgendaweb, updateAppointmentState, fetchAppointmentDetail, formatRutWithDots } from '../Antonia/medinet-api.js';
+import { updateAppointmentState, fetchAppointmentDetail, formatRutWithDots } from '../Antonia/medinet-api.js';
+import { searchSlotsOnChileVps, bookSlotOnChileVps } from './medinet-worker-client.js';
 
 const norm = v => String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 const digits = v => String(v||'').replace(/\D/g,'');
@@ -11,7 +12,11 @@ async function ensure(){if(ensured||!dbEnabled())return;await getPool().query(`C
 function choice(text,max){const m=String(text||'').trim().match(/^(?:opci[oó]n\s*)?(\d{1,2})$/i);if(!m)return null;const n=Number(m[1]);return n>=1&&n<=max?n-1:null;}
 function exact(a,b){return ['professionalId','branchId','specialtyId','tipoCitaId','dataDia','time'].every(k=>String(a?.[k])===String(b?.[k]));}
 function options(result){const slots=(result.available_slots||[]).slice(0,6);if(!slots.length)return {slots,reply:`No encontré horas próximas con ${result.professional||'el mismo profesional'}. Si quieres, el equipo puede ayudarte.`};return {slots,reply:`Encontré estas horas con ${result.professional}:\n\n${slots.map((s,i)=>`${i+1}. ${s.date||s.dataDia} a las ${s.time}`).join('\n')}\n\nResponde con el número de la opción que prefieres.`};}
-async function search(payload){const r=await searchSlotsForKnownProfessional({professionalId:payload.professional.id,professionalName:payload.professional.name,branchId:payload.branch_id});return options(r);}
+async function search(payload){
+ const r=await searchSlotsOnChileVps({query:payload.professional.name,patientRut:payload.patient?.run||payload.patient?.rut||'',branchId:payload.branch_id});
+ const same=(r.available_slots||[]).filter(s=>String(s.professionalId)===String(payload.professional.id));
+ return options({...r,professional:payload.professional.name,available_slots:same});
+}
 export async function handleDirectReschedule(payload){
  if(!dbEnabled())throw Error('db_required'); await ensure();
  const externalId=Number(payload.external_id), phone=digits(payload.patient?.phone), professionalId=Number(payload.professional?.id), branchId=Number(payload.branch_id);
@@ -29,9 +34,8 @@ export async function handleDirectReschedule(payload){
  if(!fresh)return {status:'choosing',reply:'Esa hora ya no está disponible. Buscaré nuevamente.',refresh:true,...await search(payload)};
  if(process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_ENABLED!=='true') return {status:'choosing',reply:'La hora fue seleccionada, pero el cambio automático aún está en modo de prueba. El equipo debe confirmar la modificación.'};
  const run=formatRutWithDots(payload.patient?.run||payload.patient?.rut||'');if(!run)throw Error('patient_run_required');
- const eligibility=await checkCupos(fresh.branchId,run);if(eligibility?.paciente_existe!==true||eligibility?.puede_agendar===false)throw Error('patient_review_required');
- const booked=await bookAgendaweb({run,fecha:fresh.dataDia,hora:fresh.time,profesional:fresh.professionalId,especialidad:fresh.specialtyId,tipo:fresh.tipoCitaId,duracion:fresh.duration||30,ubicacion:fresh.branchId,pacienteExiste:true,email:payload.patient?.email||'',telefono:phone});
- if(booked?.status!=='agendado_correctamente')return {status:'choosing',reply:'Esa hora no pudo reservarse. Escribe REAGENDAR para buscar otras alternativas.'};
+ const booked=await bookSlotOnChileVps({branchId:fresh.branchId,slot:fresh,patientData:{run,email:payload.patient?.email||'',fono:phone}});
+ if(booked?.success!==true && booked?.status!=='agendado_correctamente' && booked?.medinet?.status!=='agendado_correctamente')return {status:'choosing',reply:'Esa hora no pudo reservarse. Escribe REAGENDAR para buscar otras alternativas.'};
  try{await updateAppointmentState(externalId,'Cancel','Reagendada automáticamente por MelanIA tras elección verificada del paciente.');const old=await fetchAppointmentDetail(externalId);if(!/cancel|anulad/.test(norm(old?.estado?.nombre||old?.data?.estado?.nombre)))throw Error('old_not_cancelled');}
  catch(e){await getPool().query("UPDATE melania_reschedule_sessions SET state='needs_review',chosen=$2,error=$3,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(fresh),String(e.message||e)]);return {status:'needs_review',reply:'Reservé la nueva hora, pero necesito que el equipo verifique la cita anterior antes de confirmarte el cambio definitivo.'};}
  await getPool().query("UPDATE melania_reschedule_sessions SET state='completed',chosen=$2,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(fresh)]);
