@@ -2899,9 +2899,12 @@ function appendAntoniaIntroduction(state, reply) {
     state.system.introducedAsAntonia = true;
     const cleanReply = String(reply || "")
       .trim()
-      .replace(/^hola[.!]?\s*/i, "")
+      .replace(/^¡?hola\b[!.,:\s]*/iu, "")
+      .replace(/^soy Antonia\b[!.,:\s]*/iu, "")
       .trim();
-    return cleanReply ? `hola soy Antonia[[MSG]]${cleanReply}` : "hola soy Antonia";
+    // Keep the introduction with the first useful sentence so it does not
+    // consume a bubble and force the remaining model messages to merge.
+    return cleanReply ? `Hola, soy Antonia. ${cleanReply}` : "Hola, soy Antonia";
   }
   return reply;
 }
