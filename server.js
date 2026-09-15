@@ -54,6 +54,7 @@ import {
   onMutedPatientMessage as onEugeniaMutedPatientMessage
 } from "./eugenia/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
+import { reconcileExactSyntheticSession } from "./melania/direct-reschedule.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
 import { recordContactEvent } from "./review/crm-links.js";
 import { startCrmSync } from "./review/crm-sync.js";
@@ -3640,6 +3641,10 @@ console.log("[chatwoot-adapter] mounted POST /chatwoot/inbound");
 
 const PORT = process.env.PORT || 10000;
 await initDb();
+if(process.env.MELANIA_RECONCILE_EXACT_TRIAL==='true'){
+  try { console.log('[melania-reschedule-reconcile]', JSON.stringify(await reconcileExactSyntheticSession())); }
+  catch(error) { console.error('[melania-reschedule-reconcile]', error.message); }
+}
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);
   console.log(`Database persistence: ${dbEnabled() ? "enabled" : "disabled"}`);
