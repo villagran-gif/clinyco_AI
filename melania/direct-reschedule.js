@@ -22,6 +22,33 @@ async function ensure(){
  ensured=true;
 }
 function choice(text,max){const m=String(text||'').trim().match(/^(?:opci[oó]n\s*)?(\d{1,2})$/i);if(!m)return null;const n=Number(m[1]);return n>=1&&n<=max?n-1:null;}
+function slotDateIso(slot){
+ const raw=String(slot?.dataDia||slot?.date||'').trim();
+ if(/^\d{4}-\d{2}-\d{2}$/.test(raw))return raw;
+ const m=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);return m?`${m[3]}-${m[2]}-${m[1]}`:'';
+}
+function slotSortKey(slot){return `${slotDateIso(slot)} ${String(slot?.time||'').slice(0,5)}`;}
+export function choiceFromVisibleText(text,slots){
+ const m=String(text||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s*[·-]\s*(\d{2}:\d{2})$/);
+ if(!m)return null;const iso=`${m[3]}-${m[2]}-${m[1]}`,time=m[4],hits=[];
+ (Array.isArray(slots)?slots:[]).forEach((s,i)=>{if(slotDateIso(s)===iso&&String(s?.time||'').slice(0,5)===time)hits.push(i);});
+ return hits.length===1?hits[0]:null;
+}
+export function parsePreferredDateTime(text,now=new Date()){
+ const m=String(text||'').trim().match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2}):(\d{2})$/);if(!m)return null;
+ const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric'}).formatToParts(now).map(p=>[p.type,p.value]));
+ const year=Number(m[3]||parts.year),month=Number(m[2]),day=Number(m[1]),hour=Number(m[4]),minute=Number(m[5]);
+ if(month<1||month>12||day<1||day>31||hour<0||hour>23||minute<0||minute>59)return null;
+ const check=new Date(Date.UTC(year,month-1,day));if(check.getUTCFullYear()!==year||check.getUTCMonth()!==month-1||check.getUTCDate()!==day)return null;
+ return {dataDia:`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,time:`${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`};
+}
+export function rankSlotsNearPreference(input,preference,max=6){
+ const target=Date.parse(`${preference?.dataDia||''}T${preference?.time||''}:00Z`);if(!Number.isFinite(target))return [];
+ const ranked=(Array.isArray(input)?input:[]).map(s=>({s,t:Date.parse(`${slotDateIso(s)}T${String(s?.time||'').slice(0,5)}:00Z`)})).filter(x=>Number.isFinite(x.t));
+ ranked.sort((a,b)=>Math.abs(a.t-target)-Math.abs(b.t-target)||a.t-b.t);
+ return ranked.slice(0,max).map(x=>x.s).sort((a,b)=>slotSortKey(a).localeCompare(slotSortKey(b),'en'));
+}
+function noneSelection(text){return ['ninguna','ninguna de estas opciones me sirve','ninguna de estas opciones'].includes(norm(text));}
 function exact(a,b){
  const stable=['professionalId','specialtyId','tipoCitaId','dataDia','time'];
  return stable.every(k=>String(a?.[k])===String(b?.[k]))
@@ -31,7 +58,7 @@ export function pickDiverseSlots(input,max=6){
  const slots=Array.isArray(input)?input:[];const groups=[];const byDate=new Map();
  for(const s of slots){const key=String(s.dataDia||s.date||'');if(!byDate.has(key)){const g=[];byDate.set(key,g);groups.push(g);}byDate.get(key).push(s);}
  const out=[];let round=0;while(out.length<max){let added=false;for(const g of groups){if(g[round]&&out.length<max){out.push(g[round]);added=true;}}if(!added)break;round++;}
- return out;
+ return out.sort((a,b)=>slotSortKey(a).localeCompare(slotSortKey(b),'en'));
 }
 function options(result,branchName){
  const slots=pickDiverseSlots(result.available_slots||[],6),branch=String(branchName||'').trim();
@@ -115,8 +142,21 @@ export async function handleDirectReschedule(payload){
    VALUES($1,$2,$3,$4,$5,$6,$7,'choosing',now()) ON CONFLICT(external_id) DO UPDATE SET phone=$2,professional_id=$3,professional=$4,branch_id=$5,patient=$6,slots=$7,state='choosing',error=NULL,chosen=NULL,original_appointment_id=NULL,new_appointment_id=NULL,updated_at=now()`,[externalId,phone,professionalId,payload.professional.name,branchId,JSON.stringify(payload.patient||{}),JSON.stringify(found.slots)]);
    return {status:'choosing',reply:found.reply,slots:found.slots.map(s=>({date:s.date||s.dataDia,time:s.time}))};
  }
- const slots=Array.isArray(current.slots)?current.slots:[],idx=choice(text,slots.length);
- if(idx===null)return {status:'choosing',reply:'Responde con el número de una de las horas ofrecidas. Si ninguna te sirve, escribe REAGENDAR y buscaré nuevamente.'};
+ if(current?.state==='preference'){
+   const preference=parsePreferredDateTime(text);
+   if(!preference)return {status:'choosing',reply:'Indícame el día y la hora que prefieres usando el formato DD/MM HH:MM. Ejemplo: 18/09 15:30.'};
+   const found=await search(payload),ranked=rankSlotsNearPreference(found.slots,preference,6);
+   await getPool().query("UPDATE melania_reschedule_sessions SET state='choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(ranked)]);
+   if(!ranked.length)return {status:'choosing',reply:'No encontré alternativas cercanas a esa fecha. Indícame otro día y hora en formato DD/MM HH:MM.'};
+   return {status:'choosing',reply:'Encontré estas alternativas cercanas a la fecha que indicaste.',slots:ranked.map(s=>({date:s.date||s.dataDia,time:s.time}))};
+ }
+ const slots=Array.isArray(current.slots)?current.slots:[];
+ if(noneSelection(text)){
+   await getPool().query("UPDATE melania_reschedule_sessions SET state='preference',error=NULL,updated_at=now() WHERE external_id=$1",[externalId]);
+   return {status:'choosing',reply:'Por favor, indícame el día y la hora que prefieres usando el formato DD/MM HH:MM. Ejemplo: 18/09 15:30.'};
+ }
+ const numeric=choice(text,slots.length),visible=choiceFromVisibleText(text,slots),idx=numeric!==null?numeric:visible;
+ if(idx===null)return {status:'choosing',reply:'Selecciona una de las horas en “Ver fechas”. Si ninguna te sirve, elige “Ninguna”.'};
  const selected=slots[idx],refreshed=await search(payload),fresh=refreshed.slots.find(s=>exact(s,selected));
  if(!fresh)return {status:'choosing',reply:'Esa hora ya no está disponible. Escribe REAGENDAR y buscaré alternativas actuales.'};
  if(!assertControlledWrite(payload,phone))return {status:'choosing',reply:'La hora fue seleccionada, pero el cambio automático aún está en modo de prueba. El equipo debe confirmar la modificación.'};
