@@ -38,7 +38,7 @@
     const status=build('p');status.setAttribute('role','status');
     const summary=build('div');summary.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px';
     const table=build('table'),head=build('thead'),tr=build('tr');
-    for(const h of ['Hora','Paciente','Profesional / sede','Teléfono','Confirmación WhatsApp','Entrega WhatsApp','Medinet'])tr.append(build('th',h));head.append(tr);table.append(head);
+    for(const h of ['Hora','Paciente','Profesional / sede','Teléfono','Confirmación WhatsApp','Entrega WhatsApp','Medinet','Conversación'])tr.append(build('th',h));head.append(tr);table.append(head);
     const body=build('tbody');table.append(body);const attention=build('div');
     box.append(title,description,label,refresh,status,summary,table,attention);root.prepend(box);
     async function load(){refresh.disabled=true;date.disabled=true;body.replaceChildren();summary.replaceChildren();attention.replaceChildren();status.textContent='Consultando confirmaciones…';
@@ -46,7 +46,7 @@
         const hiddenTrials=data.mode==='live'?data.items.filter(a=>a.trial).length:0;
         const items=data.mode==='live'?data.items.filter(a=>!a.trial):data.items;
         const transport=data.inboundMode==='chatwoot_bridge'?' · Bridge Chatwoot':data.inboundMode==='meta_direct'?' · Meta directo':'';
-        status.textContent=`${items.length} registros reales · ${data.mode==='live'?'Modo real':'Modo de prueba'} · ${data.sendsEnabled?'Envíos habilitados'+transport:'Envíos detenidos'}${hiddenTrials?` · ${hiddenTrials} prueba(s) ocultas`:''}${data.truncated?' · Se muestran los primeros 500':''}`;
+        status.textContent=`${items.length} registros reales · ${data.mode==='live'?'Modo real':'Modo de prueba'} · ${data.sendsEnabled?'Envíos habilitados'+transport:'Envíos detenidos'} · Autoactualización 30 s${hiddenTrials?` · ${hiddenTrials} prueba(s) ocultas`:''}${data.truncated?' · Se muestran los primeros 500':''}`;
         const counts={wa:0,medinet:0,pending:0,reschedule:0,review:0,cancel:0,external:0};
         for(const a of items){
           if(a.state==='confirm')counts.wa++;
@@ -63,14 +63,18 @@
           row.append(build('td',deliveries[a.delivery]||a.delivery||'—'));
           const verified=a.verified_at?`Verificado ${new Date(a.verified_at).toLocaleString('es-CL',{timeZone:'America/Santiago'})}`:'';
           row.append(cellWithBadge(medinetStatus(a),verified));
+          const conversation=build('td');
+          if(a.chatwoot_conversation_id){const link=build('a','Abrir Chatwoot');link.href=`https://app.chatwoot.com/app/accounts/162472/conversations/${encodeURIComponent(a.chatwoot_conversation_id)}`;link.target='_blank';link.rel='noopener noreferrer';conversation.append(link);}else conversation.textContent='—';
+          row.append(conversation);
           body.append(row);
         }
         const cards=[['✅ WhatsApp confirmados',counts.wa,'ok'],['✅ Medinet confirmados',counts.medinet,'ok'],['⏳ Sin respuesta',counts.pending,'muted'],['🔄 Reagendar',counts.reschedule,'info'],['❌ Cancelaron por WhatsApp',counts.cancel,'bad'],['🚫 Cerradas en Medinet',counts.external,'bad'],['⚠️ Revisión',counts.review,'warn']];
         for(const [labelText,n,kind] of cards)summary.append(badge(`${labelText}: ${n}`,kind));
-        if(!items.length){const empty=build('tr');const td=build('td','No hay confirmaciones directas para esta fecha.');td.colSpan=7;empty.append(td);body.append(empty);}
+        if(!items.length){const empty=build('tr');const td=build('td','No hay confirmaciones directas para esta fecha.');td.colSpan=8;empty.append(td);body.append(empty);}
         if(data.attention.length){attention.append(build('h4','Respuestas que necesitan revisión'));for(const e of data.attention)attention.append(build('p',`${e.phone}: ${e.reply||'Mensaje sin texto'} (${e.state})`));}
       }catch(e){status.textContent=e.message||'No se pudo consultar el registro.';}finally{refresh.disabled=false;date.disabled=false;}}
     refresh.onclick=load;date.onchange=load;
+    setInterval(()=>{if(document.visibilityState==='visible'&&!refresh.disabled)load();},30000);
     const observer=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){observer.disconnect();load();}});observer.observe(box);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
