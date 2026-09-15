@@ -5,6 +5,8 @@ import { isEndoscopyBooking, ENDOSCOPY_HANDOFF } from "./melania/booking-policy.
 import express from "express";
 import { runModelBooking } from "./conversation/model-booking.js";
 import { conversationPrompt, conversationContext, parseConversationDecision, applyConversationFacts, recentConversationHistory } from "./conversation/model-conversation.js";
+import { appointmentStatusIntent, recoverAppointmentCriteria, matchExistingAppointments, appointmentStatusReply } from "./conversation/appointment-check.js";
+import { readDailySnapshot } from "./review/medinet-snapshot.js";
 import { controlKey, createControlStore, ControlError } from "./conversation/control.js";
 const antoniaControl = createControlStore(getControlPool);
 import OpenAI from "openai";
@@ -407,6 +409,52 @@ function extractMedinetQuery(text = "") {
 
   const cleaned = sanitizeMedinetProfessionalCandidate(text);
   return cleaned || String(text || "").replace(/[¿?.,!;:()]/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ").trim();
+}
+
+async function loadAppointmentDateFromChileVps(date,{attempts=8}={}) {
+  const pool=getControlPool();
+  if(!pool)throw new Error('appointment_check_database_unavailable');
+  for(let i=0;i<attempts;i++){
+    try{return (await readDailySnapshot(date,date,{pool})).appointments;}
+    catch(error){
+      if(error?.code!=='snapshot_pending')throw error;
+      if(i===attempts-1)throw error;
+      await sleep(1500);
+    }
+  }
+  return [];
+}
+
+function recoverAppointmentProfessional(texts=[],fallback='') {
+  if(fallback)return fallback;
+  for(const text of [...texts].reverse()){
+    const found=extractProfessionalReference(text)?.professionalName;
+    if(found)return found;
+  }
+  return '';
+}
+
+async function existingAppointmentCheck({state,userText,history,now=new Date()}) {
+  const pending=state.system?.appointmentCheck?.pending===true;
+  if(!appointmentStatusIntent(userText,{pending}))return null;
+  const userTexts=[...(history||[]).filter(x=>x?.role==='user').map(x=>String(x.content||'')),String(userText||'')].filter(Boolean);
+  const prior=state.system?.appointmentCheck||{};
+  const professional=recoverAppointmentProfessional(userTexts,prior.professional||'');
+  const verifiedRut=state.identity?.safeToUseHistoricalContext ? state.contactDraft?.c_rut : null;
+  const criteria=recoverAppointmentCriteria({texts:userTexts,rut:verifiedRut||'',professional,date:prior.date||'',time:prior.time||'',now});
+  state.system ||= {};
+  if(!criteria.rut){state.system.appointmentCheck={pending:true,professional,date:criteria.date,time:criteria.time};return {reply:'Para revisar una cita ya agendada necesito confirmar tu RUT. ¿Me lo indicas?',status:'missing_rut'};}
+  if(!professional){state.system.appointmentCheck={pending:true,date:criteria.date,time:criteria.time};return {reply:'¿Con qué profesional tienes la cita que quieres revisar?',status:'missing_professional'};}
+  if(!criteria.date){state.system.appointmentCheck={pending:true,professional,time:criteria.time};return {reply:'¿De qué fecha es la cita que quieres revisar?',status:'missing_date'};}
+  try{
+    const appointments=await loadAppointmentDateFromChileVps(criteria.date);
+    const match=matchExistingAppointments(appointments,{...criteria,professional});
+    state.system.appointmentCheck={pending:false,professional,date:criteria.date,time:criteria.time,checkedAt:new Date().toISOString()};
+    return {reply:appointmentStatusReply(match,{...criteria,professional}),status:'checked',match};
+  }catch(error){
+    state.system.appointmentCheck={pending:true,professional,date:criteria.date,time:criteria.time};
+    return {reply:'No pude verificar Medinet en este momento. No voy a asumir si la cita sigue vigente.',status:'unavailable'};
+  }
 }
 
 async function loadPublishedAgendaweb() {
@@ -3513,6 +3561,14 @@ const handleInboundWebhook = async (req, res) => {
       : getHistory(conversationId);
     const history = recentConversationHistory(recent, { messageId, userText, limit: MAX_HISTORY_MESSAGES });
     conversationHistory.set(conversationId, history);
+    const appointmentCheck = await existingAppointmentCheck({state,userText,history});
+    if (appointmentCheck) {
+      await persistConversationSnapshot(conversationId,state,channelLabel);
+      const result=await sendManagedReply({appId,conversationId,messageId,userText,
+        reply:appointmentCheck.reply,kind:'appointment_status_check',state,info,channelLabel,
+        resolverDecision:{stage:'appointment_status_check',nextAction:appointmentCheck.status,reason:'Verified existing appointment lookup'}});
+      return res.json(result);
+    }
     await antoniaControl.assertActive(info.controlKey, info.controlRevision);
     const decision = parseConversationDecision(await askAntoniaAI({
       systemPrompt: buildOpenAISystemPrompt(), stateSummary: conversationContext(state),
