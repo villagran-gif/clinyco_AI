@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import {directAttendanceRouter} from '../review/attendance-direct.js';
-import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots,availableDates,parseDateChoice,parseTimeChoice,shouldRestartReschedule} from '../melania/direct-reschedule.js';
+import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots,availableDates,parseDateChoice,parseTimeChoice,shouldRestartReschedule,resolveProfessionalSlots,assertControlledWrite} from '../melania/direct-reschedule.js';
 test('dashboard proxy keeps token server-side and propagates only report JSON',async()=>{
  let seen;const app=express();app.use(directAttendanceRouter({env:{CONFIRMATIONS_INTAKE_TOKEN:'synthetic'},fetchImpl:async(url,opts)=>{seen={url,opts};return {ok:true,json:async()=>({items:[],attention:[],mode:'test'})};}}));
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -82,3 +82,22 @@ test('date then time chooser needs no typed combined date-time format',()=>{
 });
 
 test('Otra fecha stays inside date/time chooser instead of restarting reschedule',()=>{ assert.equal(shouldRestartReschedule('Otra fecha',{state:'time_choosing'}),false); assert.equal(shouldRestartReschedule('Reagendar',{state:'time_choosing'}),true); assert.equal(shouldRestartReschedule('cambiar hora',{state:'time_choosing'}),true); });
+
+
+test('reschedule resolves missing Medinet professional id from live slots',()=>{
+ const available=[
+  {professional:'Rodrigo Villagran Morales',professionalId:13,dataDia:'2026-09-17',time:'11:00'},
+  {professional:'Rodrigo Villagran Morales',professionalId:13,dataDia:'2026-09-21',time:'10:20'},
+  {professional:'Otro Profesional',professionalId:99,dataDia:'2026-09-17',time:'09:00'},
+ ];
+ const r=resolveProfessionalSlots(available,{id:null,name:'Rodrigo Villagran Morales'},'',39);
+ assert.equal(r.professionalId,13);assert.equal(r.slots.length,2);assert.ok(r.slots.every(s=>s.branchId===39));
+});
+
+test('live reschedule write scope accepts real flow and rejects trial',()=>{
+ const prior={enabled:process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_ENABLED,scope:process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_SCOPE};
+ process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_ENABLED='true';process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_SCOPE='live';
+ try{assert.equal(assertControlledWrite({trial:false,external_id:421207,professional:{id:null,name:'Rodrigo Villagran Morales'},branch_id:39,patient:{name:'Paciente'},appointment_at:'2026-09-15T10:00:00-03:00'},'56911111111'),true);
+ assert.throws(()=>assertControlledWrite({trial:true,external_id:990000052,professional:{id:13},branch_id:39,patient:{name:'Rodrigo'},appointment_at:'2026-09-21T10:00:00-03:00'},'56987297033'),/rejects_trial/);}
+ finally{process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_ENABLED=prior.enabled;process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_SCOPE=prior.scope;}
+});

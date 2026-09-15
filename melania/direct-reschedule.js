@@ -85,18 +85,25 @@ function options(result,branchName){
  if(!slots.length)return {slots,reply:`No encontré horas próximas con ${result.professional||'el mismo profesional'}${branch?` en ${branch}`:''}. Si quieres, el equipo puede ayudarte.`};
  return {slots,reply:`Encontré estas horas con ${result.professional}${branch?` en ${branch}`:''}:\n\n${slots.map((s,i)=>`${i+1}. ${s.date||s.dataDia} a las ${s.time}${branch?` — Sucursal: ${branch}`:''}`).join('\n')}\n\nResponde con el número de la opción que prefieres.`};
 }
+export function resolveProfessionalSlots(availableSlots,{id,name}={},fallbackName='',branchId){
+ const expectedId=Number(id),hasExpectedId=Number.isSafeInteger(expectedId)&&expectedId>0,expectedName=norm(name);
+ const all=Array.isArray(availableSlots)?availableSlots:[];
+ const slots=all.filter(slot=>hasExpectedId?String(slot.professionalId)===String(expectedId):norm(slot.professional||fallbackName)===expectedName).map(slot=>({...slot,branchId:Number(branchId)}));
+ const ids=[...new Set(slots.map(slot=>Number(slot.professionalId)).filter(value=>Number.isSafeInteger(value)&&value>0))];
+ return {slots,professionalId:hasExpectedId?expectedId:(ids.length===1?ids[0]:null)};
+}
 async function search(payload){
  const r=await searchSlotsOnChileVps({query:payload.professional.name,patientRut:payload.patient?.run||payload.patient?.rut||'',branchId:payload.branch_id});
- const same=(r.available_slots||[]).filter(s=>String(s.professionalId)===String(payload.professional.id)).map(s=>({...s,branchId:Number(payload.branch_id)}));
- return options({...r,professional:payload.professional.name,available_slots:same},payload.branch?.name||payload.branch_name||'');
+ const resolved=resolveProfessionalSlots(r.available_slots,payload.professional,r.professional,payload.branch_id);
+ return {...options({...r,professional:payload.professional.name,available_slots:resolved.slots},payload.branch?.name||payload.branch_name||''),professionalId:resolved.professionalId};
 }
 function appointmentMatches(raw,payload,{date,time}={}){
  const expectedDate=date||String(payload.appointment_at||'').slice(0,10),expectedTime=time||String(payload.appointment_at||'').slice(11,16);
  if(dayOf(raw)!==expectedDate||timeOf(raw)!==expectedTime)return false;
  if(String(raw?.sucursal?.id||'')!==String(payload.branch_id))return false;
- const rawProfId=raw?.profesional?.id;
- if(rawProfId!=null&&String(rawProfId)!==String(payload.professional?.id))return false;
- if(rawProfId==null&&norm(fullName(raw?.profesional))!==norm(payload.professional?.name))return false;
+ const rawProfId=raw?.profesional?.id,expectedProfId=Number(payload.professional?.id);
+ if(Number.isSafeInteger(expectedProfId)&&expectedProfId>0&&rawProfId!=null&&String(rawProfId)!==String(expectedProfId))return false;
+ if(!(Number.isSafeInteger(expectedProfId)&&expectedProfId>0&&rawProfId!=null)&&norm(fullName(raw?.profesional))!==norm(payload.professional?.name))return false;
  const rawPhone=digits(raw?.paciente?.telefono||raw?.paciente?.telefono_2||raw?.paciente?.fono||'');
  if(rawPhone)return rawPhone===digits(payload.patient?.phone);
  return norm(fullName(raw?.paciente))===norm(payload.patient?.name);
@@ -113,8 +120,8 @@ async function resolveOriginal(payload){
 }
 function patientRun(raw){return raw?.paciente?.rut||raw?.paciente?.run||raw?.paciente?.identificador||raw?.paciente?.identifier||'';}
 function professionalMatches(raw,id,name){
- const rawId=raw?.profesional?.id;
- if(rawId!=null&&String(rawId)!=='')return String(rawId)===String(id);
+ const rawId=raw?.profesional?.id,expectedId=Number(id);
+ if(Number.isSafeInteger(expectedId)&&expectedId>0&&rawId!=null&&String(rawId)!=='')return String(rawId)===String(expectedId);
  return norm(fullName(raw?.profesional))===norm(name);
 }
 function patientMatches(raw,phone,name){
@@ -130,7 +137,7 @@ function slotMatchesAppointment(raw,slot,professionalName,phone,patientName){
  if(raw?.tipo_id!=null&&slot?.tipoCitaId!=null&&String(raw.tipo_id)!==String(slot.tipoCitaId))return false;
  return !cancelled(raw);
 }
-function assertControlledWrite(payload,phone){
+export function assertControlledWrite(payload,phone){
  const exactTrial = payload.trial===true
   && phone==='56987297033'
   && Number(payload.external_id)===990000001
@@ -140,10 +147,14 @@ function assertControlledWrite(payload,phone){
   && String(payload.appointment_at||'').startsWith('2026-09-14T16:00');
  if(exactTrial)return true;
  if(process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_ENABLED!=='true')return false;
- if(process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_SCOPE!=='trial')throw Error('reschedule_write_scope_not_allowed');
- const allowed=digits(process.env.MELANIA_DIRECT_RESCHEDULE_TEST_PHONE||'56987297033');
- if(payload.trial!==true||phone!==allowed)throw Error('reschedule_trial_identity_mismatch');
- return true;
+ const scope=String(process.env.MELANIA_DIRECT_RESCHEDULE_WRITE_SCOPE||'trial');
+ if(scope==='trial'){
+  const allowed=digits(process.env.MELANIA_DIRECT_RESCHEDULE_TEST_PHONE||'56987297033');
+  if(payload.trial!==true||phone!==allowed)throw Error('reschedule_trial_identity_mismatch');
+  return true;
+ }
+ if(scope==='live'){if(payload.trial===true)throw Error('reschedule_live_scope_rejects_trial');return true;}
+ throw Error('reschedule_write_scope_not_allowed');
 }
 async function needsReview(externalId,chosen,error,newId=null,originalId=null){
  await getPool().query("UPDATE melania_reschedule_sessions SET state='needs_review',chosen=$2,error=$3,new_appointment_id=COALESCE($4,new_appointment_id),original_appointment_id=COALESCE($5,original_appointment_id),updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(chosen||{}),String(error||'needs_review').slice(0,250),newId,originalId]);
@@ -151,14 +162,16 @@ async function needsReview(externalId,chosen,error,newId=null,originalId=null){
 }
 export async function handleDirectReschedule(payload){
  if(!dbEnabled())throw Error('db_required'); await ensure();
- const externalId=Number(payload.external_id),phone=digits(payload.patient?.phone),professionalId=Number(payload.professional?.id),branchId=Number(payload.branch_id);
- if(!Number.isSafeInteger(externalId)||!/^569\d{8}$/.test(phone)||!Number.isSafeInteger(professionalId)||!Number.isSafeInteger(branchId))throw Error('invalid_reschedule_identity');
+ const externalId=Number(payload.external_id),phone=digits(payload.patient?.phone),suppliedProfessionalId=Number(payload.professional?.id),branchId=Number(payload.branch_id);
+ if(!Number.isSafeInteger(externalId)||!/^569\d{8}$/.test(phone)||!Number.isSafeInteger(branchId)||branchId<1||!String(payload.professional?.name||'').trim())throw Error('invalid_reschedule_identity');
  const current=(await getPool().query('SELECT * FROM melania_reschedule_sessions WHERE external_id=$1',[externalId])).rows[0];
  const text=String(payload.inbound_message||'').trim();
  if(current&&['booking','cancelling','needs_review'].includes(current.state))return {status:'needs_review',reply:'Este cambio está en revisión. No enviaré una segunda reserva mientras no se verifique la operación anterior.'};
  if(current?.state==='completed')return {status:'completed',reply:'Esta solicitud ya quedó reagendada y verificada en Medinet.'};
  if(shouldRestartReschedule(text,current)){
-   const found=await search(payload);await getPool().query(`INSERT INTO melania_reschedule_sessions(external_id,phone,professional_id,professional,branch_id,patient,slots,state,updated_at)
+   const found=await search(payload),professionalId=(Number.isSafeInteger(suppliedProfessionalId)&&suppliedProfessionalId>0)?suppliedProfessionalId:Number(found.professionalId);
+   if(!Number.isSafeInteger(professionalId)||professionalId<1)throw Error('professional_resolution_failed');
+   await getPool().query(`INSERT INTO melania_reschedule_sessions(external_id,phone,professional_id,professional,branch_id,patient,slots,state,updated_at)
    VALUES($1,$2,$3,$4,$5,$6,$7,'choosing',now()) ON CONFLICT(external_id) DO UPDATE SET phone=$2,professional_id=$3,professional=$4,branch_id=$5,patient=$6,slots=$7,state='choosing',error=NULL,chosen=NULL,original_appointment_id=NULL,new_appointment_id=NULL,updated_at=now()`,[externalId,phone,professionalId,payload.professional.name,branchId,JSON.stringify(payload.patient||{}),JSON.stringify(found.slots)]);
    return {status:'choosing',reply:found.reply,slots:found.slots.map(s=>({date:s.date||s.dataDia,time:s.time}))};
  }
