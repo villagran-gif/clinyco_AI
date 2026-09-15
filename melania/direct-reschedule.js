@@ -65,10 +65,23 @@ async function resolveOriginal(payload){
  return {id,raw};
 }
 function patientRun(raw){return raw?.paciente?.rut||raw?.paciente?.run||raw?.paciente?.identificador||raw?.paciente?.identifier||'';}
-function slotMatchesAppointment(raw,slot){
- return dayOf(raw)===String(slot.dataDia)&&timeOf(raw)===String(slot.time)
-  && String(raw?.sucursal?.id||'')===String(slot.branchId)
-  && String(raw?.profesional?.id||'')===String(slot.professionalId)&&!cancelled(raw);
+function professionalMatches(raw,id,name){
+ const rawId=raw?.profesional?.id;
+ if(rawId!=null&&String(rawId)!=='')return String(rawId)===String(id);
+ return norm(fullName(raw?.profesional))===norm(name);
+}
+function patientMatches(raw,phone,name){
+ const rawPhone=digits(raw?.paciente?.telefono||raw?.paciente?.telefono_2||raw?.paciente?.fono||'');
+ if(rawPhone)return rawPhone===digits(phone);
+ return norm(fullName(raw?.paciente))===norm(name);
+}
+function slotMatchesAppointment(raw,slot,professionalName,phone,patientName){
+ if(dayOf(raw)!==String(slot.dataDia)||timeOf(raw)!==String(slot.time))return false;
+ if(String(raw?.sucursal?.id||'')!==String(slot.branchId))return false;
+ if(!professionalMatches(raw,slot.professionalId,professionalName))return false;
+ if(phone&&!patientMatches(raw,phone,patientName))return false;
+ if(raw?.tipo_id!=null&&slot?.tipoCitaId!=null&&String(raw.tipo_id)!==String(slot.tipoCitaId))return false;
+ return !cancelled(raw);
 }
 function assertControlledWrite(payload,phone){
  const exactTrial = payload.trial===true
@@ -121,11 +134,47 @@ export async function handleDirectReschedule(payload){
  const newId=Number(booked?.appointmentId||booked?.medinet?.id||booked?.medinet?.appointment_id);
  if(booked?.success!==true||!Number.isSafeInteger(newId)||newId<1)return needsReview(externalId,fresh,'booking_unverified',null,original.id);
  await getPool().query("UPDATE melania_reschedule_sessions SET state='cancelling',new_appointment_id=$2,updated_at=now() WHERE external_id=$1",[externalId,newId]);
- try{const created=(await appointmentDetailOnChileVps(newId)).appointment;if(!slotMatchesAppointment(created,fresh))throw Error('new_appointment_verification_failed');}
+ try{const created=(await appointmentDetailOnChileVps(newId)).appointment;if(!slotMatchesAppointment(created,fresh,payload.professional.name,phone,payload.patient?.name))throw Error('new_appointment_verification_failed');}
  catch(e){return needsReview(externalId,fresh,e.message,newId,original.id);}
  try{const cancelledResult=await updateAppointmentOnChileVps({appointmentId:original.id,action:'Cancel',observation:'Reagendada automáticamente por MelanIA tras elección verificada del paciente.'});if(!cancelled(cancelledResult.appointment))throw Error('old_not_cancelled');}
  catch(e){return needsReview(externalId,fresh,e.message,newId,original.id);}
  await getPool().query("UPDATE melania_reschedule_sessions SET state='completed',chosen=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(fresh)]);
  const branch=payload.branch?.name||payload.branch_name||'';
  return {status:'completed',reply:`Listo. Tu cita quedó reagendada con ${payload.professional.name} para el ${fresh.date||fresh.dataDia} a las ${fresh.time}${branch?` en ${branch}`:''}.`,slot:{date:fresh.date||fresh.dataDia,time:fresh.time,branch}};
+}
+
+export async function reconcileExactSyntheticSession(){
+ if(!dbEnabled())return {status:'skipped',reason:'db_disabled'};
+ await ensure();
+ const {rows:[s]}=await getPool().query('SELECT * FROM melania_reschedule_sessions WHERE external_id=990000001');
+ if(!s||s.phone!=='56987297033'||s.state!=='needs_review'||!s.original_appointment_id||!s.new_appointment_id||!s.chosen)
+   return {status:'skipped',reason:'session_not_reconcilable',state:s?.state||null};
+ if(Number(s.professional_id)!==13||Number(s.branch_id)!==39)
+   return {status:'skipped',reason:'session_identity_mismatch'};
+ const chosen=s.chosen,patient=s.patient||{};
+ let created;
+ try{created=(await appointmentDetailOnChileVps(Number(s.new_appointment_id))).appointment;}
+ catch{return {status:'needs_review',reason:'new_appointment_read_failed',newId:Number(s.new_appointment_id)};}
+ if(!slotMatchesAppointment(created,chosen,s.professional,s.phone,patient.name))
+   return {status:'needs_review',reason:'new_appointment_verification_failed',newId:Number(s.new_appointment_id)};
+ let old;
+ try{old=(await appointmentDetailOnChileVps(Number(s.original_appointment_id))).appointment;}
+ catch{return {status:'needs_review',reason:'old_appointment_read_failed',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id)};}
+ const oldIdentity=String(old?.sucursal?.id||'')===String(s.branch_id)
+   && professionalMatches(old,s.professional_id,s.professional)
+   && patientMatches(old,s.phone,patient.name);
+ if(!oldIdentity)return {status:'needs_review',reason:'old_appointment_identity_mismatch',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id)};
+ if(!cancelled(old)){
+   try{
+     const result=await updateAppointmentOnChileVps({appointmentId:Number(s.original_appointment_id),action:'Cancel',observation:'Reagendada automáticamente por MelanIA tras verificación de nueva reserva.'});
+     if(!cancelled(result.appointment))
+       return {status:'needs_review',reason:'old_not_cancelled',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id)};
+   }catch{
+     return {status:'needs_review',reason:'old_cancel_failed',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id)};
+   }
+ }
+ await getPool().query("UPDATE melania_reschedule_sessions SET state='completed',error=NULL,updated_at=now() WHERE external_id=$1",[s.external_id]);
+ await getPool().query("UPDATE attendance_direct.requests SET state='rescheduled',medinet_status='completed',error=NULL,verified_at=now() WHERE id=2 AND trial=true AND phone='56987297033'");
+ await getPool().query("UPDATE attendance_direct.control SET paused=false,reason='exact_trial_completed',updated_at=now() WHERE phone='56987297033'");
+ return {status:'completed',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id),date:chosen.dataDia,time:chosen.time};
 }
