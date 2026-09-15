@@ -34,3 +34,10 @@ test('does not claim requested time when Medinet has another time',()=>{
  assert.equal(match.exact.length,0);
  assert.match(appointmentStatusReply(match,criteria),/10:00, no a las 09:20/);
 });
+
+test('cancelled requested time reports another active same-day appointment',()=>{
+ const criteria={rut:'109234451',professional:'Ingrid Yevenes',date:'2026-09-24',time:'09:20'};
+ const match=matchExistingAppointments([row('Cancelada','09:20'),{...row('Agendado','09:40'),id:501}],criteria);
+ const reply=appointmentStatusReply(match,criteria);
+ assert.match(reply,/09:20 figura Cancelada/);assert.match(reply,/otra cita.*09:40/);assert.match(reply,/Estado: Agendado/);
+});

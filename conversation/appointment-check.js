@@ -76,8 +76,11 @@ export function appointmentStatusReply(match,criteria={}) {
   if(list.length===1){
     const a=list[0];
     const status=norm(a.status);
-    if(['cancelada','cancelado','anulada','anulado','re-agendado','reagendado'].includes(status))
+    if(['cancelada','cancelado','anulada','anulado','re-agendado','reagendado'].includes(status)) {
+      const active=(match?.professionalDay||[]).find(other=>other.id!==a.id && !['cancelada','cancelado','anulada','anulado','re-agendado','reagendado'].includes(norm(other.status)));
+      if(active)return `Revisé Medinet. La cita de las ${a.time} figura ${a.status}. Pero tienes otra cita con ${active.professional} ese mismo día a las ${active.time}. Estado: ${active.status}.`;
       return `Revisé Medinet. La cita del ${a.date.split('-').reverse().join('/')} a las ${a.time} con ${a.professional} figura ${a.status}.`;
+    }
     return `Sí. Revisé Medinet y tu cita del ${a.date.split('-').reverse().join('/')} a las ${a.time} con ${a.professional} está registrada. Estado: ${a.status}.`;
   }
   if(list.length>1)return `Encontré ${list.length} citas que coinciden con esos datos. Para no confundirme, dime cuál horario quieres revisar.`;
