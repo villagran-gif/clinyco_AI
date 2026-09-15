@@ -5,6 +5,7 @@ import pg from 'pg';
 import { fetchChileanAppointments as fetchAllAppointments } from './medinet-daily-source.js';
 import { ensureSnapshotSchema,requestSnapshot } from '../review/medinet-snapshot.js';
 const chileDay=(now=new Date())=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+export const seedDays=(day,count=5)=>Array.from({length:Math.max(2,Number(count)||5)},(_,offset)=>{const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+offset);return d.toISOString().slice(0,10);});
 export async function syncOneDay({pool,appointments=fetchAllAppointments}) {
   const lease=randomUUID();
   const claim=await pool.query(`UPDATE medinet_daily_snapshots SET attempt_at=now(),lease_until=now()+interval '2 minutes',lease_id=$1,error_code=NULL
@@ -29,8 +30,9 @@ export async function startDailySync({pool,appointments=fetchAllAppointments,now
   await ensureSnapshotSchema(pool);let busy=false,lastSeed=0;
   const tick=async()=>{if(busy)return;busy=true;try{
     if(now().valueOf()-lastSeed>120000){
-      const day=chileDay(now()),next=new Date(day+'T12:00:00Z');next.setUTCDate(next.getUTCDate()+1);
-      await requestSnapshot(pool,day);await requestSnapshot(pool,next.toISOString().slice(0,10));lastSeed=now().valueOf();
+      const day=chileDay(now()),horizon=process.env.MEDINET_DAILY_SEED_DAYS||5;
+      for(const target of seedDays(day,horizon)) await requestSnapshot(pool,target);
+      lastSeed=now().valueOf();
     }
     for(let i=0;i<2;i++){const result=await syncOneDay({pool,appointments});if(!result)break;console.info('[medinet-vps-daily]',JSON.stringify(result));}
   }catch(error){console.warn('[medinet-vps-daily]',JSON.stringify({code:'sync_unavailable',type:error.name}));}finally{busy=false;}};

@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readDailySnapshot,PendingSnapshotError,snapshotDays } from '../review/medinet-snapshot.js';
 import { createChileanMedinetClient } from '../workers/medinet-daily-source.js';
-import { syncOneDay } from '../workers/medinet-daily-sync.js';
+import { syncOneDay,seedDays } from '../workers/medinet-daily-sync.js';
 const day='2026-09-14',now=new Date('2026-09-14T12:00:00Z');
+test('daily worker seeds five Chile calendar days for T-72 horizon',()=>{assert.deepEqual(seedDays('2026-09-14'),['2026-09-14','2026-09-15','2026-09-16','2026-09-17','2026-09-18']);});
 const fakePool=rows=>{const writes=[];return {writes,query:async(sql,args)=>{if(sql.startsWith('SELECT'))return {rows};writes.push({sql,args});return {rows:[]};}};};
 test('only bounded real calendar dates can request snapshots',()=>{assert.deepEqual(snapshotDays(day,'2026-09-15'),[day,'2026-09-15']);assert.throws(()=>snapshotDays('2026-02-30',day));assert.throws(()=>snapshotDays(day,'2026-09-17'));});
 test('fresh VPS snapshot is returned with its actual timestamp; Render does not contact Medinet',async()=>{
