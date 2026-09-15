@@ -248,8 +248,14 @@ async function apiFetch(path, { method = "GET", body = null, timeout = 15000 } =
 
     let res = await fetch(url, options);
 
-    // Auto-refresh JWT on 401 for /api-public/ endpoints (single retry)
-    if (res.status === 401 && path.startsWith("/api-public/") && _jwtToken) {
+    // Auto-refresh JWT on an expired /api-public/ token (single retry).
+    // Medinet currently returns either 401 or 403 + token_not_valid when a JWT expires.
+    let refreshJwt = res.status === 401 && path.startsWith("/api-public/") && _jwtToken;
+    if (!refreshJwt && res.status === 403 && path.startsWith("/api-public/") && _jwtToken) {
+      const authText = await res.clone().text().catch(() => "");
+      refreshJwt = /token_not_valid|token is expired|token[^\n]{0,80}expired/i.test(authText);
+    }
+    if (refreshJwt) {
       clearJwtToken();
       const controller2 = new AbortController();
       const timer2 = setTimeout(() => controller2.abort(), timeout);
