@@ -23,3 +23,21 @@ test('connection check never logs patients or upstream error bodies',async()=>{
   assert.equal(JSON.stringify(bad).includes('private'),false);
   assert.equal(dailyFailure({name:'TimeoutError'}).code,'timeout');
 });
+
+test('documented reception tariffs fill expected values without overriding manual tariff',()=>{
+  const ingrid=appointment(10,'Agendado',{tipo_id:63,tipo:'Atención Nutriología (Agenda web)',profesional:{nombres:'Ingrid',paterno:'Yevenes Marquez'},paciente:{nombres:'Paciente',prevision:'Fonasa'}});
+  const r=report({appointments:[ingrid]});
+  assert.equal(r.items[0].expectedAmount,60000);assert.equal(r.items[0].tariffSource,'recepcion-2026-09-15');
+  const manual=report({appointments:[ingrid],tariffs:[{professional_key:'ingrid yevenes marquez',type_id:'63',amount_clp:61000}]});
+  assert.equal(manual.items[0].expectedAmount,61000);assert.equal(manual.items[0].tariffSource,'manual');
+});
+
+test('payer-specific and ambiguous documented tariffs fail closed',()=>{
+  const fonasa=appointment(20,'Agendado',{tipo_id:2,tipo:'Evaluación Cirugía - Nuevo',profesional:{nombres:'Edmundo',paterno:'Ziede Rojas'},paciente:{nombres:'Paciente',prevision:'Fonasa'}});
+  const isapre=appointment(21,'Agendado',{tipo_id:2,tipo:'Evaluación Cirugía - Nuevo',profesional:{nombres:'Edmundo',paterno:'Ziede Rojas'},paciente:{nombres:'Paciente',prevision:'Colmena'}});
+  const ph=appointment(22,'Agendado',{tipo_id:999,tipo:'PHmetría con impedancia 24 horas',profesional:{nombres:'Examen',paterno:'PH'},paciente:{nombres:'Paciente',prevision:'Particular'}});
+  const r=report({appointments:[fonasa,isapre,ph]});
+  assert.equal(r.items.find(x=>x.id==='20').expectedAmount,20000);
+  assert.equal(r.items.find(x=>x.id==='21').expectedAmount,null);
+  assert.equal(r.items.find(x=>x.id==='22').expectedAmount,null);
+});

@@ -1,5 +1,6 @@
 import { Router, json } from 'express';
 import { readDailySnapshot } from './medinet-snapshot.js';
+import { documentedTariff } from './medinet-documented-tariffs.js';
 
 export const chileDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 export const normalizedName = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -23,10 +24,10 @@ export function normalizeAppointment(raw) {
     branchId: String(raw.sucursal?.id || ''), branch: raw.sucursal?.nombre || 'Sin sede',
     typeId: String(raw.tipo_id || ''), type: raw.tipo || raw.especialidad_nombre || 'Consulta', duration: raw.duracion || null,
     patient: fullName(raw.paciente), phone: String(raw.paciente?.telefono || raw.paciente?.telefono_2 || '').replace(/[^+\d]/g, ''),
-    email: raw.paciente?.email || '', status, confirmation: state === 'confirmado' ? 'Confirmada en Medinet' : 'Sin confirmación registrada',
+    email: raw.paciente?.email || '', prevision: raw.paciente?.prevision || '', status, confirmation: state === 'confirmado' ? 'Confirmada en Medinet' : 'Sin confirmación registrada',
     attended: state === 'atendido', cancelled: ['cancelada', 'cancelado', 're-agendado', 'reagendado'].includes(state),
     absent: ['no asiste', 'no asistio', 'ausente', 'inasistente'].includes(state),
-    expectedAmount: null, paidAmount: null, conversationUrl: null,
+    expectedAmount: null, tariffSource: null, paidAmount: null, conversationUrl: null,
   };
 }
 
@@ -54,7 +55,9 @@ export function buildDailyReport({ date, appointments, slots, confirmations = []
     else if (c?.first_msg_sent_at && !item.confirmation.startsWith('Confirmada')) item.confirmation = 'Enviada · esperando respuesta';
     if (c?.chatwoot_conversation_id && /^\d+$/.test(String(c.chatwoot_conversation_id))) item.conversationUrl = `https://app.chatwoot.com/app/accounts/162472/conversations/${c.chatwoot_conversation_id}`;
     const tariff = tariffs.find(t => t.professional_key === item.professionalKey && String(t.type_id) === item.typeId);
-    if (tariff) item.expectedAmount = Number(tariff.amount_clp);
+    const documented = documentedTariff(item);
+    if (tariff) { item.expectedAmount = Number(tariff.amount_clp); item.tariffSource = 'manual'; }
+    else if (documented) { item.expectedAmount = Number(documented.amountClp); item.tariffSource = documented.source; }
     if (item.cancelled) { item.confirmation = 'Cita cancelada o reagendada'; p.cancelled++; continue; }
     p.occupied++; if (item.attended) p.attended++; if (item.absent) p.absent++;
     if (item.confirmation.startsWith('Confirmada')) p.confirmed++;
