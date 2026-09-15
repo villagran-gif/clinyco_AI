@@ -49,6 +49,25 @@ export function rankSlotsNearPreference(input,preference,max=6){
  return ranked.slice(0,max).map(x=>x.s).sort((a,b)=>slotSortKey(a).localeCompare(slotSortKey(b),'en'));
 }
 function noneSelection(text){return ['ninguna','ninguna de estas opciones me sirve','ninguna de estas opciones'].includes(norm(text));}
+export function availableDates(input,max=9){
+ const seen=new Set(),out=[];
+ for(const slot of (Array.isArray(input)?input:[]).slice().sort((a,b)=>slotSortKey(a).localeCompare(slotSortKey(b),'en'))){
+  const dataDia=slotDateIso(slot);if(!dataDia||seen.has(dataDia))continue;seen.add(dataDia);
+  out.push({dataDia,date:dataDia.split('-').reverse().join('/')});if(out.length>=max)break;
+ }
+ return out;
+}
+export function parseDateChoice(text){
+ const raw=String(text||'').trim();
+ if(/^\d{4}-\d{2}-\d{2}$/.test(raw))return raw;
+ const m=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);if(!m)return null;
+ const iso=`${m[3]}-${m[2]}-${m[1]}`,d=new Date(`${iso}T12:00:00Z`);
+ return Number.isNaN(d.valueOf())||d.toISOString().slice(0,10)!==iso?null:iso;
+}
+export function parseTimeChoice(text){
+ const m=String(text||'').trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/);return m?`${m[1]}:${m[2]}`:null;
+}
+function otherDateSelection(text){return ['otra fecha','elegir otra fecha','volver a fechas'].includes(norm(text));}
 function exact(a,b){
  const stable=['professionalId','specialtyId','tipoCitaId','dataDia','time'];
  return stable.every(k=>String(a?.[k])===String(b?.[k]))
@@ -143,20 +162,40 @@ export async function handleDirectReschedule(payload){
    return {status:'choosing',reply:found.reply,slots:found.slots.map(s=>({date:s.date||s.dataDia,time:s.time}))};
  }
  if(current?.state==='preference'){
-   const preference=parsePreferredDateTime(text);
-   if(!preference)return {status:'choosing',reply:'Indícame el día y la hora que prefieres usando el formato DD/MM HH:MM. Ejemplo: 18/09 15:30.'};
-   const found=await search(payload),ranked=rankSlotsNearPreference(found.slots,preference,6);
-   await getPool().query("UPDATE melania_reschedule_sessions SET state='choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(ranked)]);
-   if(!ranked.length)return {status:'choosing',reply:'No encontré alternativas cercanas a esa fecha. Indícame otro día y hora en formato DD/MM HH:MM.'};
-   return {status:'choosing',reply:'Encontré estas alternativas cercanas a la fecha que indicaste.',slots:ranked.map(s=>({date:s.date||s.dataDia,time:s.time}))};
+   const found=await search(payload),date=parseDateChoice(text),dates=availableDates(found.slots);
+   if(date){
+     const daySlots=found.slots.filter(s=>slotDateIso(s)===date);
+     if(daySlots.length){await getPool().query("UPDATE melania_reschedule_sessions SET state='time_choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(daySlots)]);return {status:'choosing',choiceKind:'time',reply:'Elige una hora para esa fecha.',slots:daySlots.map(s=>({date:s.date||s.dataDia,time:s.time}))};}
+   }
+   await getPool().query("UPDATE melania_reschedule_sessions SET state='date_choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(found.slots)]);
+   return {status:'choosing',choiceKind:'date',reply:'Elige una fecha.',dates};
  }
  const slots=Array.isArray(current.slots)?current.slots:[];
- if(noneSelection(text)){
-   await getPool().query("UPDATE melania_reschedule_sessions SET state='preference',error=NULL,updated_at=now() WHERE external_id=$1",[externalId]);
-   return {status:'choosing',reply:'Por favor, indícame el día y la hora que prefieres usando el formato DD/MM HH:MM. Ejemplo: 18/09 15:30.'};
+ if(current?.state==='date_choosing'){
+   const date=parseDateChoice(text),found=await search(payload),dates=availableDates(found.slots);
+   if(!date){return {status:'choosing',choiceKind:'date',reply:'Elige una de las fechas disponibles.',dates};}
+   const daySlots=found.slots.filter(s=>slotDateIso(s)===date);
+   if(!daySlots.length){await getPool().query("UPDATE melania_reschedule_sessions SET slots=$2,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(found.slots)]);return {status:'choosing',choiceKind:'date',reply:'Esa fecha ya no tiene cupos. Elige otra fecha.',dates};}
+   await getPool().query("UPDATE melania_reschedule_sessions SET state='time_choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(daySlots)]);
+   return {status:'choosing',choiceKind:'time',reply:'Elige una hora.',slots:daySlots.map(s=>({date:s.date||s.dataDia,time:s.time}))};
  }
- const numeric=choice(text,slots.length),visible=choiceFromVisibleText(text,slots),idx=numeric!==null?numeric:visible;
- if(idx===null)return {status:'choosing',reply:'Selecciona una de las horas en “Ver fechas”. Si ninguna te sirve, elige “Ninguna”.'};
+ if(current?.state==='time_choosing'&&otherDateSelection(text)){
+   const found=await search(payload),dates=availableDates(found.slots);
+   await getPool().query("UPDATE melania_reschedule_sessions SET state='date_choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(found.slots)]);
+   return {status:'choosing',choiceKind:'date',reply:'Elige otra fecha.',dates};
+ }
+ if(noneSelection(text)){
+   const found=await search(payload),dates=availableDates(found.slots);
+   await getPool().query("UPDATE melania_reschedule_sessions SET state='date_choosing',slots=$2,error=NULL,updated_at=now() WHERE external_id=$1",[externalId,JSON.stringify(found.slots)]);
+   return {status:'choosing',choiceKind:'date',reply:'Elige una fecha.',dates};
+ }
+ let idx=null;
+ if(current?.state==='time_choosing'){
+   const wanted=parseTimeChoice(text),hits=[];if(wanted)slots.forEach((s,i)=>{if(String(s?.time||'').slice(0,5)===wanted)hits.push(i);});idx=hits.length===1?hits[0]:null;
+ }else{
+   const numeric=choice(text,slots.length),visible=choiceFromVisibleText(text,slots);idx=numeric!==null?numeric:visible;
+ }
+ if(idx===null)return current?.state==='time_choosing'?{status:'choosing',choiceKind:'time',reply:'Elige una de las horas disponibles.',slots:slots.map(s=>({date:s.date||s.dataDia,time:s.time}))}:{status:'choosing',reply:'Selecciona una de las horas en “Ver fechas”. Si ninguna te sirve, elige “Ninguna”.'};
  const selected=slots[idx],refreshed=await search(payload),fresh=refreshed.slots.find(s=>exact(s,selected));
  if(!fresh)return {status:'choosing',reply:'Esa hora ya no está disponible. Escribe REAGENDAR y buscaré alternativas actuales.'};
  if(!assertControlledWrite(payload,phone))return {status:'choosing',reply:'La hora fue seleccionada, pero el cambio automático aún está en modo de prueba. El equipo debe confirmar la modificación.'};

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import {directAttendanceRouter} from '../review/attendance-direct.js';
-import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots} from '../melania/direct-reschedule.js';
+import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots,availableDates,parseDateChoice,parseTimeChoice} from '../melania/direct-reschedule.js';
 test('dashboard proxy keeps token server-side and propagates only report JSON',async()=>{
  let seen;const app=express();app.use(directAttendanceRouter({env:{CONFIRMATIONS_INTAKE_TOKEN:'synthetic'},fetchImpl:async(url,opts)=>{seen={url,opts};return {ok:true,json:async()=>({items:[],attention:[],mode:'test'})};}}));
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -60,4 +60,23 @@ test('diverse and preferred slots are returned in chronological display order',(
  assert.deepEqual(rankSlotsNearPreference(slots,{dataDia:'2026-09-20',time:'12:00'},3).map(s=>`${s.dataDia} ${s.time}`),[
   '2026-09-21 10:20','2026-09-21 10:40','2026-09-21 11:00'
  ]);
+});
+
+
+test('date then time chooser needs no typed combined date-time format',()=>{
+ const slots=[
+  {dataDia:'2026-09-21',time:'10:40'},
+  {dataDia:'2026-09-17',time:'12:20'},
+  {dataDia:'2026-09-17',time:'11:00'},
+  {dataDia:'2026-09-21',time:'10:20'},
+ ];
+ assert.deepEqual(availableDates(slots),[
+  {dataDia:'2026-09-17',date:'17/09/2026'},
+  {dataDia:'2026-09-21',date:'21/09/2026'},
+ ]);
+ assert.equal(parseDateChoice('17/09/2026'),'2026-09-17');
+ assert.equal(parseDateChoice('2026-09-21'),'2026-09-21');
+ assert.equal(parseDateChoice('18/09'),null);
+ assert.equal(parseTimeChoice('10:20'),'10:20');
+ assert.equal(parseTimeChoice('25:00'),null);
 });
