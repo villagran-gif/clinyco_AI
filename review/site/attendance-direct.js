@@ -9,6 +9,9 @@
     if(a.state==='cancel')return {text:'❌ CANCELÓ WHATSAPP',kind:'bad'};
     if(a.state==='rescheduling')return {text:'🔄 REAGENDANDO',kind:'info'};
     if(a.state==='rescheduled')return {text:'✅ REAGENDADA',kind:'ok'};
+    if(a.state==='external_cancelled')return {text:'🚫 CANCELADA EN MEDINET',kind:'bad'};
+    if(a.state==='external_confirmed')return {text:'✅ YA CONFIRMADA EN MEDINET',kind:'ok'};
+    if(a.state==='external_closed')return {text:'✅ CITA CERRADA EN MEDINET',kind:'info'};
     if(a.state==='human'||a.state==='uncertain'||a.error)return {text:a.intent==='confirm'?'⚠️ SÍ RECIBIDO · REVISAR':'⚠️ REQUIERE REVISIÓN',kind:'warn'};
     if(a.state==='sending')return {text:'⏳ ENVÍO POR VERIFICAR',kind:'warn'};
     return {text:'⏳ SIN RESPUESTA',kind:'muted'};
@@ -17,7 +20,8 @@
     const m=normalize(a.medinet_status);
     if(a.state==='rescheduled'&&m==='completed')return {text:'✅ REAGENDADA · VERIFICADA',kind:'ok'};
     if(a.verified_at&&m==='confirmado')return {text:'✅ CONFIRMADO EN MEDINET',kind:'ok'};
-    if(a.verified_at&&['cancelada','cancelado'].includes(m))return {text:'✅ CANCELADA EN MEDINET',kind:'bad'};
+    if(a.verified_at&&['cancelada','cancelado','re-agendado','reagendado'].includes(m))return {text:'✅ CANCELADA EN MEDINET',kind:'bad'};
+    if(a.state==='external_closed'&&a.verified_at)return {text:`✅ ${a.medinet_status||'CITA CERRADA'} EN MEDINET`,kind:'info'};
     if(a.state==='confirm'&&!a.verified_at)return {text:'⚠️ WHATSAPP SÍ · MEDINET PENDIENTE',kind:'warn'};
     if(a.verified_at)return {text:`${a.medinet_status||'Cambio'} · VERIFICADO`,kind:'ok'};
     return {text:'Sin cambio verificado',kind:'muted'};
@@ -39,26 +43,31 @@
     box.append(title,description,label,refresh,status,summary,table,attention);root.prepend(box);
     async function load(){refresh.disabled=true;date.disabled=true;body.replaceChildren();summary.replaceChildren();attention.replaceChildren();status.textContent='Consultando confirmaciones…';
       try{const r=await fetch('/api/attendance-direct?date='+encodeURIComponent(date.value),{cache:'no-store'});const data=await r.json();if(!r.ok)throw Error(data.error);
-        status.textContent=`${data.items.length} registros · ${data.mode==='live'?'Modo real':'Modo de prueba'} · ${data.sendsEnabled?'Envíos habilitados':'Envíos detenidos'}${data.truncated?' · Se muestran los primeros 500':''}`;
-        const counts={wa:0,medinet:0,pending:0,reschedule:0,review:0,cancel:0};
-        for(const a of data.items){
+        const hiddenTrials=data.mode==='live'?data.items.filter(a=>a.trial).length:0;
+        const items=data.mode==='live'?data.items.filter(a=>!a.trial):data.items;
+        const transport=data.inboundMode==='chatwoot_bridge'?' · Bridge Chatwoot':data.inboundMode==='meta_direct'?' · Meta directo':'';
+        status.textContent=`${items.length} registros reales · ${data.mode==='live'?'Modo real':'Modo de prueba'} · ${data.sendsEnabled?'Envíos habilitados'+transport:'Envíos detenidos'}${hiddenTrials?` · ${hiddenTrials} prueba(s) ocultas`:''}${data.truncated?' · Se muestran los primeros 500':''}`;
+        const counts={wa:0,medinet:0,pending:0,reschedule:0,review:0,cancel:0,external:0};
+        for(const a of items){
           if(a.state==='confirm')counts.wa++;
           if(a.verified_at&&normalize(a.medinet_status)==='confirmado')counts.medinet++;
           if(a.state==='pending'||a.state==='sending')counts.pending++;
           if(['rescheduling','rescheduled'].includes(a.state))counts.reschedule++;
           if(a.state==='human'||a.state==='uncertain'||a.error)counts.review++;
           if(a.state==='cancel')counts.cancel++;
+          if(String(a.state||'').startsWith('external_'))counts.external++;
           const row=build('tr');
           row.append(build('td',a.time),build('td',(a.trial?'PRUEBA · ':'')+a.patient),build('td',`${a.professional} / ${a.branch||'—'}`),build('td',a.phone));
-          row.append(cellWithBadge(whatsappStatus(a),a.reply?`Respuesta: ${a.reply}`:'Sin respuesta del paciente'));
+          const responseDetail=a.reply?`Respuesta: ${a.reply}`:String(a.state||'').startsWith('external_')?'No requiere respuesta del paciente':'Sin respuesta del paciente';
+          row.append(cellWithBadge(whatsappStatus(a),responseDetail));
           row.append(build('td',deliveries[a.delivery]||a.delivery||'—'));
           const verified=a.verified_at?`Verificado ${new Date(a.verified_at).toLocaleString('es-CL',{timeZone:'America/Santiago'})}`:'';
           row.append(cellWithBadge(medinetStatus(a),verified));
           body.append(row);
         }
-        const cards=[['✅ WhatsApp confirmados',counts.wa,'ok'],['✅ Medinet confirmados',counts.medinet,'ok'],['⏳ Sin respuesta',counts.pending,'muted'],['🔄 Reagendar',counts.reschedule,'info'],['❌ Cancelaron',counts.cancel,'bad'],['⚠️ Revisión',counts.review,'warn']];
+        const cards=[['✅ WhatsApp confirmados',counts.wa,'ok'],['✅ Medinet confirmados',counts.medinet,'ok'],['⏳ Sin respuesta',counts.pending,'muted'],['🔄 Reagendar',counts.reschedule,'info'],['❌ Cancelaron por WhatsApp',counts.cancel,'bad'],['🚫 Cerradas en Medinet',counts.external,'bad'],['⚠️ Revisión',counts.review,'warn']];
         for(const [labelText,n,kind] of cards)summary.append(badge(`${labelText}: ${n}`,kind));
-        if(!data.items.length){const empty=build('tr');const td=build('td','No hay confirmaciones directas para esta fecha.');td.colSpan=7;empty.append(td);body.append(empty);}
+        if(!items.length){const empty=build('tr');const td=build('td','No hay confirmaciones directas para esta fecha.');td.colSpan=7;empty.append(td);body.append(empty);}
         if(data.attention.length){attention.append(build('h4','Respuestas que necesitan revisión'));for(const e of data.attention)attention.append(build('p',`${e.phone}: ${e.reply||'Mensaje sin texto'} (${e.state})`));}
       }catch(e){status.textContent=e.message||'No se pudo consultar el registro.';}finally{refresh.disabled=false;date.disabled=false;}}
     refresh.onclick=load;date.onchange=load;
