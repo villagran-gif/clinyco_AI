@@ -9,6 +9,9 @@ import {
   searchSlotsViaApi,
   fetchProximosCuposAll,
   fetchSpecialtiesByBranchNoAuth,
+  fetchSpecialtiesForProfessional,
+  fetchAppointmentTypes,
+  fetchAppointmentTypesByContext,
   fetchAppointmentDetail,
   updateAppointmentState,
   formatRutWithDots,
@@ -134,6 +137,28 @@ app.post("/medinet/api/search", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("[medinet-worker] api/search error:", error.message);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+/** Read-only diagnostic: all specialties and appointment types for one professional/branch. */
+app.post("/medinet/api/professional-context", authMiddleware, async (req, res) => {
+  const branchId = Number(req.body?.branchId || DEFAULT_BRANCH_ID);
+  const professionalId = Number(req.body?.professionalId);
+  if (!Number.isSafeInteger(branchId) || !Number.isSafeInteger(professionalId)) {
+    return res.status(400).json({ error: "branch_and_professional_required" });
+  }
+  try {
+    const specialties = await fetchSpecialtiesForProfessional(branchId, professionalId);
+    const contexts = [];
+    for (const specialty of Array.isArray(specialties) ? specialties : []) {
+      const types = await fetchAppointmentTypesByContext(branchId, Number(specialty.id), professionalId, 0).catch(() => []);
+      contexts.push({ specialty, appointmentTypes: Array.isArray(types) ? types : [] });
+    }
+    const professionalTypes = await fetchAppointmentTypes(professionalId).catch(() => []);
+    return res.json({ success: true, branchId, professionalId, contexts, professionalTypes: Array.isArray(professionalTypes) ? professionalTypes : [] });
+  } catch (error) {
+    console.error("[medinet-worker] professional-context error:", error.message);
+    return res.status(502).json({ success: false, error: "professional_context_failed" });
   }
 });
 
