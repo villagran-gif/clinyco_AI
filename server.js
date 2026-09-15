@@ -54,7 +54,7 @@ import {
   onMutedPatientMessage as onEugeniaMutedPatientMessage
 } from "./eugenia/index.js";
 import { createMelaniaHandoffRouter } from "./melania/handoff-router.js";
-import { reconcileExactSyntheticSession } from "./melania/direct-reschedule.js";
+import { reconcileExactSyntheticSession, notifyExactSyntheticCompletion } from "./melania/direct-reschedule.js";
 import { isChatwootPayload, parseChatwootInbound } from "./chatwoot-adapter/parse.js";
 import { recordContactEvent } from "./review/crm-links.js";
 import { startCrmSync } from "./review/crm-sync.js";
@@ -3644,6 +3644,10 @@ await initDb();
 if(process.env.MELANIA_RECONCILE_EXACT_TRIAL==='true'){
   try { console.log('[melania-reschedule-reconcile]', JSON.stringify(await reconcileExactSyntheticSession())); }
   catch(error) { console.error('[melania-reschedule-reconcile]', error.message); }
+}
+if(process.env.MELANIA_NOTIFY_EXACT_TRIAL_COMPLETION==='true'){
+  try { console.log('[melania-reschedule-completion-notify]', JSON.stringify(await notifyExactSyntheticCompletion())); }
+  catch(error) { console.error('[melania-reschedule-completion-notify]', error.message); }
 }
 app.listen(PORT, () => {
   console.log(`Clinyco Conversations AI running on port ${PORT}`);

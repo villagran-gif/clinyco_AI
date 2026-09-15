@@ -143,6 +143,22 @@ export async function handleDirectReschedule(payload){
  return {status:'completed',reply:`Listo. Tu cita quedó reagendada con ${payload.professional.name} para el ${fresh.date||fresh.dataDia} a las ${fresh.time}${branch?` en ${branch}`:''}.`,slot:{date:fresh.date||fresh.dataDia,time:fresh.time,branch}};
 }
 
+export async function notifyReconciledCompletion(externalId,{env=process.env,fetchImpl=fetch}={}){
+ const id=Number(externalId);
+ if(!Number.isSafeInteger(id)||id<1)throw Error('external_id_required');
+ const token=String(env.CONFIRMATIONS_INTAKE_TOKEN||'');
+ const base=String(env.SELL_MEDINET_BACKEND_URL||'https://sell-medinet-backend.onrender.com').replace(/\/+$/,'');
+ if(!token)throw Error('confirmations_intake_token_missing');
+ const response=await fetchImpl(`${base}/attendance-direct/completion`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({externalId:id}),signal:AbortSignal.timeout(20000)});
+ let data={};try{data=await response.json();}catch{}
+ if(!response.ok)throw Error(`completion_notify_${response.status}:${String(data?.error||'').slice(0,120)}`);
+ return data;
+}
+
+export async function notifyExactSyntheticCompletion(options){
+ return notifyReconciledCompletion(990000001,options);
+}
+
 export async function reconcileExactSyntheticSession(){
  if(!dbEnabled())return {status:'skipped',reason:'db_disabled'};
  await ensure();
@@ -176,5 +192,8 @@ export async function reconcileExactSyntheticSession(){
  await getPool().query("UPDATE melania_reschedule_sessions SET state='completed',error=NULL,updated_at=now() WHERE external_id=$1",[s.external_id]);
  await getPool().query("UPDATE attendance_direct.requests SET state='rescheduled',medinet_status='completed',error=NULL,verified_at=now() WHERE id=2 AND trial=true AND phone='56987297033'");
  await getPool().query("UPDATE attendance_direct.control SET paused=false,reason='exact_trial_completed',updated_at=now() WHERE phone='56987297033'");
- return {status:'completed',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id),date:chosen.dataDia,time:chosen.time};
+ let notification;
+ try{notification=await notifyReconciledCompletion(Number(s.external_id));}
+ catch(error){notification={sent:false,error:String(error.message||error)};}
+ return {status:'completed',oldId:Number(s.original_appointment_id),newId:Number(s.new_appointment_id),date:chosen.dataDia,time:chosen.time,notification};
 }
