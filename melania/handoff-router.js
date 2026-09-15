@@ -24,6 +24,7 @@
 import { Router } from "express";
 import { getPool, dbEnabled } from "../db.js";
 import { handleDirectReschedule } from "./direct-reschedule.js";
+import { appointmentDetailOnChileVps, updateAppointmentOnChileVps } from "./medinet-worker-client.js";
 
 let tableEnsured = false;
 
@@ -178,6 +179,25 @@ export function createMelaniaHandoffRouter() {
   router.post("/reschedule-direct", requireBearer, async (req, res) => {
     try { return res.status(200).json(await handleDirectReschedule(req.body)); }
     catch (err) { console.error("[melania/reschedule-direct]", err.message); return res.status(409).json({error:err.message}); }
+  });
+
+  // Confirm/cancel/readback for attendance-direct. Medinet is reached only through the Chile VPS worker.
+  router.post("/appointment-direct", requireBearer, async (req, res) => {
+    const appointmentId = Number(req.body?.appointmentId);
+    const intent = String(req.body?.intent || "read").toLowerCase();
+    if (!Number.isSafeInteger(appointmentId) || appointmentId < 1) return res.status(400).json({error:"appointment_id_required"});
+    if (!["read","confirm","cancel"].includes(intent)) return res.status(400).json({error:"invalid_intent"});
+    if (intent !== "read" && process.env.MELANIA_ATTENDANCE_WRITE_ENABLED !== "true") return res.status(409).json({error:"attendance_write_disabled"});
+    try {
+      const result = intent === "read"
+        ? await appointmentDetailOnChileVps(appointmentId)
+        : await updateAppointmentOnChileVps({appointmentId, action:intent === "confirm" ? "Confirm" : "Cancel", observation:"Respuesta de asistencia recibida por WhatsApp Clinyco."});
+      if (!result?.appointment) throw new Error("appointment_missing");
+      return res.status(200).json({success:true, appointment:result.appointment});
+    } catch (err) {
+      console.error("[melania/appointment-direct]", err.message);
+      return res.status(502).json({error:"medinet_vps_unavailable"});
+    }
   });
 
   /**
