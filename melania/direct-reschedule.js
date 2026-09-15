@@ -68,6 +68,7 @@ export function parseTimeChoice(text){
  const m=String(text||'').trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/);return m?`${m[1]}:${m[2]}`:null;
 }
 function otherDateSelection(text){return ['otra fecha','elegir otra fecha','volver a fechas'].includes(norm(text));}
+export function shouldRestartReschedule(text,current){return !current||/reagend|reprogram|cambiar|otra hora/i.test(norm(text));}
 function exact(a,b){
  const stable=['professionalId','specialtyId','tipoCitaId','dataDia','time'];
  return stable.every(k=>String(a?.[k])===String(b?.[k]))
@@ -156,7 +157,7 @@ export async function handleDirectReschedule(payload){
  const text=String(payload.inbound_message||'').trim();
  if(current&&['booking','cancelling','needs_review'].includes(current.state))return {status:'needs_review',reply:'Este cambio está en revisión. No enviaré una segunda reserva mientras no se verifique la operación anterior.'};
  if(current?.state==='completed')return {status:'completed',reply:'Esta solicitud ya quedó reagendada y verificada en Medinet.'};
- if(!current||/reagend|reprogram|cambiar|otra hora|otra fecha/i.test(norm(text))){
+ if(shouldRestartReschedule(text,current)){
    const found=await search(payload);await getPool().query(`INSERT INTO melania_reschedule_sessions(external_id,phone,professional_id,professional,branch_id,patient,slots,state,updated_at)
    VALUES($1,$2,$3,$4,$5,$6,$7,'choosing',now()) ON CONFLICT(external_id) DO UPDATE SET phone=$2,professional_id=$3,professional=$4,branch_id=$5,patient=$6,slots=$7,state='choosing',error=NULL,chosen=NULL,original_appointment_id=NULL,new_appointment_id=NULL,updated_at=now()`,[externalId,phone,professionalId,payload.professional.name,branchId,JSON.stringify(payload.patient||{}),JSON.stringify(found.slots)]);
    return {status:'choosing',reply:found.reply,slots:found.slots.map(s=>({date:s.date||s.dataDia,time:s.time}))};
@@ -198,7 +199,9 @@ export async function handleDirectReschedule(payload){
  if(idx===null)return current?.state==='time_choosing'?{status:'choosing',choiceKind:'time',reply:'Elige una de las horas disponibles.',slots:slots.map(s=>({date:s.date||s.dataDia,time:s.time}))}:{status:'choosing',reply:'Selecciona una de las horas en “Ver fechas”. Si ninguna te sirve, elige “Ninguna”.'};
  const selected=slots[idx],refreshed=await search(payload),fresh=refreshed.slots.find(s=>exact(s,selected));
  if(!fresh)return {status:'choosing',reply:'Esa hora ya no está disponible. Escribe REAGENDAR y buscaré alternativas actuales.'};
- if(!assertControlledWrite(payload,phone))return {status:'choosing',reply:'La hora fue seleccionada, pero el cambio automático aún está en modo de prueba. El equipo debe confirmar la modificación.'};
+ if(!assertControlledWrite(payload,phone))return payload.trial===true
+  ? {status:'test_selected',reply:`Prueba completada: seleccionaste ${fresh.date||fresh.dataDia} a las ${fresh.time}. No se modificó ninguna cita real en Medinet.`,slot:{date:fresh.date||fresh.dataDia,time:fresh.time}}
+  : {status:'choosing',reply:'La hora fue seleccionada, pero el cambio automático aún no está habilitado. El equipo debe confirmar la modificación.'};
  let original;
  try{original=await resolveOriginal(payload);}catch(e){return needsReview(externalId,fresh,e.message);}
  let originalDetail;

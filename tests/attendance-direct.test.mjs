@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import {directAttendanceRouter} from '../review/attendance-direct.js';
-import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots,availableDates,parseDateChoice,parseTimeChoice} from '../melania/direct-reschedule.js';
+import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots,availableDates,parseDateChoice,parseTimeChoice,shouldRestartReschedule} from '../melania/direct-reschedule.js';
 test('dashboard proxy keeps token server-side and propagates only report JSON',async()=>{
  let seen;const app=express();app.use(directAttendanceRouter({env:{CONFIRMATIONS_INTAKE_TOKEN:'synthetic'},fetchImpl:async(url,opts)=>{seen={url,opts};return {ok:true,json:async()=>({items:[],attention:[],mode:'test'})};}}));
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -80,3 +80,5 @@ test('date then time chooser needs no typed combined date-time format',()=>{
  assert.equal(parseTimeChoice('10:20'),'10:20');
  assert.equal(parseTimeChoice('25:00'),null);
 });
+
+test('Otra fecha stays inside date/time chooser instead of restarting reschedule',()=>{ assert.equal(shouldRestartReschedule('Otra fecha',{state:'time_choosing'}),false); assert.equal(shouldRestartReschedule('Reagendar',{state:'time_choosing'}),true); assert.equal(shouldRestartReschedule('cambiar hora',{state:'time_choosing'}),true); });
