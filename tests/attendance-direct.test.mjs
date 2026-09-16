@@ -3,17 +3,15 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import {directAttendanceRouter} from '../review/attendance-direct.js';
 import {notifyReconciledCompletion,choiceFromVisibleText,parsePreferredDateTime,rankSlotsNearPreference,pickDiverseSlots,availableDates,parseDateChoice,parseTimeChoice,shouldRestartReschedule,resolveProfessionalSlots,assertControlledWrite} from '../melania/direct-reschedule.js';
-test('dashboard proxy keeps token server-side and propagates only report JSON',async()=>{
- let seen;const app=express();app.use(directAttendanceRouter({env:{CONFIRMATIONS_INTAKE_TOKEN:'synthetic'},fetchImpl:async(url,opts)=>{seen={url,opts};return {ok:true,json:async()=>({items:[],attention:[],mode:'test'})};}}));
- const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
- try{const base=`http://127.0.0.1:${server.address().port}`;
- assert.equal((await fetch(base+'/?date=invalid')).status,400);assert.equal(seen,undefined);
- const r=await fetch(base+'/?date=2026-09-15');assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/no-store/);
- assert.equal(seen.opts.headers.Authorization,'Bearer synthetic');assert.equal((await r.text()).includes('synthetic'),false);
+test('dashboard reads shared attendance tables directly and returns no-store JSON',async()=>{
+ const calls=[];const pool={query:async(sql,args)=>{calls.push({sql,args});return sql.includes('attendance_direct.requests')?{rows:[{id:1,patient:'P',professional:'D',branch:'S',date:'2026-09-15',time:'10:00',phone:'56900000000',trial:false,state:'pending',delivery:'accepted',reply:null,intent:null,medinet_status:null,verified_at:null,error:null,chatwoot_conversation_id:null}]}:{rows:[]};}};
+ const app=express();app.use(directAttendanceRouter({getPool:()=>pool}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ try{const base=`http://127.0.0.1:${server.address().port}`;assert.equal((await fetch(base+'/?date=invalid')).status,400);
+ const r=await fetch(base+'/?date=2026-09-15');assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/no-store/);const body=await r.json();assert.equal(body.items.length,1);assert.equal(body.items[0].patient,'P');assert.equal(calls.length,2);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
-test('missing gateway config cannot appear as an empty successful report',async()=>{
- const app=express();app.use(directAttendanceRouter({env:{}}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+test('missing shared database cannot appear as an empty successful report',async()=>{
+ const app=express();app.use(directAttendanceRouter({getPool:()=>null}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
  try{const r=await fetch(`http://127.0.0.1:${server.address().port}/?date=2026-09-15`);assert.equal(r.status,503);}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
 

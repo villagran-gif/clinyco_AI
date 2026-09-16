@@ -133,7 +133,7 @@ import {
 const router = Router();
 // Protect every review route, including CRM and direct Render requests.
 router.use(reviewAuth());
-router.use("/attendance-direct", directAttendanceRouter());
+router.use("/attendance-direct", directAttendanceRouter({ getPool }));
 router.use("/antonia/conversations", antoniaControlRouter({ getPool }));
 router.get("/auth/me", (req, res) => res.json({ user: req.reviewUser }));
 router.use("/medinet", dailyMedinetRouter({ getPool }));
