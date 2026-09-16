@@ -9,9 +9,8 @@
     if(a.state==='cancel')return {text:'❌ CANCELÓ WHATSAPP',kind:'bad'};
     if(a.state==='rescheduling')return {text:'🔄 REAGENDANDO',kind:'info'};
     if(a.state==='rescheduled')return {text:'✅ REAGENDADA',kind:'ok'};
-    if(a.state==='external_cancelled')return {text:'🚫 CANCELADA EN MEDINET',kind:'bad'};
-    if(a.state==='external_confirmed')return {text:'✅ YA CONFIRMADA EN MEDINET',kind:'ok'};
-    if(a.state==='external_closed')return {text:'✅ CITA CERRADA EN MEDINET',kind:'info'};
+    if(a.state==='external_cancelled'||a.state==='external_closed')return {text:'⏹ CERRADA SIN RESPUESTA WHATSAPP',kind:'info'};
+    if(a.state==='external_confirmed')return {text:'⏳ SIN RESPUESTA WHATSAPP',kind:'muted'};
     if(a.state==='human'||a.state==='uncertain'||a.error)return {text:a.intent==='confirm'?'⚠️ SÍ RECIBIDO · REVISAR':'⚠️ REQUIERE REVISIÓN',kind:'warn'};
     if(a.state==='sending')return {text:'⏳ ENVÍO POR VERIFICAR',kind:'warn'};
     return {text:'⏳ SIN RESPUESTA',kind:'muted'};
@@ -34,7 +33,7 @@
     const title=build('h3','Confirmaciones por WhatsApp');
     const description=build('p','Respuesta del paciente por WhatsApp, comprobante de entrega y verificación independiente en Medinet.');
     const legend=build('p','Los estados son independientes: una cita puede estar confirmada en Medinet y seguir esperando respuesta por WhatsApp.');legend.style.cssText='margin:6px 0 12px;color:#b8c7d9;font-size:13px';
-    const label=build('label','Fecha de confirmaciones '),date=build('input');date.type='date';date.value=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());label.append(date);
+    const label=build('label','Fecha de la cita '),date=build('input');date.type='date';date.value=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());label.append(date);
     const refresh=build('button','Actualizar confirmaciones');refresh.type='button';
     const status=build('p');status.setAttribute('role','status');
     const summary=build('div');summary.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px';
@@ -46,8 +45,8 @@
       try{const r=await fetch('/api/attendance-direct?date='+encodeURIComponent(date.value),{cache:'no-store'});const data=await r.json();if(!r.ok)throw Error(data.error);
         const hiddenTrials=data.mode==='live'?data.items.filter(a=>a.trial).length:0;
         const items=data.mode==='live'?data.items.filter(a=>!a.trial):data.items;
-        const transport=data.inboundMode==='chatwoot_bridge'?' · Bridge Chatwoot':data.inboundMode==='meta_direct'?' · Meta directo':'';
-        status.textContent=`${items.length} registros reales · ${data.mode==='live'?'Modo real':'Modo de prueba'} · ${data.sendsEnabled?'Envíos habilitados'+transport:'Envíos detenidos'} · Autoactualización 30 s · Actualizado ${new Date().toLocaleTimeString('es-CL',{timeZone:'America/Santiago'})}${hiddenTrials?` · ${hiddenTrials} prueba(s) ocultas`:''}${data.truncated?' · Se muestran los primeros 500':''}`;
+        const inbound=data.inboundMode==='chatwoot_bridge'?' · Respuestas: Bridge Chatwoot':data.inboundMode==='meta_direct'?' · Respuestas: Meta directo':'';
+        status.textContent=`${items.length} registros reales · ${data.mode==='live'?'Modo real':'Modo de prueba'} · ${data.sendsEnabled?'Envíos WhatsApp habilitados'+inbound:'Envíos WhatsApp detenidos'} · Autoactualización 30 s · Actualizado ${new Date().toLocaleTimeString('es-CL',{timeZone:'America/Santiago'})}${hiddenTrials?` · ${hiddenTrials} prueba(s) ocultas`:''}${data.truncated?' · Se muestran los primeros 500':''}`;
         const counts={wa:0,medinet:0,pending:0,reschedule:0,review:0,cancel:0,external:0};
         const occurrences=new Map();
         for(const a of items){const key=[a.date,a.time,a.patient,a.professional,a.branch].map(normalize).join('|');occurrences.set(key,(occurrences.get(key)||0)+1);}
