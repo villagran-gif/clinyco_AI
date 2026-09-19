@@ -1,3 +1,4 @@
+import './ops/booking-recovery.js';
 import { requestedExam, publishedExamProfessionals, examFollowup, EXAM_HANDOFF } from "./melania/exam-policy.js";
 import { publishedProfessionals, publishedSlots, reservePublishedSlot, UNAVAILABLE } from "./melania/agendaweb-only.js";
 import { bookAgendaweb } from "./Antonia/medinet-api.js";
