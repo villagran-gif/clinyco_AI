@@ -59,3 +59,18 @@ test('abandoning a draft never invokes cancellation or claims an existing appoin
   const f=fixture();await prepare(f);
   assert.match(await f.run({operation:'cancel_draft'},'No quiero continuar'),/no cancela ninguna cita/);assert.equal(f.posts,0);
 });
+
+test('success without a verifiable matching receipt stays uncertain and cannot be retried',async()=>{
+  for (const result of [null,{success:true,slot},{success:true,slot,booking:{status:'pending'}},
+    {success:true,slot:{...slot,time:'11:00'},booking:{status:'agendado_correctamente'}}]) {
+    const f=fixture();await prepare(f);let calls=0;
+    f.deps.reserve=async()=>{calls++;return result};
+    assert.doesNotMatch(await f.run({operation:'confirm'},'Sí'),/Reserva confirmada/);
+    assert.equal(f.state.booking.modelAttempt.status,'uncertain');
+    await f.run({operation:'confirm'},'Sí','3');assert.equal(calls,1);
+  }
+});
+test('an informational question cannot authorize a POST even if the model proposes confirm',async()=>{
+  const f=fixture();await prepare(f);
+  await f.run({operation:'confirm'},'¿Cuánto cuesta la consulta?');assert.equal(f.posts,0);
+});

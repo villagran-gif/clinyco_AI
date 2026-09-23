@@ -2939,8 +2939,11 @@ function guardOpenAiSchedulingClaims(reply, state) {
   const key = normalizeKey(reply || "");
   const unsupported = /(?:YA |HE |TE |HEMOS |QUEDO |QUEDA )(?:RESERVAD|AGENDAD|CANCELAD|MODIFICAD|DERIVAD|ASIGNAD|ENVIAD)/.test(key)
     || /(?:RESERVA|CITA|HORA) (?:ESTA |QUEDO |HA SIDO )?CONFIRMADA/.test(key);
+  const searchText = String(reply || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  const unexecutedSearch = /(?:^|\[\[MSG\]\]|[.!?]\s+|\n)\s*(?:DEJAME|VOY A|ESTOY|ESTAMOS)\s+(?:REVISAR|BUSCAR|CONSULTAR|REVISANDO|BUSCANDO|CONSULTANDO)\b[^.!?\n]*(?:CUPOS|DISPONIBILIDAD|AGENDA|HORARIOS)/.test(searchText);
   return {reply: unsupported
     ? "No tengo un comprobante de esa gestión. Necesitamos verificarla antes de darla por realizada."
+    : unexecutedSearch ? "No tengo un resultado de disponibilidad para esa solicitud."
     : reply, handoff:false};
 }
 
@@ -3580,8 +3583,20 @@ const handleInboundWebhook = async (req, res) => {
     state.system.resumeContextPending = false;
     state.leadScore = calculateLeadScore(state);
     await persistConversationSnapshot(conversationId, state, channelLabel);
-    if (decision.action !== "booking" || decision.patientSubject !== "self") {
-      const guarded = guardOpenAiSchedulingClaims(decision.reply, state);
+    if (decision.action !== "booking" ||
+        (decision.booking?.operation !== "search" && decision.patientSubject !== "self")) {
+      // A conversational question supersedes the previously presented consent.
+      // Retain the selected slot, but require a fresh proposal before any POST.
+      if (state.booking?.modelConfirmation) {
+        state.booking.modelConfirmation = null;
+        await upsertConversationState(conversationId,channelLabel,state);
+      }
+      const reply = decision.action === "booking"
+        ? (decision.patientSubject === "other"
+          ? "La reserva para otra persona necesita revisión del equipo."
+          : "¿La hora es para ti o para otra persona?")
+        : decision.reply;
+      const guarded = guardOpenAiSchedulingClaims(reply, state);
       let result;
       try {
         result = await sendManagedReply({appId, conversationId, messageId, userText,

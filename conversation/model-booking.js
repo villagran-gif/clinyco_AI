@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { samePublishedSlot } from '../melania/agendaweb-only.js';
 
 const fingerprint = (slot, patient) => createHash('sha256').update(JSON.stringify({
   slot, rut:patient.rut, email:patient.email, fono:patient.fono,
@@ -59,12 +60,14 @@ export async function runModelBooking({state,plan,userText,messageId,search,rese
     let result;
     try { result = await reserve({slot:booking.chosenSlot,patientData:patient}); }
     catch { result={success:false,step:'booking_unconfirmed'}; }
-    const uncertain = !result.success && ['booking_unconfirmed',undefined].includes(result.step);
-    booking.modelAttempt={fingerprint:key,status:result.success?'confirmed':uncertain?'uncertain':'rejected',receipt:result.booking || null};
+    const verified = result?.success === true && result.booking?.status === 'agendado_correctamente' &&
+      samePublishedSlot(result.slot, booking.chosenSlot);
+    const uncertain = !verified && (result?.success === true || ['booking_unconfirmed',undefined].includes(result?.step));
+    booking.modelAttempt={fingerprint:key,status:verified?'confirmed':uncertain?'uncertain':'rejected',receipt:result?.booking || null};
     booking.modelConfirmation=null;
-    if (result.success) { booking.chosenSlot=null;booking.pendingSlots=[]; }
+    if (verified) { booking.chosenSlot=null;booking.pendingSlots=[]; }
     await persist();
-    return result.success ? `Reserva confirmada en Agenda Web: ${describe(result.slot)}.`
+    return verified ? `Reserva confirmada en Agenda Web: ${describe(result.slot)}.`
       : uncertain ? blocked : 'No se pudo confirmar la reserva con las validaciones de Agenda Web. Necesitamos revisar los datos y el cupo antes de continuar.';
   }
   booking.modelConfirmation={fingerprint:key,at:now,messageId:String(messageId),presented:false};
